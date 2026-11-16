@@ -29,6 +29,15 @@ import { createSessionHarness } from './test-support/session-harness';
 
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 
+/**
+ * Settle every pending promise and zero-delay timer.
+ */
+async function settle(): Promise<void> {
+    await new Promise(resolve => {
+        setTimeout(resolve, 0);
+    });
+}
+
 describe('session lifecycle', () => {
     let gateway: FakeSessionApi;
 
@@ -236,19 +245,40 @@ describe('session lifecycle', () => {
             });
         });
 
-        it('ignores other keys and other storage areas', async () => {
+        it.each([
+            ['another key', { key: 'theme' }],
+            ['another storage area', { key: 'auth.session', storageArea: {} as Storage }],
+        ])('ignores a change to %s', async (_label, event) => {
             const target = harness();
             const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
 
             await target.boot();
+            await settle();
 
             const loads = load.mock.calls.length;
 
-            target.win.dispatchStorage({ key: 'theme' });
-            target.win.dispatchStorage({ key: 'auth.session', storageArea: {} as Storage });
-            target.win.dispatchStorage({ key: null, storageArea: null });
+            target.win.dispatchStorage(event);
+            await settle();
 
             expect(load).toHaveBeenCalledTimes(loads);
+        });
+
+        it.each([
+            ['the session key', { key: 'auth.session' }],
+            ['a clear of the storage', { key: null }],
+        ])('resynchronises on a change to %s', async (_label, event) => {
+            const target = harness();
+            const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
+
+            await target.boot();
+            await settle();
+
+            const loads = load.mock.calls.length;
+
+            target.win.dispatchStorage(event);
+            await settle();
+
+            expect(load).toHaveBeenCalledTimes(loads + 1);
         });
 
         it('reports a failed synchronisation and keeps the session', async () => {

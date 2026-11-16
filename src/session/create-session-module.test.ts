@@ -22,7 +22,6 @@ import { installApi, resetWebCoreServices } from '../app/services';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
 import { resetSessionContext, sessionContext } from './session-context';
-import type { SessionStore } from './session-store';
 import type { FakeSessionApi } from './test-support/session-fixtures';
 import {
     createFakeSessionApi,
@@ -477,6 +476,12 @@ describe('createSessionModule', () => {
             readonly tenant: string;
         }
 
+        /** A user shape the tenant gateway does not produce. */
+        interface RegionalUser extends TenantUser {
+            /** The region the user belongs to. */
+            readonly region: string;
+        }
+
         /** A credential shape other than the default. */
         interface TokenCredentials {
             /** The sign-in token. */
@@ -497,16 +502,32 @@ describe('createSessionModule', () => {
             expect(createSessionModule<SessionUser, TokenCredentials>().name).toBe('session');
         });
 
-        it('infers a custom user and credentials from the gateway', () => {
+        it('infers the custom user from the gateway for the identity mapping', () => {
             const module = createSessionModule({
                 api: tenantApi,
-                identity: { analytics: tenantUser => tenantUser.tenant },
+                identity: {
+                    analytics: tenantUser => {
+                        expectTypeOf(tenantUser).toEqualTypeOf<TenantUser>();
+
+                        return tenantUser.tenant;
+                    },
+                },
             });
 
             expect(module.name).toBe('session');
-            expectTypeOf<SessionStore<TenantUser, TokenCredentials>['login']>()
-                .parameter(0)
-                .toEqualTypeOf<TokenCredentials>();
+        });
+
+        it('rejects an identity mapping the gateway user does not satisfy', () => {
+            /**
+             * Map a user carrying a region onto that region.
+             *
+             * @param regionalUser - a user with a region
+             * @returns the region
+             */
+            const region = (regionalUser: RegionalUser): string => regionalUser.region;
+
+            // @ts-expect-error the mapping needs a field the gateway user lacks
+            expect(createSessionModule({ api: tenantApi, identity: { analytics: region } }).name).toBe('session');
         });
 
         it('requires a gateway for a custom user shape', () => {

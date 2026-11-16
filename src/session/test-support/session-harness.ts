@@ -57,7 +57,7 @@ export interface FakeWindow {
         key: string | null;
 
         /** The changed storage area. */
-        storageArea?: Storage | null;
+        storageArea?: Storage;
     }) => void;
 }
 
