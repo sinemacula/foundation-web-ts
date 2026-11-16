@@ -36,7 +36,10 @@
         "./session/middleware": "./src/session/middleware.ts",
         "./session/redirect": "./src/session/redirect.ts",
         "./session/session-context": "./src/session/session-context.ts",
-        "./session/session-store": "./src/session/session-store.ts"
+        "./session/session-realtime": "./src/session/session-realtime.ts",
+        "./session/session-store": "./src/session/session-store.ts",
+        "./storage/strict-web-storage": "./src/storage/strict-web-storage.ts",
+        "./storage/web-locks-session-lock": "./src/storage/web-locks-session-lock.ts"
     },
     "files": ["dist", "eslint", "!eslint/**/__tests__/**", "!eslint/vitest.config.mjs", "README.md", "LICENSE"],
     "publishConfig": {
@@ -97,31 +100,37 @@
         "@arethetypeswrong/cli": "^0.18.5",
         "@axe-core/playwright": "^4.11.3",
         "@playwright/test": "^1.60.0",
-        "@sinemacula/coding-standards": "^1.30.0",
+        "@sinemacula/coding-standards": "^1.30.1",
         "@size-limit/file": "^12.1.0",
         "@stryker-mutator/core": "^9.6.1",
         "@stryker-mutator/vitest-runner": "^9.6.1",
         "@types/node": "^25.9.3",
-        "@typescript-eslint/rule-tester": "^8.64.0",
-        "@typescript-eslint/utils": "^8.64.0",
+        "@typescript-eslint/rule-tester": "^8.73.0",
+        "@typescript-eslint/utils": "^8.73.0",
         "@vitejs/plugin-vue": "^6.0.7",
-        "@vitest/coverage-v8": "^4.1.8",
+        "@vitest/coverage-v8": "^4.1.12",
         "eslint": "^10.7.0",
-        "happy-dom": "^20.10.2",
+        "happy-dom": "^21.0.4",
         "knip": "^6.16.1",
         "mkdist": "^2.4.1",
         "publint": "^0.3.21",
         "size-limit": "^12.1.0",
         "typescript": "^6.0.3",
-        "typescript-eslint": "^8.64.0",
+        "typescript-eslint": "^8.73.0",
         "vite": "^8.0.16",
-        "vitest": "^4.1.8",
+        "vitest": "^4.1.12",
         "vue-eslint-parser": "^10.0.0",
         "vue-tsc": "^3.3.4"
     },
     "overrides": {
         "brace-expansion": "^5.0.7",
         "fast-uri": "^3.1.3",
-        "qs": "6.15.2"
+        "qs": "^6.17.1",
+        "@stryker-mutator/core": {
+            "minimatch": "^11.0.9"
+        }
+    },
+    "dependencies": {
+        "@sinemacula/foundation": "github:sinemacula/foundation-ts#feat/toolkit-auth-contract-sync"
     }
 }
