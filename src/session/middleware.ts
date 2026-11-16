@@ -5,7 +5,8 @@
  * user, `guestOnly` requires a signed-out visitor, and `authorize` additionally
  * requires a permission. Every factory defers all store and session-context
  * access to `handle()`, so guard instances may be created at module-definition
- * time, before the application boots.
+ * time, before the application boots, and every guard awaits the session's
+ * hydration before reading the store.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -30,7 +31,9 @@ import { useSessionStore } from './session-store';
  */
 export function authenticated(redirectTo?: RouteLocationRaw): RouteMiddleware {
     return {
-        handle(context: MiddlewareContext): MiddlewareResult {
+        async handle(context: MiddlewareContext): Promise<MiddlewareResult> {
+            await sessionContext().ready();
+
             if (useSessionStore().isAuthenticated) {
                 return next();
             }
@@ -49,7 +52,9 @@ export function authenticated(redirectTo?: RouteLocationRaw): RouteMiddleware {
  */
 export function guestOnly(redirectTo?: RouteLocationRaw): RouteMiddleware {
     return {
-        handle(): MiddlewareResult {
+        async handle(): Promise<MiddlewareResult> {
+            await sessionContext().ready();
+
             return useSessionStore().isAuthenticated ? redirect(redirectTo ?? sessionContext().routes.home) : next();
         },
     };
@@ -75,6 +80,8 @@ export function guestOnly(redirectTo?: RouteLocationRaw): RouteMiddleware {
 export function authorize(permission: string, redirectTo?: RouteLocationRaw): RouteMiddleware {
     return {
         async handle(context: MiddlewareContext): Promise<MiddlewareResult> {
+            await sessionContext().ready();
+
             const store = useSessionStore();
 
             if (!store.isAuthenticated) {

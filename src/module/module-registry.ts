@@ -14,7 +14,11 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { RequestInterceptor, ResponseErrorHandler, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
+import type {
+    RequestInterceptor,
+    ResponseErrorHandler,
+    UnauthorizedHandler,
+} from '@sinemacula/foundation/http/http-client';
 import type { ModuleHttpContributions } from '@sinemacula/foundation/http/module-http-contributions';
 import type {
     LocaleMessages,

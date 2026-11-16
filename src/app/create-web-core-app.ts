@@ -6,7 +6,7 @@
  * wires the colour scheme, delegates the platform-agnostic core phases to
  * `bootFoundationCore` (runtime environment through HTTP client, with module
  * registration bridged through its contributions callback), then runs stores,
- * i18n, routing, module boot, chunk recovery, realtime and the release
+ * i18n, routing, realtime, module boot, chunk recovery and the release
  * monitors. Every subsystem is overridable through the options and every
  * platform dependency is injectable, so applications boot with a declarative
  * options object and tests drive the full sequence through seams. The returned
@@ -78,9 +78,9 @@ const BOOT_PHASES = [
     'locale',
     'router',
     'error-handling',
+    'realtime',
     'boot-modules',
     'chunk-recovery',
-    'realtime',
     'monitors',
 ] as const;
 
@@ -297,7 +297,7 @@ export interface WebCoreAppOptions<T extends FoundationConfig> {
     /** Feature-flag provider factory; defaults to the config-driven static adapter. */
     readonly featureFlags?: (settings: Readonly<T>) => FeatureFlags;
 
-    /** Opt-in realtime connection, installed into the realtime holder and disconnected on dispose. No default - the kernel knows no endpoint. */
+    /** Opt-in realtime connection, installed into the realtime holder before the modules boot, handed to them unconnected, and disconnected on dispose. No default - the kernel knows no endpoint. */
     readonly realtime?: (settings: Readonly<T>) => RealtimeConnection;
 
     /** State-only notification services. */
@@ -476,18 +476,17 @@ interface AppIntegration {
 
     /** Runs the module boot teardowns. */
     readonly moduleTeardown: () => void;
+
+    /** The installed realtime connection, or null when none. */
+    readonly realtime: RealtimeConnection | null;
 }
 
 /**
- * The realtime connection, monitors and chunk-recovery teardown from the
- * release phases.
+ * The monitors and chunk-recovery teardown from the release phases.
  */
 interface ReleaseLayer {
     /** Removes the chunk-recovery error handler, or null when disabled. */
     readonly chunkRecoveryTeardown: (() => void) | null;
-
-    /** The installed realtime connection, or null when none. */
-    readonly realtimeConnection: RealtimeConnection | null;
 
     /** The started release monitors. */
     readonly monitors: WiredMonitors;
@@ -501,7 +500,9 @@ interface ReleaseLayer {
  * @throws {ModuleRegistryError} when the module list fails validation
  * @throws {FoundationBootError} when the monitor options cannot work
  */
-export async function createWebCoreApp<T extends FoundationConfig>(options: WebCoreAppOptions<T>): Promise<WebCoreApp<T>> {
+export async function createWebCoreApp<T extends FoundationConfig>(
+    options: WebCoreAppOptions<T>,
+): Promise<WebCoreApp<T>> {
     const platform = resolvePlatform(options.platform);
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
 
@@ -605,13 +606,15 @@ async function bootModuleLayer<T extends FoundationConfig>(
 
 /**
  * Run the app-integration phases: wire the router, install global error
- * handling and page tracking, then boot the modules.
+ * handling and page tracking, install the realtime connection, then boot the
+ * modules with it.
  *
  * @param options - the application's modules, configuration and overrides
  * @param platform - the resolved platform seams
  * @param foundation - the services and application from the foundation phases
  * @param moduleLayer - the HTTP client and locale wiring from the module phases
- * @returns the router and the teardown handles installed by these phases
+ * @returns the router, the realtime connection and the teardown handles
+ * installed by these phases
  */
 async function wireAppIntegration<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
@@ -648,6 +651,10 @@ async function wireAppIntegration<T extends FoundationConfig>(
         trail: observability.trail,
     });
 
+    recordPhase('realtime');
+
+    const realtime = resolveRealtime(settings, options.realtime);
+
     recordPhase('boot-modules');
 
     const moduleTeardown = await bootModules(registry.modules, {
@@ -659,21 +666,22 @@ async function wireAppIntegration<T extends FoundationConfig>(
         storage,
         config: repository,
         platform,
+        realtime,
     });
 
-    return { router, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, moduleTeardown };
+    return { router, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, moduleTeardown, realtime };
 }
 
 /**
- * Run the release phases: wire chunk-load recovery, connect realtime, and start
- * the update and connectivity monitors.
+ * Run the release phases: wire chunk-load recovery and start the update and
+ * connectivity monitors.
  *
  * @param options - the application's modules, configuration and overrides
  * @param platform - the resolved platform seams
  * @param runtimeUrl - the runtime document URL, the default monitor poll target
  * @param foundation - the services and application from the foundation phases
  * @param integration - the router wired by the app-integration phases
- * @returns the chunk-recovery teardown, realtime connection and monitors
+ * @returns the chunk-recovery teardown and monitors
  */
 function wireReleaseMonitors<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
@@ -695,19 +703,42 @@ function wireReleaseMonitors<T extends FoundationConfig>(
         options.monitors?.chunkRecovery,
     );
 
-    recordPhase('realtime');
-
-    const realtimeConnection = options.realtime === undefined ? null : options.realtime(settings);
-
-    if (realtimeConnection !== null) {
-        installRealtime(realtimeConnection);
-    }
-
     recordPhase('monitors');
 
     const monitors = resolveMonitors(settings, runtimeUrl, platform, options.monitors);
 
-    return { chunkRecoveryTeardown, realtimeConnection, monitors };
+    return { chunkRecoveryTeardown, monitors };
+}
+
+/**
+ * Collect the services the application handle exposes from the boot phases.
+ *
+ * @param foundation - the services and application from the foundation phases
+ * @param moduleLayer - the HTTP client, eager stores and locale wiring
+ * @param integration - the router, realtime connection and teardown handles
+ * @returns the services exposed on the application handle
+ */
+function buildServices<T extends FoundationConfig>(
+    foundation: AppFoundation<T>,
+    moduleLayer: ModuleLayer,
+    integration: AppIntegration,
+): WebCoreServices<T> {
+    const { repository, storage, colorScheme, toastService, confirmService, observability, flags } = foundation;
+
+    return {
+        config: repository,
+        http: foundation.http,
+        storage,
+        toasts: toastService,
+        confirm: confirmService,
+        reporting: observability.reporter,
+        analytics: observability.analytics,
+        logger: observability.logger,
+        featureFlags: flags,
+        localeSwitcher: moduleLayer.switcher,
+        colorScheme,
+        realtime: integration.realtime,
+    };
 }
 
 /**
@@ -715,9 +746,8 @@ function wireReleaseMonitors<T extends FoundationConfig>(
  *
  * @param foundation - the services and application from the foundation phases
  * @param moduleLayer - the HTTP client, eager stores and locale wiring
- * @param integration - the router and teardown handles
- * @param release - the realtime connection, monitors and chunk-recovery
- * teardown
+ * @param integration - the router, realtime connection and teardown handles
+ * @param release - the monitors and chunk-recovery teardown
  * @returns the assembled application handle, ready to start
  */
 function assembleApp<T extends FoundationConfig>(
@@ -726,11 +756,10 @@ function assembleApp<T extends FoundationConfig>(
     integration: AppIntegration,
     release: ReleaseLayer,
 ): WebCoreApp<T> {
-    const { app, pinia, settings, repository, storage, colorScheme, toastService, confirmService, observability, flags } =
-        foundation;
-    const { switcher, i18n } = moduleLayer;
+    const { app, pinia, settings, colorScheme } = foundation;
+    const { i18n } = moduleLayer;
     const { router } = integration;
-    const { realtimeConnection, monitors } = release;
+    const { monitors } = release;
 
     let disposed = false;
 
@@ -740,20 +769,7 @@ function assembleApp<T extends FoundationConfig>(
         pinia,
         i18n,
         config: settings,
-        services: {
-            config: repository,
-            http: foundation.http,
-            storage,
-            toasts: toastService,
-            confirm: confirmService,
-            reporting: observability.reporter,
-            analytics: observability.analytics,
-            logger: observability.logger,
-            featureFlags: flags,
-            localeSwitcher: switcher,
-            colorScheme,
-            realtime: realtimeConnection,
-        },
+        services: buildServices(foundation, moduleLayer, integration),
         monitors,
         async start(selector: string | Element = DEFAULT_MOUNT_SELECTOR): Promise<void> {
             await router.isReady();
@@ -779,9 +795,9 @@ function assembleApp<T extends FoundationConfig>(
  * OS-change listener.
  *
  * @param moduleLayer - the eager store handles to dispose
- * @param integration - the module boot and page, error and title teardowns
- * @param release - the monitors, realtime connection and chunk-recovery
- * teardown
+ * @param integration - the realtime connection, and the module boot, page,
+ * error and title teardowns
+ * @param release - the monitors and chunk-recovery teardown
  * @param colorScheme - the colour-scheme service to dispose
  */
 function teardownApp(
@@ -791,12 +807,12 @@ function teardownApp(
     colorScheme: ColorSchemeService,
 ): void {
     const { storeHandles } = moduleLayer;
-    const { moduleTeardown, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown } = integration;
-    const { chunkRecoveryTeardown, realtimeConnection, monitors } = release;
+    const { moduleTeardown, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, realtime } = integration;
+    const { chunkRecoveryTeardown, monitors } = release;
 
     monitors.connectivity?.stop();
     monitors.updates?.stop();
-    realtimeConnection?.disconnect();
+    realtime?.disconnect();
     chunkRecoveryTeardown?.();
     moduleTeardown();
 
@@ -882,6 +898,29 @@ function resolveLocale<T extends FoundationConfig>(
         localeCandidates: options.platform?.localeCandidates ?? [...platform.targetWindow.navigator.languages],
         targetDocument: platform.targetDocument,
     });
+}
+
+/**
+ * Build the opt-in realtime connection and install it into the realtime holder,
+ * unconnected.
+ *
+ * @param settings - the frozen application configuration
+ * @param factory - the caller's realtime connection factory, when any
+ * @returns the installed connection, or null when none was configured
+ */
+function resolveRealtime<T extends FoundationConfig>(
+    settings: Readonly<T>,
+    factory: ((settings: Readonly<T>) => RealtimeConnection) | undefined,
+): RealtimeConnection | null {
+    if (factory === undefined) {
+        return null;
+    }
+
+    const connection = factory(settings);
+
+    installRealtime(connection);
+
+    return connection;
 }
 
 /**

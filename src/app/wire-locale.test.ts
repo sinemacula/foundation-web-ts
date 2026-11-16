@@ -25,10 +25,16 @@ const config: LocaleWiringConfig = {
     },
 };
 
+/**
+ * Build a route-less module that contributes the given locale loader.
+ */
 function moduleWithLocales(name: string, loader: LocaleMessageLoader): ModuleDefinition {
     return { name, routes: [], locales: loader };
 }
 
+/**
+ * Build the locale wiring options with any overrides applied.
+ */
 function baseOptions(overrides: Partial<WireLocaleOptions> = {}): WireLocaleOptions {
     return {
         config,

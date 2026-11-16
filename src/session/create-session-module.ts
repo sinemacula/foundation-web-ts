@@ -3,36 +3,39 @@
  *
  * Builds the opt-in session module: a plain registry entry that installs the
  * session context, contributes the bearer-token interceptor and the single
- * unauthorized (token-refresh) handler at the register phase, instantiates the
- * session store at the stores phase, and wires cross-tab session
- * synchronisation, proactive token refresh, session-loss redirection and
- * identity fan-out at the boot phase. Login UI, locale copy and the user field
- * mapping stay app-side.
+ * unauthorized (token-refresh) handler at the register phase, starts hydrating
+ * the persisted session at the stores phase, and wires the session lifecycle at
+ * the boot phase. Login UI, locale copy and the user field mapping stay
+ * app-side.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
-import { watch } from 'vue';
-import type { RouteLocationRaw, Router } from 'vue-router';
+import type { Pinia } from 'pinia';
+import type { RouteLocationRaw } from 'vue-router';
 
-import { analytics, api, featureFlags, reporting } from '../app/services';
 import { createBearerTokenInterceptor } from '@sinemacula/foundation/http/bearer-token-interceptor';
 import type { HttpClient } from '@sinemacula/foundation/http/http-client';
 import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
-import type { ModuleBootContext, ModuleDefinition, ModuleRegisterContext, ModuleTeardown } from '../module/module';
-import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { createDefaultSessionApi } from '@sinemacula/foundation/session/default-session-api';
-import { sanitiseRedirectTarget } from '@sinemacula/foundation/session/redirect';
-import { appendRedirectTarget } from './redirect';
-import type { SessionApi, SessionDevice } from '@sinemacula/foundation/session/session-api';
+import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import type { PasswordCredentials, SessionApi, SessionDevice } from '@sinemacula/foundation/session/session-api';
+import { SessionError } from '@sinemacula/foundation/session/session-error';
+import type { RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
+import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionRoutes as BaseSessionRoutes } from '@sinemacula/foundation/session/session-routes';
 import type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
 import { DEFAULT_SESSION_STORAGE_KEYS } from '@sinemacula/foundation/session/session-storage-keys';
-import { installSessionContext, sessionContext } from './session-context';
-import type { SessionStore } from './session-store';
-import { useSessionStore } from './session-store';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
+import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
+import { api, reporting } from '../app/services';
+import type { ModuleDefinition, ModuleRegisterContext, ResolvedPlatform } from '../module/module';
+import { StrictWebStorage } from '../storage/strict-web-storage';
+import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
+import { installSessionContext, sessionContext } from './session-context';
+import { bootSessionLifecycle } from './session-lifecycle';
+import { useSessionStore } from './session-store';
 
 export type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
 
@@ -43,6 +46,11 @@ export type { SessionStorageKeys } from '@sinemacula/foundation/session/session-
  * application's fallback or errors module owns the page.
  */
 export type SessionRoutes = BaseSessionRoutes<RouteLocationRaw>;
+
+/**
+ * Builds the session API gateway over the application HTTP client.
+ */
+export type SessionApiFactory<U extends SessionUser, C> = (http: HttpClient) => SessionApi<U, C>;
 
 /**
  * Per-channel identity mappings fanned out to the reporting, analytics and
@@ -69,27 +77,15 @@ export interface SessionIdentityMapping<U extends SessionUser> {
 }
 
 /**
- * Options for {@link createSessionModule}; every default mirrors the
- * organisation's reference application.
+ * The settings of {@link createSessionModule} other than the gateway; every
+ * default mirrors the organisation's reference application.
  */
-export interface SessionModuleOptions<
-    U extends SessionUser = SessionUser,
-    C = {
-        /** The submitted account email address. */
-        email: string;
-
-        /** The submitted account password. */
-        password: string;
-    },
-> {
+export interface SessionModuleSettings<U extends SessionUser> {
     /** Registry name (the module has no routes and no locales). Default 'session'. */
     readonly name?: string;
 
     /** The pinia store id the session store registers under. Default 'auth'. */
     readonly storeId?: string;
-
-    /** Session API factory over the application HTTP client. Default {@link createDefaultSessionApi}. */
-    readonly api?: (http: HttpClient) => SessionApi<U, C>;
 
     /** Overrides for the persisted storage keys. */
     readonly storageKeys?: Partial<SessionStorageKeys>;
@@ -97,7 +93,10 @@ export interface SessionModuleOptions<
     /** Overrides for the route identity. */
     readonly routes?: Partial<SessionRoutes>;
 
-    /** How long before expiry the proactive refresh fires, in milliseconds. Default 60 seconds. */
+    /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given. Cross-tab sync observes that localStorage key, so a persistence elsewhere disables `crossTabSync` and calls the store's `hydrate()` on its own change notifications. */
+    readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
+
+    /** How long before expiry the session counts as expiring, refreshed proactively and before a realtime reconnect, in milliseconds. Default 60 seconds. */
     readonly refreshSkewMs?: number;
 
     /** The operating-system label reported in the device fingerprint. Default 'WEB'. */
@@ -106,7 +105,7 @@ export interface SessionModuleOptions<
     /** Device uuid factory. Default `crypto.randomUUID()`. */
     readonly generateUuid?: () => string;
 
-    /** Mirror session changes made by other tabs. Default true. */
+    /** Mirror session changes other tabs persist. Default true. */
     readonly crossTabSync?: boolean;
 
     /** Refresh the session ahead of its expiry. Default true. */
@@ -115,9 +114,43 @@ export interface SessionModuleOptions<
     /** Redirect to the login route when the session transitions from authenticated to unauthenticated, carrying the sanitised current path as the redirect query parameter. Default true. */
     readonly sessionLossRedirect?: boolean;
 
+    /** Connect the application's realtime connection while a session is held and disconnect it when the session ends. Default true; inert without a realtime connection. */
+    readonly realtimeFollowsSession?: boolean;
+
     /** Identity fan-out to the reporting, analytics and feature-flag holders; per-channel overrides merge over the defaults, and false disables the fan-out entirely. */
     readonly identity?: false | SessionIdentityMapping<U>;
 }
+
+/**
+ * The gateway option: optional over the default user shape, where it defaults
+ * to the foundation gateway, and required for a custom user shape, which only
+ * the application's gateway can map.
+ */
+export type SessionGatewayOption<U extends SessionUser, C> = SessionUser extends U
+    ? {
+          /** Session API factory over the application HTTP client. Default the foundation gateway on the platform clock. */
+          readonly api?: SessionApiFactory<U, C>;
+      }
+    : {
+          /** Session API factory over the application HTTP client, mapping the custom user shape. */
+          readonly api: SessionApiFactory<U, C>;
+      };
+
+/**
+ * Options for {@link createSessionModule}.
+ */
+export type SessionModuleOptions<
+    U extends SessionUser = SessionUser,
+    C = PasswordCredentials,
+> = SessionModuleSettings<U> & SessionGatewayOption<U, C>;
+
+/**
+ * The options every overload accepts, erased to the default user shape.
+ */
+type AnySessionModuleOptions = SessionModuleSettings<SessionUser> & {
+    /** Session API factory over the application HTTP client. */
+    readonly api?: SessionApiFactory<SessionUser, unknown>;
+};
 
 const DEFAULT_ROUTES: SessionRoutes = {
     login: { name: 'auth.login' },
@@ -130,458 +163,185 @@ const DEFAULT_MODULE_NAME = 'session';
 const DEFAULT_STORE_ID = 'auth';
 const DEFAULT_DEVICE_OS = 'WEB';
 const DEFAULT_REFRESH_SKEW_MS = 60_000;
-const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 
 /**
- * Create the session module.
+ * Create the session module over the application's own gateway, inferring the
+ * user and credential shapes from it.
  *
- * At register it installs the session context (storage keys, route identity,
- * the lazily-built API gateway over the installed HTTP client, and the single
- * token-refresh coordinator), contributes the bearer-token interceptor, and
- * claims the unauthorized-handler slot with the coordinator. At boot it wires
- * the session lifecycle and returns one teardown removing everything it
- * installed.
+ * @param options - the gateway and overrides for the reference defaults
+ * @returns the module definition for the application registry
+ */
+export function createSessionModule<U extends SessionUser, C>(
+    options: SessionModuleSettings<U> & {
+        /** Session API factory over the application HTTP client. */
+        readonly api: SessionApiFactory<U, C>;
+    },
+): ModuleDefinition;
+
+/**
+ * Create the session module. Over the default user shape the gateway defaults
+ * to the foundation one; a custom user shape requires the application's own.
  *
  * @param options - overrides for the reference-application defaults
  * @returns the module definition for the application registry
  */
-export function createSessionModule<
-    U extends SessionUser = SessionUser,
-    C = {
-        /** The submitted account email address. */
-        email: string;
+export function createSessionModule<U extends SessionUser = SessionUser, C = PasswordCredentials>(
+    ...options: SessionUser extends U ? [options?: SessionModuleOptions<U, C>] : [options: SessionModuleOptions<U, C>]
+): ModuleDefinition;
 
-        /** The submitted account password. */
-        password: string;
-    },
->(options: SessionModuleOptions<U, C> = {}): ModuleDefinition {
+export function createSessionModule(options: AnySessionModuleOptions = {}): ModuleDefinition {
     const storageKeys: SessionStorageKeys = { ...DEFAULT_SESSION_STORAGE_KEYS, ...options.storageKeys };
     const routes: SessionRoutes = { ...DEFAULT_ROUTES, ...options.routes };
-    const storeId = options.storeId ?? DEFAULT_STORE_ID;
-    const deviceOs = options.deviceOs ?? DEFAULT_DEVICE_OS;
-    const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
-    const apiFactory =
-        options.api ?? ((http: HttpClient): SessionApi<U, C> => createDefaultSessionApi<U>(http) as SessionApi<U, C>);
-    const identity = resolveIdentityMapping(options.identity);
-    const lifecycle: LifecycleOptions<U> = {
-        storageKeys,
-        routes,
-        refreshSkewMs: options.refreshSkewMs ?? DEFAULT_REFRESH_SKEW_MS,
-        crossTabSync: options.crossTabSync ?? true,
-        proactiveRefresh: options.proactiveRefresh ?? true,
-        sessionLossRedirect: options.sessionLossRedirect ?? true,
-        identity,
-    };
 
     return {
         name: options.name ?? DEFAULT_MODULE_NAME,
         routes: [],
-        register: context =>
-            registerSession<U, C>(context, { storageKeys, routes, storeId, apiFactory, generateUuid, deviceOs }),
-        stores: [pinia => useSessionStore(pinia)],
-        boot: context => bootSessionLifecycle(context, lifecycle),
+        register: context => {
+            registerSession(context, options, storageKeys, routes);
+        },
+        stores: [
+            pinia => {
+                void sessionContext().ready();
+
+                return useSessionStore(pinia);
+            },
+        ],
+        boot: context =>
+            bootSessionLifecycle(context, {
+                routes,
+                sessionKey: storageKeys.session,
+                crossTabSync: options.crossTabSync ?? true,
+                proactiveRefresh: options.proactiveRefresh ?? true,
+                sessionLossRedirect: options.sessionLossRedirect ?? true,
+                realtimeFollowsSession: options.realtimeFollowsSession ?? true,
+                identity: options.identity ?? {},
+            }),
     };
-}
-
-/**
- * The resolved register-phase collaborators the session context is built from.
- */
-interface RegisterConfig<U extends SessionUser, C> {
-    /** The resolved storage keys the session persists under. */
-    readonly storageKeys: SessionStorageKeys;
-
-    /** The resolved route identity. */
-    readonly routes: SessionRoutes;
-
-    /** The pinia store id the session store registers under. */
-    readonly storeId: string;
-
-    /** Builds the session API gateway over the application HTTP client. */
-    readonly apiFactory: (http: HttpClient) => SessionApi<U, C>;
-
-    /** The device uuid factory. */
-    readonly generateUuid: () => string;
-
-    /** The operating-system label reported in the device fingerprint. */
-    readonly deviceOs: string;
 }
 
 /**
  * Install the session context, contribute the bearer-token interceptor, and
- * claim the single unauthorized-handler slot at the register phase.
+ * claim the single unauthorized-handler slot. Every request, and every refresh,
+ * first awaits the session's hydration, which itself sends no request.
  *
  * @param context - the module register context
- * @param config - the resolved collaborators the session context is built from
- */
-function registerSession<U extends SessionUser, C>(context: ModuleRegisterContext, config: RegisterConfig<U, C>): void {
-    const coordinator = new TokenRefreshCoordinator({
-        refresh: () => useSessionStore(context.pinia).refresh(),
-    });
-
-    let gateway: SessionApi<U, C> | null = null;
-
-    installSessionContext<U>({
-        storageKeys: config.storageKeys,
-        routes: config.routes,
-        storage: context.storage,
-        storeId: config.storeId,
-        coordinator,
-        parseTimestamp: parseLegacyTimestamp,
-        device: () =>
-            deviceFingerprint(context.storage, config.storageKeys.deviceUuid, config.generateUuid, config.deviceOs),
-        get api(): SessionApi<U> {
-            gateway ??= config.apiFactory(api());
-
-            return gateway as unknown as SessionApi<U>;
-        },
-    });
-
-    context.http.addRequestInterceptor(
-        createBearerTokenInterceptor({
-            getAccessToken: () => useSessionStore(context.pinia).accessToken,
-        }),
-    );
-    context.http.setUnauthorizedHandler(() => coordinator.refresh());
-}
-
-/** The resolved boot-phase toggles and collaborator inputs. */
-interface LifecycleOptions<U extends SessionUser> {
-    /** The resolved storage keys the session persists under. */
-    readonly storageKeys: SessionStorageKeys;
-
-    /** The resolved route identity. */
-    readonly routes: SessionRoutes;
-
-    /** How long before expiry the proactive refresh fires, in milliseconds. */
-    readonly refreshSkewMs: number;
-
-    /** Whether to mirror session changes made by other tabs. */
-    readonly crossTabSync: boolean;
-
-    /** Whether to refresh the session ahead of its expiry. */
-    readonly proactiveRefresh: boolean;
-
-    /** Whether to redirect to login when the session is lost. */
-    readonly sessionLossRedirect: boolean;
-
-    /** The resolved identity fan-out mapping, or null when disabled. */
-    readonly identity: Required<SessionIdentityMapping<U>> | null;
-}
-
-/**
- * Wire the session lifecycle at the boot phase.
- *
- * @param context - the module boot context
- * @param options - the resolved lifecycle options
- * @returns one teardown removing the listener, timer and watchers
- */
-function bootSessionLifecycle<U extends SessionUser>(
-    context: ModuleBootContext,
-    options: LifecycleOptions<U>,
-): ModuleTeardown {
-    const store = useSessionStore<U>(context.pinia);
-    const teardowns: ModuleTeardown[] = [];
-
-    if (options.crossTabSync) {
-        teardowns.push(wireCrossTabSync(context, store, options.storageKeys));
-    }
-
-    if (options.proactiveRefresh) {
-        teardowns.push(wireProactiveRefresh(context, store, options.refreshSkewMs));
-    }
-
-    if (store.isAuthenticated) {
-        store.rehydrateUser().catch(() => {
-            // Swallowed: a dead session is handled by the 401-refresh flow or
-            // the session-loss watcher.
-        });
-    }
-
-    if (options.sessionLossRedirect) {
-        teardowns.push(wireSessionLossRedirect(context, store, options.routes));
-    }
-
-    if (options.identity !== null) {
-        teardowns.push(wireIdentityFanOut(store, options.identity));
-    }
-
-    return () => {
-        for (const teardown of [...teardowns].reverse()) {
-            teardown();
-        }
-    };
-}
-
-/**
- * Mirror another tab's session change onto this tab's store for as long as the
- * returned teardown is uncalled.
- *
- * @param context - the module boot context
- * @param store - the session store
+ * @param options - the module options
  * @param storageKeys - the resolved storage keys
- * @returns a teardown detaching the `storage` listener
+ * @param routes - the resolved route identity
  */
-function wireCrossTabSync(
-    context: ModuleBootContext,
-    store: SessionStore,
+function registerSession(
+    context: ModuleRegisterContext,
+    options: AnySessionModuleOptions,
     storageKeys: SessionStorageKeys,
-): ModuleTeardown {
-    const target = context.platform.targetWindow;
-    const onStorage = createStorageListener(store, storageKeys.accessToken);
-
-    target.addEventListener('storage', onStorage);
-
-    return () => {
-        target.removeEventListener('storage', onStorage);
-    };
-}
-
-/**
- * Arm the proactive refresh timer and keep it tracking the session expiry.
- *
- * @param context - the module boot context
- * @param store - the session store
- * @param refreshSkewMs - how long before expiry the refresh fires
- * @returns a teardown stopping the expiry watcher and cancelling the timer
- */
-function wireProactiveRefresh(context: ModuleBootContext, store: SessionStore, refreshSkewMs: number): ModuleTeardown {
-    const scheduler = createRefreshScheduler(sessionContext().coordinator, context.platform.clock, refreshSkewMs);
-    const stopExpiryWatch = watch(() => store.expiresAtEpochMs, scheduler.schedule, { immediate: true });
-
-    return () => {
-        stopExpiryWatch();
-        scheduler.cancel();
-    };
-}
-
-/**
- * Redirect to the login route whenever the session transitions from
- * authenticated to unauthenticated.
- *
- * @param context - the module boot context
- * @param store - the session store
- * @param routes - the resolved route identity
- * @returns a teardown stopping the session-loss watcher
- */
-function wireSessionLossRedirect(
-    context: ModuleBootContext,
-    store: SessionStore,
     routes: SessionRoutes,
-): ModuleTeardown {
-    return watch(
-        () => store.isAuthenticated,
-        (authenticated, previously) => {
-            if (previously && !authenticated) {
-                redirectToLogin(context.router, routes);
-            }
+): void {
+    const { pinia, platform, storage } = context;
+    const apiFactory = options.api ?? (http => createDefaultSessionApi<unknown>(http, { now: platform.clock }));
+    const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
+    const deviceOs = options.deviceOs ?? DEFAULT_DEVICE_OS;
+
+    const ready = createReadiness(pinia);
+    const coordinator = createRefreshAuthority(pinia, ready);
+
+    let gateway: SessionApi<SessionUser, unknown> | null = null;
+
+    installSessionContext({
+        persistence: options.persistence?.(platform) ?? createDefaultPersistence(platform, storageKeys.session),
+        routes,
+        storeId: options.storeId ?? DEFAULT_STORE_ID,
+        coordinator,
+        ready,
+        clock: platform.clock,
+        refreshSkewMs: options.refreshSkewMs ?? DEFAULT_REFRESH_SKEW_MS,
+        device: () => deviceFingerprint(storage, storageKeys.deviceUuid, generateUuid, deviceOs),
+        get api(): SessionApi<SessionUser, unknown> {
+            gateway ??= apiFactory(api());
+
+            return gateway;
         },
-    );
+    });
+
+    const attachBearer = createBearerTokenInterceptor({
+        getAccessToken: () => useSessionStore(pinia).accessToken,
+    });
+
+    context.http.addRequestInterceptor(async request => {
+        await ready();
+
+        return attachBearer(request);
+    });
+    context.http.setUnauthorizedHandler(async () => (await coordinator.refresh()).kind === 'refreshed');
 }
 
 /**
- * Fan the session identity out to the reporting, analytics and feature-flag
- * holders whenever the session user changes.
+ * Build the session readiness: hydrate the persisted session once, on first
+ * call, reporting a failure and leaving the state as it stands.
  *
- * @param store - the session store
- * @param mapping - the resolved per-channel identity mappings
- * @returns a teardown stopping the identity watcher
+ * @param pinia - the application pinia
+ * @returns resolves the shared hydration, settled either way
  */
-function wireIdentityFanOut<U extends SessionUser>(
-    store: SessionStore<U>,
-    mapping: Required<SessionIdentityMapping<U>>,
-): ModuleTeardown {
-    return watch(
-        () => store.user,
-        user => {
-            applyIdentity(mapping, user);
-        },
-    );
-}
+function createReadiness(pinia: Pinia): () => Promise<void> {
+    let hydration: Promise<void> | null = null;
 
-/**
- * Build the `storage` event handler that mirrors another tab's session change
- * onto this tab's store.
- *
- * @param store - the session store
- * @param accessTokenKey - the raw storage key carrying the access token
- * @returns the event handler to attach to the target window
- */
-function createStorageListener(store: SessionStore, accessTokenKey: string): (event: StorageEvent) => void {
-    return (event: StorageEvent): void => {
-        if (event.key !== accessTokenKey && event.key !== null) {
-            return;
-        }
-
-        if (event.newValue === null) {
-            store.clearLocal();
-
-            return;
-        }
-
-        store.hydrateFromStorage();
-        store.rehydrateUser().catch(() => {
-            // Swallowed: a dead session is handled by the 401-refresh flow or
-            // the session-loss watcher.
-        });
-    };
-}
-
-/** A schedule/cancel pair for the proactive refresh timer. */
-interface RefreshScheduler {
-    /** Arm a proactive refresh ahead of the given expiry, or cancel when null. */
-    readonly schedule: (expiresAtEpochMs: number | null) => void;
-
-    /** Cancel any pending proactive refresh. */
-    readonly cancel: () => void;
-}
-
-/**
- * Build a scheduler that arranges a single proactive refresh ahead of the
- * session expiry, replacing any previously scheduled attempt.
- *
- * The timer routes through the token-refresh coordinator - never the store
- * directly - so a proactive refresh can never race a reactive 401 refresh.
- *
- * @param coordinator - the single refresh authority
- * @param clock - resolves the current time in epoch milliseconds
- * @param refreshSkewMs - how long before expiry to fire the refresh
- * @returns the scheduler
- */
-function createRefreshScheduler(
-    coordinator: TokenRefreshCoordinator,
-    clock: () => number,
-    refreshSkewMs: number,
-): RefreshScheduler {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    /** Cancel any pending proactive refresh, leaving no timer armed. */
-    const cancel = (): void => {
-        if (timer !== null) {
-            clearTimeout(timer);
-            timer = null;
-        }
-    };
-
-    /**
-     * Arm a single proactive refresh ahead of the session expiry, replacing any
-     * previously scheduled attempt.
-     *
-     * @param expiresAtEpochMs - the expiry to refresh ahead of, or null to
-     * cancel without arming a new timer
-     */
-    const schedule = (expiresAtEpochMs: number | null): void => {
-        cancel();
-
-        if (expiresAtEpochMs === null) {
-            return;
-        }
-
-        const delay = Math.max(0, expiresAtEpochMs - clock() - refreshSkewMs);
-
-        if (delay > MAX_TIMEOUT_DELAY_MS) {
-            // setTimeout delays beyond the signed 32-bit range fire
-            // immediately; re-evaluate at the horizon instead.
-            timer = setTimeout(() => {
-                schedule(expiresAtEpochMs);
-            }, MAX_TIMEOUT_DELAY_MS);
-
-            return;
-        }
-
-        timer = setTimeout(() => {
-            coordinator.refresh().catch(() => {
-                // A failed proactive refresh is handled by the 401-refresh flow
-                // or the session-loss watcher.
+    return () => {
+        hydration ??= useSessionStore(pinia)
+            .hydrate()
+            .catch((error: unknown) => {
+                reporting().captureError(error);
             });
-        }, delay);
-    };
 
-    return { schedule, cancel };
+        return hydration;
+    };
 }
 
 /**
- * Push the login route, carrying the sanitised current path as the redirect
- * query parameter when it is a safe return target.
+ * Build the single refresh authority. Each refresh first awaits readiness, so
+ * an empty store is never refreshed before the persisted session is in, and a
+ * failed refresh is reported once, however many callers share it.
  *
- * @param router - the application router
- * @param routes - the resolved route identity
+ * @param pinia - the application pinia
+ * @param ready - the session readiness
+ * @returns the refresh coordinator
  */
-function redirectToLogin(router: Router, routes: SessionRoutes): void {
-    const target = sanitiseRedirectTarget(router.currentRoute.value.fullPath, routes.loginPath);
-    const destination = target === null ? routes.login : appendRedirectTarget(routes.login, target);
+function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): TokenRefreshCoordinator<RefreshOutcome> {
+    return new TokenRefreshCoordinator<RefreshOutcome>({
+        refresh: async () => {
+            await ready();
 
-    router.push(destination).catch(() => {
-        // Swallowed: a rejected navigation must not surface as an unhandled
-        // rejection.
+            const outcome = await useSessionStore(pinia).refresh();
+
+            if (outcome.kind === 'failed') {
+                reporting().captureError(outcome.error);
+            }
+
+            return outcome;
+        },
     });
 }
 
 /**
- * Merge the caller's identity mapping over the per-channel defaults.
+ * Persist the session snapshot in the target window's localStorage, failing
+ * loudly, under a Web Locks lock every tab shares.
  *
- * @param identity - the caller-supplied mapping, false to disable, or undefined
- * @returns the fully-resolved mapping, or null when the fan-out is disabled
+ * @param platform - the resolved platform seams
+ * @param key - the key the snapshot persists under
+ * @returns the session persistence
+ * @throws {@link SessionError} when the Web Locks API is unavailable
  */
-function resolveIdentityMapping<U extends SessionUser>(
-    identity: false | SessionIdentityMapping<U> | undefined,
-): Required<SessionIdentityMapping<U>> | null {
-    if (identity === false) {
-        return null;
+function createDefaultPersistence(platform: ResolvedPlatform, key: string): SessionPersistence {
+    const locks: LockManager | undefined = platform.targetWindow.navigator.locks;
+
+    if (locks === undefined) {
+        throw new SessionError(
+            'The session module needs the Web Locks API to share the persisted session across tabs; ' +
+                'pass the persistence option where it is unavailable.',
+        );
     }
 
-    return {
-        reporting: identity?.reporting ?? defaultReportedIdentity,
-        analytics: identity?.analytics ?? ((user: U): string => String(user.id)),
-        featureFlags:
-            identity?.featureFlags ??
-            ((user: U): Readonly<Record<string, string>> => ({
-                userId: String(user.id),
-            })),
-    };
-}
-
-/**
- * Map a session user onto the default error-reporter identity.
- *
- * @param user - the signed-in user
- * @returns the reported identity, with null email and name omitted
- */
-function defaultReportedIdentity(user: SessionUser): {
-    /** The reporter identity id. */
-    id: string;
-
-    /** The reporter identity email; omitted when null. */
-    email?: string;
-
-    /** The reporter identity name; omitted when null. */
-    name?: string;
-} {
-    return {
-        id: String(user.id),
-        ...(user.email === null ? {} : { email: user.email }),
-        ...(user.name === null ? {} : { name: user.name }),
-    };
-}
-
-/**
- * Fan the session identity out to the reporting, analytics and feature-flag
- * holders, clearing all three together on sign-out.
- *
- * @param mapping - the resolved per-channel mappings
- * @param user - the session user, or null when signed out
- */
-function applyIdentity<U extends SessionUser>(mapping: Required<SessionIdentityMapping<U>>, user: U | null): void {
-    if (user === null) {
-        reporting().setUser(null);
-        analytics().reset();
-        featureFlags().setContext({});
-
-        return;
-    }
-
-    reporting().setUser(mapping.reporting(user));
-    analytics().identify(mapping.analytics(user));
-    featureFlags().setContext(mapping.featureFlags(user));
+    return new KeyValueSessionPersistence(new StrictWebStorage(platform.targetWindow.localStorage), {
+        key,
+        lock: new WebLocksSessionLock(locks, `${key}:lock`),
+    });
 }
 
 /**
@@ -613,17 +373,4 @@ function deviceFingerprint(
     storage.set(key, uuid);
 
     return { uuid, os };
-}
-
-/**
- * Parse a legacy persisted wire timestamp (`YYYY-MM-DD HH:MM:SS`, assumed UTC)
- * as an epoch-millisecond instant during hydration.
- *
- * @param value - the persisted legacy timestamp
- * @returns the parsed instant in epoch milliseconds, or null when unparseable
- */
-function parseLegacyTimestamp(value: string): number | null {
-    const parsed = Date.parse(`${value.replace(' ', 'T')}Z`);
-
-    return Number.isNaN(parsed) ? null : parsed;
 }

@@ -8,48 +8,31 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
-import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { can, useCan } from './authorization';
-import type { SessionApi } from '@sinemacula/foundation/session/session-api';
 import { installSessionContext, resetSessionContext } from './session-context';
 import { useSessionStore } from './session-store';
-import type { SessionUser } from '@sinemacula/foundation/session/session-user';
-
-/** Build a session API stand-in that fails loudly if any method is invoked. */
-function createSessionApiStub(): SessionApi {
-    const fail = (): Promise<never> => Promise.reject(new Error('not implemented'));
-
-    return { login: fail, refresh: fail, logout: fail, currentUser: fail };
-}
+import { createTestSessionContext } from './test-support/session-fixtures';
 
 /** An authenticated user record granted the given permissions. */
 function userWithPermissions(permissions: readonly string[]): SessionUser {
     return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions };
 }
 
+/** The writable session user slot on the store state. */
+interface WritableSessionUser {
+    /** The authenticated user, or null when signed out. */
+    user: SessionUser | null;
+}
+
 /** Write the session user directly onto the store state. */
 function setStoreUser(user: SessionUser | null): void {
-    (useSessionStore() as unknown as { user: SessionUser | null }).user = user;
+    (useSessionStore() as unknown as WritableSessionUser).user = user;
 }
 
 /** Install a test session context over fresh collaborators. */
 function installTestContext(): void {
-    installSessionContext({
-        storageKeys: {
-            accessToken: 'auth.access_token',
-            refreshToken: 'auth.refresh_token',
-            expiresAt: 'auth.expires_at',
-            deviceUuid: 'auth.device_uuid',
-        },
-        routes: { login: { name: 'auth.login' }, loginPath: '/login', home: '/', forbidden: '/forbidden' },
-        storage: new MemoryStorage(),
-        storeId: 'auth',
-        api: createSessionApiStub(),
-        coordinator: new TokenRefreshCoordinator({ refresh: () => Promise.resolve(false) }),
-        parseTimestamp: () => null,
-        device: () => ({ uuid: 'device-uuid', os: 'WEB' }),
-    });
+    installSessionContext(createTestSessionContext());
 }
 
 describe('can', () => {

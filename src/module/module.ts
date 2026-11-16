@@ -17,8 +17,14 @@ import type { RouteRecordRaw, Router } from 'vue-router';
 
 import type { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
 import type { Environment } from '@sinemacula/foundation/config/environment';
-import type { HttpClient, RequestInterceptor, ResponseErrorHandler, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
+import type {
+    HttpClient,
+    RequestInterceptor,
+    ResponseErrorHandler,
+    UnauthorizedHandler,
+} from '@sinemacula/foundation/http/http-client';
 import type { ApplicationI18n } from '../i18n/application-i18n';
+import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import type { RouteMiddleware } from '../router/middleware';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 
@@ -129,6 +135,9 @@ export interface ModuleBootContext {
 
     /** The resolved platform seams. */
     readonly platform: ResolvedPlatform;
+
+    /** The application's realtime connection, installed but not connected, or null when none. */
+    readonly realtime: RealtimeConnection | null;
 }
 
 /**

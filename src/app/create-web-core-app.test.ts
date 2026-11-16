@@ -64,9 +64,9 @@ const BOOT_PHASE_ORDER = [
     'locale',
     'router',
     'error-handling',
+    'realtime',
     'boot-modules',
     'chunk-recovery',
-    'realtime',
     'monitors',
 ] as const;
 
@@ -87,10 +87,17 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/**
+ * Build a JSON response carrying the given body and status.
+ */
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+/**
+ * Build a fetch spy that serves the runtime environment file and delegates
+ * every other request to the API responder.
+ */
 function makeFetch(
     runtime: Record<string, string> | (() => Record<string, string>) = {},
     apiResponder: (url: string, init?: RequestInit) => Response = () => jsonResponse(null),
@@ -107,10 +114,20 @@ function makeFetch(
 }
 
 type TestWindow = Window & {
+    /**
+     * Invoke every listener registered for the event type.
+     */
     dispatchToListeners(type: string, event: Event): void;
+
+    /**
+     * Count the listeners registered for the event type.
+     */
     listenerCount(type: string): number;
 };
 
+/**
+ * Build a window stub that records its event listeners.
+ */
 function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
     const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
 
@@ -150,6 +167,9 @@ function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
     } as unknown as TestWindow;
 }
 
+/**
+ * Define the configuration tree the tests boot against.
+ */
 function defineTestConfiguration(environment: Environment) {
     return {
         api: { baseUrl: environment.string('API_URL', 'https://api.test'), timeout: 5_000 },
@@ -172,6 +192,9 @@ function defineTestConfiguration(environment: Environment) {
 
 type TestConfiguration = ReturnType<typeof defineTestConfiguration>;
 
+/**
+ * Build the config options, optionally pointing at a runtime environment URL.
+ */
 function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['config'] {
     return {
         createEnvironment: (runtime: Readonly<Record<string, string>>): Environment =>
@@ -182,15 +205,31 @@ function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['
 }
 
 interface Seams {
+    /** The fetch spy serving the environment file and API calls. */
     readonly fetchFn: ReturnType<typeof makeFetch>;
+
+    /** The in-memory storage backing the app. */
     readonly storage: MemoryStorage;
+
+    /** The window stub the app attaches listeners to. */
     readonly targetWindow: TestWindow;
+
+    /** The detached document the app writes to. */
     readonly targetDocument: Document;
+
+    /** The fixed clock the app reads time from. */
     readonly clock: () => number;
+
+    /** The router history the app navigates with. */
     readonly history: RouterHistory;
+
+    /** The browser locales offered for negotiation. */
     readonly localeCandidates: readonly string[];
 }
 
+/**
+ * Build the platform seams, optionally around a given fetch spy.
+ */
 function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
     return {
         fetchFn,
@@ -203,6 +242,9 @@ function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
     };
 }
 
+/**
+ * Build a root component that records when it mounts.
+ */
 function makeRoot(events: string[] = []): ReturnType<typeof defineComponent> {
     return defineComponent({
         setup() {
@@ -215,6 +257,9 @@ function makeRoot(events: string[] = []): ReturnType<typeof defineComponent> {
     });
 }
 
+/**
+ * Build the home module definition with optional overrides.
+ */
 function homeModule(overrides: Partial<ModuleDefinition> = {}): ModuleDefinition {
     return {
         name: 'home',
@@ -223,6 +268,9 @@ function homeModule(overrides: Partial<ModuleDefinition> = {}): ModuleDefinition
     };
 }
 
+/**
+ * Build an idle realtime connection that records disconnects.
+ */
 function makeRealtime(order: string[]): RealtimeConnection {
     return {
         state: 'idle',
@@ -241,6 +289,9 @@ function makeRealtime(order: string[]): RealtimeConnection {
     };
 }
 
+/**
+ * Boot the app with the default test options and any overrides.
+ */
 function bootApp(
     overrides: Partial<WebCoreAppOptions<TestConfiguration>> = {},
 ): Promise<WebCoreApp<TestConfiguration>> {
@@ -451,6 +502,30 @@ describe('createWebCoreApp', () => {
             expect(contexts[0]?.storage).toBe(seams.storage);
             expect(contexts[0]?.config).toBe(app.services.config);
             expect(contexts[0]?.platform.clock).toBe(seams.clock);
+            expect(contexts[0]?.realtime).toBeNull();
+
+            app.dispose();
+        });
+
+        it('hands the installed realtime connection to the booting modules', async () => {
+            const connection = makeRealtime([]);
+            const received: Array<RealtimeConnection | null> = [];
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        boot: context => {
+                            received.push(context.realtime);
+                            expect(realtime()).toBe(connection);
+
+                            return undefined;
+                        },
+                    }),
+                ],
+                realtime: () => connection,
+            });
+
+            expect(received).toStrictEqual([connection]);
 
             app.dispose();
         });
@@ -526,6 +601,10 @@ describe('createWebCoreApp', () => {
 
                 return jsonResponse(null);
             });
+
+            /**
+             * Tag every request as having passed the preset interceptor.
+             */
             const preset: RequestInterceptor = request => ({
                 ...request,
                 headers: { ...request.headers, 'x-trace': 'preset' },
@@ -548,7 +627,7 @@ describe('createWebCoreApp', () => {
 
             await api().get('ping');
 
-            expect((captured?.headers as Record<string, string>)['x-trace']).toBe('preset+module');
+            expect(captured?.headers).toMatchObject({ 'x-trace': 'preset+module' });
 
             app.dispose();
         });
@@ -635,8 +714,17 @@ describe('createWebCoreApp', () => {
 
         it('installs the client returned by the http client override with the resolved tools', async () => {
             const fake = { get: vi.fn() } as unknown as HttpClient;
+
+            /**
+             * Pass the request through as the preset interceptor.
+             */
             const preset: RequestInterceptor = request => request;
+
+            /**
+             * Pass the request through as the module-contributed interceptor.
+             */
             const contributed: RequestInterceptor = request => request;
+
             const onUnauthorized = vi.fn<UnauthorizedHandler>(async () => false);
             const seams = makeSeams();
             const client = vi.fn((_tools: WireHttpClientTools<TestConfiguration>) => fake);

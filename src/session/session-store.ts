@@ -1,10 +1,10 @@
 /**
  * Session store.
  *
- * The pinia binding over the foundation session core: state hydrates
- * synchronously through `createInitialSessionState`, and every action forwards
- * the store's own state plus the installed session context into the core
- * transitions - nothing else writes tokens to storage.
+ * The pinia binding over the foundation session core. State starts signed out
+ * and every action forwards the store's one state object plus the installed
+ * session context into the core transitions, which key their bookkeeping by
+ * that object's identity; nothing else writes the persisted session.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -13,15 +13,17 @@
 import type { Pinia } from 'pinia';
 import { defineStore } from 'pinia';
 
+import type { PasswordCredentials } from '@sinemacula/foundation/session/session-api';
 import {
     clearSession,
     createInitialSessionState,
-    hydrateStateFromStorage,
+    hydrateSession,
     loginWithCredentials,
     logoutSession,
     refreshSession,
     rehydrateSessionUser,
 } from '@sinemacula/foundation/session/session-core';
+import type { LoginOutcome, RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionState } from '@sinemacula/foundation/session/session-state';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { sessionContext } from './session-context';
@@ -30,14 +32,14 @@ import { sessionContext } from './session-context';
  * The session store contract consumed by guards, authorization checks and the
  * session module's lifecycle wiring.
  */
-export interface SessionStore<U extends SessionUser = SessionUser> {
+export interface SessionStore<U extends SessionUser = SessionUser, C = PasswordCredentials> {
     /** The bearer token for the active session, or null when signed out. */
     readonly accessToken: string | null;
 
-    /** The refresh token for the active session, or null when not issued. */
+    /** The refresh token for the active session, or null when not held. */
     readonly refreshToken: string | null;
 
-    /** Absolute session expiry in epoch milliseconds, or null when unknown. */
+    /** Absolute access-token expiry in epoch milliseconds, or null when unknown. */
     readonly expiresAtEpochMs: number | null;
 
     /** The authenticated user record, or null when not yet loaded. */
@@ -47,41 +49,43 @@ export interface SessionStore<U extends SessionUser = SessionUser> {
     readonly isAuthenticated: boolean;
 
     /**
-     * Exchange credentials for a session, persist every session key, and load
-     * the current user.
-     *
-     * @param credentials - the login credentials, forwarded opaquely to the
-     * gateway
+     * Bring the state in line with the persisted session, adopting a session
+     * another tab wrote and dropping the user when it does. A persistence
+     * failure rejects.
      */
-    login(credentials: unknown): Promise<void>;
+    hydrate(): Promise<void>;
 
     /**
-     * Use the refresh token to obtain a new session.
+     * Exchange credentials for a session, persist it, and load the user.
      *
-     * @returns true when the session was refreshed; false (with the session
-     * cleared) when no refresh token exists or the request fails
+     * @param credentials - the login credentials, forwarded to the gateway
+     * @returns what the sign-in did; only `authenticated` is a completed
+     * sign-in
      */
-    refresh(): Promise<boolean>;
+    login(credentials: C): Promise<LoginOutcome>;
 
     /**
-     * Discard the session locally and best-effort invalidate it server-side.
+     * Exchange the refresh credential for a new session. A refusal clears the
+     * session; a transient or other failure keeps it.
+     *
+     * @returns what the refresh did
+     */
+    refresh(): Promise<RefreshOutcome>;
+
+    /**
+     * Best-effort invalidate the session server-side, then discard it locally.
      */
     logout(): Promise<void>;
 
     /**
-     * Re-read the persisted tokens and expiry from storage into state. Used by
-     * cross-tab synchronisation; it never calls the API.
+     * Discard the session locally without calling the server. State is cleared
+     * before the promise settles; a persistence failure rejects.
      */
-    hydrateFromStorage(): void;
+    clearLocal(): Promise<void>;
 
     /**
-     * Discard the session locally without calling the logout endpoint.
-     */
-    clearLocal(): void;
-
-    /**
-     * Fetch and store the current user when a session is present but no user
-     * record has been loaded yet. Failures are swallowed.
+     * Fetch the user when a session is held but no user is loaded yet. Shared
+     * by concurrent callers; failures are swallowed.
      */
     rehydrateUser(): Promise<void>;
 
@@ -98,8 +102,10 @@ export interface SessionStore<U extends SessionUser = SessionUser> {
  * instance
  * @returns the session store, registered under the context's store id
  */
-export function useSessionStore<U extends SessionUser = SessionUser>(pinia?: Pinia): SessionStore<U> {
-    return sessionStoreDefinition(sessionContext().storeId)(pinia) as SessionStore<U>;
+export function useSessionStore<U extends SessionUser = SessionUser, C = PasswordCredentials>(
+    pinia?: Pinia,
+): SessionStore<U, C> {
+    return sessionStoreDefinition(sessionContext().storeId)(pinia) as unknown as SessionStore<U, C>;
 }
 
 /**
@@ -108,40 +114,40 @@ export function useSessionStore<U extends SessionUser = SessionUser>(pinia?: Pin
  * @param id - the pinia store id from the session context
  * @returns the pinia store hook
  */
-function sessionStoreDefinition(id: string): (pinia?: Pinia) => SessionStore {
+function sessionStoreDefinition(id: string): (pinia?: Pinia) => SessionStore<SessionUser, unknown> {
     const definition = defineStore(id, {
-        state: (): SessionState => createInitialSessionState(sessionContext()),
+        state: (): SessionState => createInitialSessionState(),
 
         getters: {
             isAuthenticated: (state): boolean => state.accessToken !== null,
         },
 
         actions: {
-            async login(credentials: unknown): Promise<void> {
-                await loginWithCredentials(this, sessionContext(), credentials);
+            hydrate(): Promise<void> {
+                return hydrateSession(this.$state, sessionContext());
             },
 
-            refresh(): Promise<boolean> {
-                return refreshSession(this, sessionContext());
+            login(credentials: unknown): Promise<LoginOutcome> {
+                return loginWithCredentials(this.$state, sessionContext<SessionUser, unknown>(), credentials);
             },
 
-            async logout(): Promise<void> {
-                await logoutSession(this, sessionContext());
+            refresh(): Promise<RefreshOutcome> {
+                return refreshSession(this.$state, sessionContext());
             },
 
-            hydrateFromStorage(): void {
-                hydrateStateFromStorage(this, sessionContext());
+            logout(): Promise<void> {
+                return logoutSession(this.$state, sessionContext());
             },
 
-            clearLocal(): void {
-                clearSession(this, sessionContext());
+            clearLocal(): Promise<void> {
+                return clearSession(this.$state, sessionContext());
             },
 
-            async rehydrateUser(): Promise<void> {
-                await rehydrateSessionUser(this, sessionContext());
+            rehydrateUser(): Promise<void> {
+                return rehydrateSessionUser(this.$state, sessionContext());
             },
         },
     });
 
-    return definition as unknown as (pinia?: Pinia) => SessionStore;
+    return definition as unknown as (pinia?: Pinia) => SessionStore<SessionUser, unknown>;
 }

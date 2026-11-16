@@ -16,10 +16,12 @@ import { wireChunkRecovery } from './wire-chunk-recovery';
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** Build the error a browser throws when a lazy route chunk fails to load. */
 function chunkImportError(): TypeError {
     return new TypeError('Failed to fetch dynamically imported module: http://example.com/assets/broken.js');
 }
 
+/** Build a router whose `/broken` route lazy-loads via the given loader. */
 function buildRouter(brokenLoader: () => Promise<never>): Router {
     const routes: RouteRecordRaw[] = [
         { path: '/', component: EmptyComponent },
@@ -29,10 +31,12 @@ function buildRouter(brokenLoader: () => Promise<never>): Router {
     return createRouter({ history: createMemoryHistory(), routes });
 }
 
+/** Build an error reporter whose methods are spies. */
 function fakeReporter(): ErrorReporter {
     return { captureError: vi.fn(), captureMessage: vi.fn(), setUser: vi.fn() };
 }
 
+/** Navigate to `/broken`, swallowing the router's own rejection. */
 async function navigateToBroken(router: Router): Promise<void> {
     await router.push('/broken').catch(() => {
         // The router's own promise rejects alongside the onError handler under
