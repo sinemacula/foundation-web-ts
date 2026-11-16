@@ -16,6 +16,7 @@ import type { RefreshOutcome, RefreshResult } from '@sinemacula/foundation/sessi
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installRealtime, resetWebCoreServices } from '../app/services';
+import type { ModuleTeardown } from '../module/module';
 import type { SessionContext } from './session-context';
 import { installSessionContext, resetSessionContext } from './session-context';
 import { followSession, sessionReconnectGuard } from './session-realtime';
@@ -98,6 +99,7 @@ describe('session realtime policy', () => {
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         resetSessionContext();
         resetWebCoreServices();
     });
@@ -273,10 +275,228 @@ describe('session realtime policy', () => {
     });
 
     describe('followSession', () => {
+        let teardowns: ModuleTeardown[];
+
+        /**
+         * Follow the session with the test connection until the test ends.
+         *
+         * @param store - the session store
+         * @returns the follower's teardown
+         */
+        function follow(store: SessionStore): ModuleTeardown {
+            const teardown = followSession(connection, store);
+
+            teardowns.push(teardown);
+
+            return teardown;
+        }
+
+        /**
+         * Settle every pending promise and zero-delay timer.
+         */
+        async function settle(): Promise<void> {
+            await new Promise(resolve => {
+                setTimeout(resolve, 0);
+            });
+        }
+
+        beforeEach(() => {
+            teardowns = [];
+        });
+
+        afterEach(() => {
+            for (const teardown of teardowns) {
+                teardown();
+            }
+        });
+
+        it('retries a connect skipped on a transient refresh failure, backing off between attempts', async () => {
+            const store = await hydrated(NOW);
+            const offline: RefreshResult = { kind: 'retryable', error: new NetworkError('offline') };
+
+            gateway.refresh
+                .mockResolvedValueOnce(offline)
+                .mockResolvedValueOnce(offline)
+                .mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ expiresAtEpochMs: null }) });
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            follow(store);
+
+            await vi.advanceTimersByTimeAsync(999);
+            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(gateway.refresh).toHaveBeenCalledTimes(2);
+
+            await vi.advanceTimersByTimeAsync(1_999);
+            expect(gateway.refresh).toHaveBeenCalledTimes(2);
+            expect(connection.calls).toStrictEqual([]);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(gateway.refresh).toHaveBeenCalledTimes(3);
+            expect(connection.calls).toStrictEqual(['connect']);
+        });
+
+        it('connects a skipped session once a refresh elsewhere renews it', async () => {
+            const store = await hydrated(NOW);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') });
+            follow(store);
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            });
+            await settle();
+
+            gateway.refresh.mockResolvedValueOnce({
+                kind: 'refreshed',
+                tokens: tokens({ accessToken: 'rotated', expiresAtEpochMs: null }),
+            });
+            await store.refresh();
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+            expect(gateway.refresh).toHaveBeenCalledTimes(2);
+        });
+
+        it('leaves a skipped connect to a connection already open when the session rotates', async () => {
+            const store = await hydrated(NOW);
+
+            connection.state = 'open';
+            gateway.refresh.mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') });
+            follow(store);
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            });
+            await settle();
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'rotated' }) });
+            await store.refresh();
+            await settle();
+
+            expect(connection.calls).toStrictEqual([]);
+        });
+
+        it('keeps an open connection through a rotation', async () => {
+            const store = await hydrated(null);
+
+            follow(store);
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'rotated' }) });
+            await store.refresh();
+            await settle();
+
+            expect(connection.calls).toStrictEqual(['connect']);
+        });
+
+        it.each([
+            ['other tokens', tokens({ accessToken: 'other', expiresAtEpochMs: null })],
+            ['the same tokens', tokens({ expiresAtEpochMs: null })],
+        ])('reconnects for a session signed in over the held one with %s', async (_label, signedIn) => {
+            const store = await hydrated(null);
+
+            follow(store);
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            await signIn(signedIn);
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect', 'disconnect', 'connect']);
+            });
+        });
+
+        it('reconnects for a session adopted over the held one with the same tokens', async () => {
+            const store = await hydrated(null);
+
+            follow(store);
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            persistSnapshot(storage, tokens({ expiresAtEpochMs: null }), 5);
+            await store.hydrate();
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect', 'disconnect', 'connect']);
+            });
+        });
+
+        it.each([
+            [
+                'torn down',
+                (teardown: ModuleTeardown): Promise<void> => {
+                    teardown();
+
+                    return Promise.resolve();
+                },
+            ],
+            ['signed out', (): Promise<void> => useSessionStore().clearLocal()],
+        ])('stops retrying once %s', async (_label, end) => {
+            const store = await hydrated(NOW);
+
+            gateway.refresh.mockResolvedValue({ kind: 'retryable', error: new NetworkError('offline') });
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+            const teardown = follow(store);
+
+            await vi.advanceTimersByTimeAsync(0);
+            await end(teardown);
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+        });
+
+        it('disconnects the connection it connected once torn down', async () => {
+            const store = await hydrated(null);
+            const teardown = follow(store);
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+            teardown();
+
+            expect(connection.calls).toStrictEqual(['connect', 'disconnect']);
+        });
+
+        it('leaves a connection it found active connected once torn down', async () => {
+            const store = await hydrated(null);
+
+            connection.state = 'connecting';
+
+            const teardown = follow(store);
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+            teardown();
+
+            expect(connection.calls).toStrictEqual(['connect']);
+        });
+
+        it('leaves a connection it disconnected alone once torn down', async () => {
+            const store = await hydrated(null);
+            const teardown = follow(store);
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+            await store.clearLocal();
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect', 'disconnect']);
+            });
+            teardown();
+
+            expect(connection.calls).toStrictEqual(['connect', 'disconnect']);
+        });
+
         it('connects at once for a held session', async () => {
             const store = await hydrated(null);
 
-            followSession(connection, store);
+            follow(store);
 
             await vi.waitFor(() => {
                 expect(connection.calls).toStrictEqual(['connect']);
@@ -284,7 +504,7 @@ describe('session realtime policy', () => {
         });
 
         it('leaves the connection alone while signed out', async () => {
-            followSession(connection, useSessionStore());
+            follow(useSessionStore());
             await Promise.resolve();
 
             expect(connection.calls).toStrictEqual([]);
@@ -293,7 +513,7 @@ describe('session realtime policy', () => {
         it('disconnects when the session ends and connects when one begins', async () => {
             const store = await hydrated(null);
 
-            followSession(connection, store);
+            follow(store);
             await vi.waitFor(() => {
                 expect(connection.calls).toStrictEqual(['connect']);
             });
@@ -317,7 +537,7 @@ describe('session realtime policy', () => {
 
                 return Promise.resolve({ kind: 'refreshed', tokens: tokens() });
             });
-            followSession(connection, store);
+            follow(store);
 
             await vi.waitFor(() => {
                 expect(connection.calls).toStrictEqual(['connect']);
@@ -332,7 +552,7 @@ describe('session realtime policy', () => {
             connection.connect = () => {
                 throw failure;
             };
-            followSession(connection, store);
+            follow(store);
 
             await vi.waitFor(() => {
                 expect(observability.errors).toStrictEqual([failure]);
@@ -345,7 +565,7 @@ describe('session realtime policy', () => {
 
             gateway.refresh.mockReturnValueOnce(pending.promise);
 
-            const teardown = followSession(connection, store);
+            const teardown = follow(store);
 
             await vi.waitFor(() => {
                 expect(gateway.refresh).toHaveBeenCalled();
@@ -366,7 +586,7 @@ describe('session realtime policy', () => {
             const pending = deferred<RefreshResult>();
 
             gateway.refresh.mockReturnValueOnce(pending.promise);
-            followSession(connection, store);
+            follow(store);
             await vi.waitFor(() => {
                 expect(gateway.refresh).toHaveBeenCalled();
             });

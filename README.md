@@ -313,9 +313,12 @@ store's `hydrate()` when that store does not raise `storage` events. The storage
 Keys are matched raw against cross-tab `storage` events, so the storage adapter must persist un-namespaced;
 an application wanting a prefix sets it in the keys themselves so event keys still match.
 
-With `realtimeFollowsSession`, the realtime connection connects once a session is present and disconnects when
-it is lost. Pass `sessionReconnectGuard()` from `src/session/session-realtime.ts` as the connection's
-`beforeReconnect` so each reconnect refreshes an expiring token first and stops for good when the session ends.
+With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when
+another session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens),
+retries with backoff a connect skipped while the token could not be refreshed, and disconnects when the session
+is lost, or at teardown when it opened the connection. Pass `sessionReconnectGuard()` from
+`src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
+token first and stops for good when the session ends.
 
 Route identity is one configurable source feeding the guards, the session-loss redirect and the redirect
 sanitiser's loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set together with `login`

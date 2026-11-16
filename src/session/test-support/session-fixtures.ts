@@ -14,7 +14,7 @@ import type { Mock } from 'vitest';
 import { vi } from 'vitest';
 
 import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
-import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
+import type { RealtimeConnection, RealtimeState } from '@sinemacula/foundation/realtime/realtime-connection';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
@@ -54,6 +54,9 @@ export interface RecordingLockManager extends LockManager {
 export interface RecordingConnection extends RealtimeConnection {
     /** Every connect and disconnect, in order. */
     readonly calls: string[];
+
+    /** Open after a connect, closed after a disconnect; writable to stage one. */
+    state: RealtimeState;
 }
 
 /**
@@ -188,19 +191,22 @@ export function createLockManager(): RecordingLockManager {
  */
 export function createRecordingConnection(): RecordingConnection {
     const calls: string[] = [];
-
-    return {
+    const connection: RecordingConnection = {
         calls,
         state: 'idle',
         connect: () => {
             calls.push('connect');
+            connection.state = 'open';
         },
         disconnect: () => {
             calls.push('disconnect');
+            connection.state = 'closed';
         },
         on: () => () => undefined,
         onStateChange: () => () => undefined,
     };
+
+    return connection;
 }
 
 /**
