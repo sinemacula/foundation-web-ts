@@ -20,10 +20,14 @@ const EmptyComponent = defineComponent({ render: () => null });
  * can assert the in-flight state before letting navigation complete.
  */
 interface DeferredComponent {
+    /** The lazy loader the route registers. */
     readonly load: () => Promise<Component>;
+
+    /** Settle the pending load with an empty component. */
     readonly resolve: () => void;
 }
 
+/** Build a lazy route component whose load the test settles on demand. */
 function deferredComponent(): DeferredComponent {
     let resolve!: () => void;
     const promise = new Promise<Component>(res => {
@@ -33,6 +37,7 @@ function deferredComponent(): DeferredComponent {
     return { load: () => promise, resolve };
 }
 
+/** Build a memory router with an eager, a lazy and a failing route. */
 function buildRouter(lazyLoader: () => Promise<Component>): Router {
     return createRouter({
         history: createMemoryHistory(),

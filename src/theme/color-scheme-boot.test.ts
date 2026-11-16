@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { COLOR_SCHEME_BOOT_SCRIPT } from './color-scheme-boot';
 
+/** Run the boot script against stubbed storage; return the applied scheme. */
 function runBootScript(stored: string | null, throwOnRead = false): string | null {
     let applied: string | null = null;
 

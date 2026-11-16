@@ -24,6 +24,9 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/**
+ * Build a JSON response reporting the given deployed version.
+ */
 function versionResponse(version: string): Response {
     return new Response(JSON.stringify(wire([['APP_VERSION', version]])), {
         status: 200,
@@ -31,6 +34,9 @@ function versionResponse(version: string): Response {
     });
 }
 
+/**
+ * Wrap a fetch implementation in a spy.
+ */
 function makeFetch(impl: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
     return vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(impl);
 }
@@ -131,10 +137,15 @@ describe('UpdateMonitor', () => {
             async () =>
                 new Response('{"release":"5"}', { status: 200, headers: { 'content-type': 'application/json' } }),
         );
+
+        /**
+         * Read the version from the payload's `release` field.
+         */
         const extractVersion = (payload: unknown): string | null =>
             typeof payload === 'object' && payload !== null && 'release' in payload
                 ? String((payload as Record<string, unknown>)['release'])
                 : null;
+
         const monitor = new UpdateMonitor({
             currentVersion: '1',
             url: '/version.json',

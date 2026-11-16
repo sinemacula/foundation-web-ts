@@ -18,8 +18,13 @@ import { BrowserConnectivityMonitor } from './browser-connectivity-monitor';
  * listeners
  */
 function fakeWindow(onLine: boolean): {
+    /** The fake window handed to the monitor. */
     window: Window;
+
+    /** Dispatch an event to the registered listeners. */
     emit: (type: 'online' | 'offline') => void;
+
+    /** Count the listeners registered for an event. */
     listenerCount: (type: 'online' | 'offline') => number;
 } {
     const listeners = new Map<string, Set<EventListener>>();

@@ -13,6 +13,7 @@ import { useRouteQueryState } from './use-route-query-state';
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** Build a memory router and the URL that carries the given initial query. */
 function makeRouter(initialQuery: Record<string, string> = {}) {
     const router = createRouter({
         history: createMemoryHistory(),

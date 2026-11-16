@@ -9,10 +9,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { copyToClipboard } from './clipboard';
 
+/**
+ * Build a navigator whose clipboard writes through the given function.
+ */
 function fakeNavigator(writeText: (text: string) => Promise<void>): Navigator {
     return { clipboard: { writeText } } as unknown as Navigator;
 }
 
+/**
+ * Build a navigator that exposes no clipboard.
+ */
 function navigatorWithoutClipboard(): Navigator {
     return {} as unknown as Navigator;
 }

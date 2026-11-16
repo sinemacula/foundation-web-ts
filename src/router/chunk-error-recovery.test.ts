@@ -16,10 +16,12 @@ import { installChunkErrorRecovery, isChunkLoadError } from './chunk-error-recov
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** Build the error a browser throws when a lazy route chunk fails to load. */
 function chunkImportError(): TypeError {
     return new TypeError('Failed to fetch dynamically imported module: http://example.com/assets/broken.js');
 }
 
+/** Build a router whose `/broken` route lazy-loads via the given loader. */
 function buildRouter(brokenLoader: () => Promise<never>): Router {
     const routes: RouteRecordRaw[] = [
         { path: '/', component: EmptyComponent },
@@ -29,10 +31,12 @@ function buildRouter(brokenLoader: () => Promise<never>): Router {
     return createRouter({ history: createMemoryHistory(), routes });
 }
 
+/** Build an error reporter whose methods are spies. */
 function fakeReporter(): ErrorReporter {
     return { captureError: vi.fn(), captureMessage: vi.fn(), setUser: vi.fn() };
 }
 
+/** Navigate to `/broken`, swallowing the router's own rejection. */
 async function navigateToBroken(router: Router): Promise<void> {
     await router.push('/broken').catch(() => {
         // The router's own promise rejects alongside the onError handler under
@@ -49,9 +53,8 @@ describe('installChunkErrorRecovery', () => {
         const router = buildRouter(() => Promise.reject(chunkImportError()));
         const storage = new MemoryStorage();
         const reload = vi.fn();
-        const clock = () => 1_000;
 
-        installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
+        installChunkErrorRecovery({ router, storage, reload, clock: () => 1_000, windowMs: 60_000 });
         await navigateToBroken(router);
 
         expect(reload).toHaveBeenCalledWith('/broken');
@@ -64,9 +67,8 @@ describe('installChunkErrorRecovery', () => {
         const reload = vi.fn();
         const reporter = fakeReporter();
         let now = 1_000;
-        const clock = () => now;
 
-        installChunkErrorRecovery({ router, storage, reporter, reload, clock, windowMs: 60_000 });
+        installChunkErrorRecovery({ router, storage, reporter, reload, clock: () => now, windowMs: 60_000 });
         await navigateToBroken(router);
 
         now += 30_000;
@@ -84,9 +86,8 @@ describe('installChunkErrorRecovery', () => {
         const storage = new MemoryStorage();
         const reload = vi.fn();
         let now = 1_000;
-        const clock = () => now;
 
-        installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
+        installChunkErrorRecovery({ router, storage, reload, clock: () => now, windowMs: 60_000 });
         await navigateToBroken(router);
 
         now += 60_000;
@@ -125,9 +126,8 @@ describe('installChunkErrorRecovery', () => {
         const storage = new MemoryStorage();
         const reload = vi.fn();
         let now = 1_000;
-        const clock = () => now;
 
-        installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
+        installChunkErrorRecovery({ router, storage, reload, clock: () => now, windowMs: 60_000 });
         await navigateToBroken(router);
 
         now += 1_000;
@@ -142,9 +142,8 @@ describe('installChunkErrorRecovery', () => {
         const reload = vi.fn();
         const reporter = fakeReporter();
         let now = 0;
-        const clock = () => now;
 
-        installChunkErrorRecovery({ router, storage, reporter, reload, clock });
+        installChunkErrorRecovery({ router, storage, reporter, reload, clock: () => now });
         await navigateToBroken(router);
 
         now += 59_999;
@@ -198,9 +197,8 @@ describe('installChunkErrorRecovery', () => {
         const storage = new MemoryStorage();
         const reload = vi.fn();
         let now = 1_000;
-        const clock = () => now;
 
-        const teardown = installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
+        const teardown = installChunkErrorRecovery({ router, storage, reload, clock: () => now, windowMs: 60_000 });
         await navigateToBroken(router);
 
         expect(reload).toHaveBeenCalledTimes(1);

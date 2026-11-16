@@ -563,6 +563,7 @@ describe('createLocaleSwitcher', () => {
         document.documentElement.removeAttribute('dir');
     });
 
+    /** Build a locale service enabling en-GB and fr-FR over memory storage. */
     function buildLocaleService(): LocaleService {
         return new LocaleService({
             defaultLocale: 'en-GB',

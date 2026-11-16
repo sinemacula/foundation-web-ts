@@ -36,8 +36,13 @@ const Thrower = defineComponent({
 });
 
 interface MountedBoundary {
+    /** The boundary state installed by the host component. */
     readonly boundary: FatalBoundary;
+
+    /** Toggle whether the throwing child is rendered. */
     readonly showThrower: (value: boolean) => void;
+
+    /** Unmount the host component. */
     readonly unmount: () => void;
 }
 

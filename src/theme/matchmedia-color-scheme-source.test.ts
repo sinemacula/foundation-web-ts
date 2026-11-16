@@ -9,16 +9,37 @@ import { describe, expect, it } from 'vitest';
 
 import { MatchMediaColorSchemeSource } from './matchmedia-color-scheme-source';
 
+/** A fake media query list that records its listener traffic. */
 interface FakeMql {
+    /** Whether the media query currently matches. */
     matches: boolean;
+
+    /** The media query the window was asked to match. */
     query: string;
+
+    /** The event names listeners were added for, in order. */
     addEvents: string[];
+
+    /** The event names listeners were removed for, in order. */
     removeEvents: string[];
+
+    /**
+     * Record a listener registration and hold the handler.
+     */
     addEventListener(event: string, cb: () => void): void;
+
+    /**
+     * Record a listener removal and drop the handler.
+     */
     removeEventListener(event: string, cb: () => void): void;
+
+    /**
+     * Invoke the held change handler, if any.
+     */
     fireChange(): void;
 }
 
+/** Build a fake media query list with the given match state. */
 function makeMql(matches: boolean): FakeMql {
     let handler: (() => void) | null = null;
 
@@ -43,6 +64,7 @@ function makeMql(matches: boolean): FakeMql {
     return mql;
 }
 
+/** Build a fake window whose matchMedia records the query and returns mql. */
 function windowOf(mql: FakeMql): Window {
     return {
         matchMedia: (query: string) => {

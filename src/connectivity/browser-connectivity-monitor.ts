@@ -14,7 +14,10 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { ConnectivityHandler, ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
+import type {
+    ConnectivityHandler,
+    ConnectivityMonitor,
+} from '@sinemacula/foundation/connectivity/connectivity-monitor';
 
 export interface ConnectivityMonitorOptions {
     /** The window whose connectivity events are observed; defaults to the global window. */

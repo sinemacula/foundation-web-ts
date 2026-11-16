@@ -9,14 +9,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { DomColorSchemeApplier } from './dom-color-scheme-applier';
 
+/** Build a fresh detached HTML document. */
 function makeDoc(): Document {
     return document.implementation.createHTMLDocument('t');
 }
 
+/** Read the data-theme attribute from the document root. */
 function dataTheme(doc: Document): string | null {
     return doc.documentElement.getAttribute('data-theme');
 }
 
+/** Read the theme-color meta content, or null when absent. */
 function metaColor(doc: Document): string | null {
     return doc.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? null;
 }
