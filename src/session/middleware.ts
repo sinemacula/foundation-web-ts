@@ -63,9 +63,10 @@ export function guestOnly(redirectTo?: RouteLocationRaw): RouteMiddleware {
 /**
  * Build middleware that requires a signed-in user holding a permission.
  *
- * An unauthenticated visitor is redirected to the session context's login
- * route, carrying the attempted route exactly as {@link authenticated} does. An
- * authenticated visitor lacking the permission is redirected to `redirectTo`.
+ * An unauthenticated visitor, or one whose session is lost while the user
+ * loads, is redirected to the session context's login route, carrying the
+ * attempted route exactly as {@link authenticated} does. An authenticated
+ * visitor lacking the permission is redirected to `redirectTo`.
  *
  * @example
  * ```ts
@@ -84,14 +85,22 @@ export function authorize(permission: string, redirectTo?: RouteLocationRaw): Ro
 
             const store = useSessionStore();
 
+            /** Redirect to the login route, carrying the attempted path. */
+            const login = (): MiddlewareResult =>
+                redirect(appendRedirectTarget(sessionContext().routes.login, context.to.fullPath));
+
             if (!store.isAuthenticated) {
-                return redirect(appendRedirectTarget(sessionContext().routes.login, context.to.fullPath));
+                return login();
             }
 
             // A cold load carries the token but not yet the user record the
             // permission check needs, so wait for the in-flight (or a fresh)
             // user load to settle before deciding.
             await store.rehydrateUser();
+
+            if (!store.isAuthenticated) {
+                return login();
+            }
 
             return can(permission) ? next() : redirect(redirectTo ?? sessionContext().routes.forbidden);
         },

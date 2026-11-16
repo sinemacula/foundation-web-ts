@@ -8,13 +8,14 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { HttpError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { MiddlewareContext, RouteMiddleware } from '../router/middleware';
 import type { SessionRoutes } from './create-session-module';
 import { authenticated, authorize, guestOnly } from './middleware';
-import { installSessionContext, resetSessionContext } from './session-context';
+import { installSessionContext, resetSessionContext, sessionContext } from './session-context';
 import { useSessionStore } from './session-store';
 import type { FakeSessionApi } from './test-support/session-fixtures';
 import {
@@ -230,6 +231,23 @@ describe('session guards', () => {
             installTestContext({ forbidden: '/no-access' });
 
             await expect(run(guard)).resolves.toStrictEqual({ kind: 'redirect', to: '/no-access' });
+        });
+
+        it('redirects to the login route when the session is lost while loading the user', async () => {
+            signIn(['users.view']);
+            gateway.currentUser.mockReset();
+            gateway.currentUser.mockImplementationOnce(async () => {
+                await sessionContext().coordinator.refresh();
+
+                throw new HttpError(401, 'expired');
+            });
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
+
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
+            });
+            expect(useSessionStore().isAuthenticated).toBe(false);
         });
 
         it('reuses an already loaded user', async () => {
