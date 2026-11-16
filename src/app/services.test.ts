@@ -51,6 +51,7 @@ import {
 
 /** Build an HTTP client stand-in that fails loudly if any method is invoked. */
 function createHttpClientStub(): HttpClient {
+    /** Reject every call so an unexpected use of the stub fails the test. */
     const fail = (): Promise<never> => Promise.reject(new Error('not implemented'));
 
     return { get: fail, post: fail, put: fail, patch: fail, delete: fail, download: fail };
@@ -80,11 +81,43 @@ function createRealtimeConnectionStub(): RealtimeConnection {
     };
 }
 
+/** One service whose install and accessor pair is checked by the shared cases. */
 interface ServiceCase {
+    /** The accessor name, used in test titles. */
     readonly accessorName: string;
+
+    /** The error message the accessor throws before install. */
     readonly message: string;
+
+    /** Install a fresh instance and return it. */
     readonly install: () => unknown;
+
+    /** Resolve the installed instance. */
     readonly accessor: () => unknown;
+}
+
+/** The app section of a config tree carrying a name. */
+interface NamedApp {
+    /** The application name. */
+    name: string;
+}
+
+/** The app section of a config tree carrying a name and a version. */
+interface VersionedApp extends NamedApp {
+    /** The application version. */
+    version: string;
+}
+
+/** A config tree whose app section has a name. */
+interface NamedAppConfig {
+    /** The app section of the tree. */
+    app: NamedApp;
+}
+
+/** A config tree whose app section has a name and a version. */
+interface VersionedAppConfig {
+    /** The app section of the tree. */
+    app: VersionedApp;
 }
 
 const serviceCases: readonly ServiceCase[] = [
@@ -314,7 +347,7 @@ describe('web core services', () => {
         it('returns a deep-frozen tree', () => {
             installConfig(new ConfigRepository({ app: { name: 'playground' } }));
 
-            const tree = appConfig<{ app: { name: string } }>();
+            const tree = appConfig<NamedAppConfig>();
 
             expect(Object.isFrozen(tree)).toBe(true);
             expect(Object.isFrozen(tree.app)).toBe(true);
@@ -323,7 +356,7 @@ describe('web core services', () => {
         it('exposes the configured values through the typed cast', () => {
             installConfig(new ConfigRepository({ app: { name: 'playground', version: '1.2.3' } }));
 
-            const tree = appConfig<{ app: { name: string; version: string } }>();
+            const tree = appConfig<VersionedAppConfig>();
 
             expect(tree.app.name).toBe('playground');
             expect(tree.app.version).toBe('1.2.3');

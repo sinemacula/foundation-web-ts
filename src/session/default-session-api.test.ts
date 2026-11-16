@@ -13,9 +13,16 @@ import type { SessionUser } from './session-user';
 
 /** The shape of a single call recorded by {@link FakeHttpClient}. */
 interface RecordedCall {
+    /** The HTTP method the gateway used. */
     readonly method: string;
+
+    /** The request path the gateway called. */
     readonly path: string;
+
+    /** The request body sent, or undefined for body-less methods. */
     readonly body: unknown;
+
+    /** The request options passed through, if any. */
     readonly options: HttpRequestOptions | undefined;
 }
 
@@ -24,7 +31,10 @@ interface RecordedCall {
  * queued response payloads in order.
  */
 class FakeHttpClient implements HttpClient {
+    /** Every call made against the fake, in order. */
     readonly calls: RecordedCall[] = [];
+
+    /** Response payloads waiting to be returned, oldest first. */
     readonly #queue: unknown[] = [];
 
     /**
@@ -36,30 +46,51 @@ class FakeHttpClient implements HttpClient {
         this.#queue.push(value);
     }
 
+    /**
+     * Record a GET and resolve with the next queued payload.
+     */
     get<T>(path: string, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('GET', path, undefined, options);
     }
 
+    /**
+     * Record a POST and resolve with the next queued payload.
+     */
     post<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('POST', path, body, options);
     }
 
+    /**
+     * Record a PUT and resolve with the next queued payload.
+     */
     put<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('PUT', path, body, options);
     }
 
+    /**
+     * Record a PATCH and resolve with the next queued payload.
+     */
     patch<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('PATCH', path, body, options);
     }
 
+    /**
+     * Record a DELETE and resolve with the next queued payload.
+     */
     delete<T>(path: string, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('DELETE', path, undefined, options);
     }
 
+    /**
+     * Record a download and resolve with the next queued payload.
+     */
     download(path: string, options?: HttpRequestOptions): Promise<Blob> {
         return this.#consume('DOWNLOAD', path, undefined, options);
     }
 
+    /**
+     * Record the call and resolve with the next queued payload, if any.
+     */
     #consume<T>(method: string, path: string, body: unknown, options: HttpRequestOptions | undefined): Promise<T> {
         this.calls.push({ method, path, body, options });
 
@@ -625,6 +656,7 @@ describe('createDefaultSessionApi', () => {
 
         it('passes the unwrapped payload to a custom mapUser and returns its result', async () => {
             interface AdminUser extends SessionUser {
+                /** The extra field the custom mapUser adds. */
                 readonly role: string;
             }
 

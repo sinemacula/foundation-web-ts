@@ -14,15 +14,25 @@ import { ResourceClient } from './resource-client';
 
 /** A minimal domain type used to exercise the resource client. */
 interface Widget {
+    /** The widget identifier, mapped from the wire `id`. */
     readonly id: string;
+
+    /** The display name, mapped from the wire `name`. */
     readonly name: string;
 }
 
 /** The shape of a single call recorded by {@link FakeHttpClient}. */
 interface RecordedCall {
+    /** The HTTP verb, or `DOWNLOAD` for a download call. */
     readonly method: string;
+
+    /** The request path the resource client built. */
     readonly path: string;
+
+    /** The request body, or `undefined` for verbs that send none. */
     readonly body: unknown;
+
+    /** The request options the resource client passed, if any. */
     readonly options: HttpRequestOptions | undefined;
 }
 
@@ -31,7 +41,10 @@ interface RecordedCall {
  * queued response payloads in order.
  */
 class FakeHttpClient implements HttpClient {
+    /** Every call made against the fake, in order. */
     readonly calls: RecordedCall[] = [];
+
+    /** Response payloads waiting to be returned, oldest first. */
     readonly #queue: unknown[] = [];
 
     /**
@@ -43,30 +56,52 @@ class FakeHttpClient implements HttpClient {
         this.#queue.push(value);
     }
 
+    /**
+     * Record a GET and resolve with the next queued payload.
+     */
     get<T>(path: string, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('GET', path, undefined, options);
     }
 
+    /**
+     * Record a POST and resolve with the next queued payload.
+     */
     post<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('POST', path, body, options);
     }
 
+    /**
+     * Record a PUT and resolve with the next queued payload.
+     */
     put<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('PUT', path, body, options);
     }
 
+    /**
+     * Record a PATCH and resolve with the next queued payload.
+     */
     patch<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('PATCH', path, body, options);
     }
 
+    /**
+     * Record a DELETE and resolve with the next queued payload.
+     */
     delete<T>(path: string, options?: HttpRequestOptions): Promise<T> {
         return this.#consume('DELETE', path, undefined, options);
     }
 
+    /**
+     * Record a download and resolve with the next queued payload.
+     */
     download(path: string, options?: HttpRequestOptions): Promise<Blob> {
         return this.#consume('DOWNLOAD', path, undefined, options);
     }
 
+    /**
+     * Record the call and resolve with the next queued payload, or `undefined`
+     * when the queue is empty.
+     */
     #consume<T>(method: string, path: string, body: unknown, options: HttpRequestOptions | undefined): Promise<T> {
         this.calls.push({ method, path, body, options });
 
@@ -115,8 +150,17 @@ function mapWidget(raw: RawRecord): Widget {
     return { id: raw['id'], name: raw['name'] };
 }
 
+/** A resource client under test and the fake HTTP client behind it. */
+interface ResourceFixture {
+    /** The fake that records calls and replays queued payloads. */
+    client: FakeHttpClient;
+
+    /** The resource client under test. */
+    resource: ResourceClient<Widget>;
+}
+
 /** Build a `ResourceClient<Widget>` wired against a fresh `FakeHttpClient`. */
-function createResource(path = 'widgets'): { client: FakeHttpClient; resource: ResourceClient<Widget> } {
+function createResource(path = 'widgets'): ResourceFixture {
     const client = new FakeHttpClient();
     const resource = new ResourceClient({ client, path, map: mapWidget });
 

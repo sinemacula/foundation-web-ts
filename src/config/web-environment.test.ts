@@ -187,6 +187,7 @@ describe('createWebEnvironment in production', () => {
     });
 
     it('throws ConfigurationError naming the single missing key', () => {
+        /** Build an environment whose runtime is missing one required key. */
         const build = (): void => {
             createWebEnvironment({
                 runtime: wire([['API_URL', 'https://api.example.com']]),

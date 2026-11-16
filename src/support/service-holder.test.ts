@@ -11,6 +11,7 @@ import { createServiceHolder } from './service-holder';
 import { SupportError } from './support-error';
 
 interface Widget {
+    /** Identifies the installed instance in assertions. */
     readonly label: string;
 }
 

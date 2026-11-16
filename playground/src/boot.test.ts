@@ -62,6 +62,15 @@ function runtimeDocument(overrides: Record<string, string> = {}): Record<string,
     };
 }
 
+/** Per-test overrides for a single application boot. */
+interface BootOptions {
+    /** Whether the environment is created in dev mode; defaults to true. */
+    dev?: boolean;
+
+    /** The runtime document served to the config fetch; defaults to {@link runtimeDocument}. */
+    runtime?: Record<string, string>;
+}
+
 describe('application boot', () => {
     let booted: WebCoreApp<Configuration> | null = null;
 
@@ -72,9 +81,7 @@ describe('application boot', () => {
      * @param options - the dev flag and runtime document for this boot
      * @returns the assembled application handle
      */
-    async function boot(
-        options: { dev?: boolean; runtime?: Record<string, string> } = {},
-    ): Promise<WebCoreApp<Configuration>> {
+    async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
         const body = JSON.stringify(options.runtime ?? runtimeDocument());
         const fetchFn = vi.fn(
             async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),

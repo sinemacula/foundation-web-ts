@@ -18,10 +18,23 @@ import { CancelledError, HttpError, NetworkError } from './http-error';
 /** Explicit overload signature so mock.calls carries a typed tuple, not []. */
 type FetchArgs = [input: RequestInfo | URL, init?: RequestInit];
 
+/** The JSON body served once a 401 has been retried. */
+interface RetriedBody {
+    /** Set by the stub to show the body came from the retried request. */
+    retried: boolean;
+}
+
+/** The JSON body served by the stubbed global fetch. */
+interface GlobalBody {
+    /** Set by the stub to show the body came from the global fetch. */
+    global: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** A JSON response carrying the serialised body with the given status. */
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
         status,
@@ -29,12 +42,14 @@ function jsonResponse(body: unknown, status = 200): Response {
     });
 }
 
+/** Wrap an implementation in a typed fetch spy so its calls can be inspected. */
 function makeFetch(
     impl: (...args: FetchArgs) => Promise<Response>,
 ): ReturnType<typeof vi.fn<(...args: FetchArgs) => Promise<Response>>> {
     return vi.fn<(...args: FetchArgs) => Promise<Response>>(impl);
 }
 
+/** Build a client against a fixed base URL with the given fetch and option overrides. */
 function makeClient(
     fetchFn: typeof fetch,
     extra: Partial<ConstructorParameters<typeof FetchHttpClient>[0]> = {},
@@ -71,6 +86,7 @@ function makeAbortAwareFetch(): ReturnType<typeof makeFetch> {
                     return;
                 }
 
+                /** Reject the pending fetch with the signal's abort reason. */
                 const rejectWithReason = (): void => {
                     reject(signal.reason);
                 };
@@ -172,7 +188,7 @@ describe('FetchHttpClient - 401 unauthorized handling', () => {
         const onUnauthorized = vi.fn().mockResolvedValue(true);
         const client = makeClient(fetchFn, { onUnauthorized });
 
-        const result = await client.get<{ retried: boolean }>('/secure');
+        const result = await client.get<RetriedBody>('/secure');
 
         expect(fetchFn).toHaveBeenCalledTimes(2);
         expect(result).toStrictEqual({ retried: true });
@@ -490,7 +506,7 @@ describe('FetchHttpClient - default fetchFn', () => {
 
         const client = new FetchHttpClient({ baseUrl: 'https://api.example.com' });
 
-        const result = await client.get<{ global: boolean }>('/test');
+        const result = await client.get<GlobalBody>('/test');
 
         expect(stub).toHaveBeenCalledOnce();
         expect(result).toStrictEqual({ global: true });

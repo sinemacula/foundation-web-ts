@@ -129,6 +129,8 @@ describe('createApplicationRouter', () => {
 
     it('runs global middleware before matched-record meta middleware', async () => {
         const order: string[] = [];
+
+        /** Middleware that appends its name to `order` when it runs, then continues. */
         const recording = (name: string): RouteMiddleware => ({
             handle: () => {
                 order.push(name);

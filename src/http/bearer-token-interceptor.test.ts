@@ -25,6 +25,7 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/** A GET request to a fixed URL carrying the given headers. */
 function makeRequest(headers: Record<string, string> = {}): HttpRequest {
     return { method: 'GET', url: 'https://example.com/', headers, body: undefined };
 }

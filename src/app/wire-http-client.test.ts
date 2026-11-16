@@ -58,14 +58,25 @@ function createRequest(overrides: Partial<HttpRequest> = {}): HttpRequest {
 
 /** Build an HTTP client stand-in that fails loudly if any method is invoked. */
 function createHttpClientStub(): HttpClient {
+    /** Reject every call so an unexpected use of the stub fails the test. */
     const fail = (): Promise<never> => Promise.reject(new Error('not implemented'));
 
     return { get: fail, post: fail, put: fail, patch: fail, delete: fail, download: fail };
 }
 
+/** One captureError call seen by the recording reporter. */
+interface CapturedError {
+    /** The error passed to captureError. */
+    error: unknown;
+
+    /** The context passed alongside the error, if any. */
+    context: Readonly<Record<string, unknown>> | undefined;
+}
+
 /** An error reporter recording every captureError invocation. */
 interface RecordingReporter extends ErrorReporter {
-    readonly captured: { error: unknown; context: Readonly<Record<string, unknown>> | undefined }[];
+    /** The captureError calls, in order. */
+    readonly captured: CapturedError[];
 }
 
 /** Build an error reporter that records captured errors with their context. */
@@ -86,8 +97,13 @@ function createRecordingReporter(): RecordingReporter {
  * A fetch fake recording every call and replaying queued responses in order.
  */
 interface FetchStub {
+    /** The fake fetch handed to the client under test. */
     readonly fetchFn: typeof fetch;
+
+    /** The stringified URL of each call, in order. */
     readonly urls: string[];
+
+    /** The init argument of each call, in order. */
     readonly inits: (RequestInit | undefined)[];
 }
 
@@ -102,6 +118,7 @@ function createFetchStub(...responses: ReadonlyArray<() => Response>): FetchStub
     const urls: string[] = [];
     const inits: (RequestInit | undefined)[] = [];
 
+    /** Record the call and replay the next queued response. */
     const fetchFn: typeof fetch = (input, init) => {
         urls.push(String(input));
         inits.push(init);
@@ -112,6 +129,12 @@ function createFetchStub(...responses: ReadonlyArray<() => Response>): FetchStub
     };
 
     return { fetchFn, urls, inits };
+}
+
+/** The JSON body served by jsonOk. */
+interface OkBody {
+    /** Whether the request succeeded; always true in jsonOk. */
+    ok: boolean;
 }
 
 /** Build a 200 JSON response with an { ok: true } body. */
@@ -187,7 +210,7 @@ describe('wireHttpClient', () => {
                 contributions: createContributions(),
             });
 
-            const result = await client.get<{ ok: boolean }>('ping');
+            const result = await client.get<OkBody>('ping');
 
             expect(result).toEqual({ ok: true });
             expect(stub.urls).toEqual(['https://api.example.com/ping']);
@@ -196,11 +219,15 @@ describe('wireHttpClient', () => {
 
         it('runs preset interceptors before module interceptors', async () => {
             const log: string[] = [];
+
+            /** Log the call and set the chain header to its first link. */
             const preset: RequestInterceptor = request => {
                 log.push('preset');
 
                 return { ...request, headers: { ...request.headers, 'x-chain': 'preset' } };
             };
+
+            /** Log the call and append to the chain header set by the preset. */
             const moduleInterceptor: RequestInterceptor = request => {
                 log.push('module');
 
@@ -238,7 +265,7 @@ describe('wireHttpClient', () => {
                 }),
             });
 
-            const result = await client.get<{ ok: boolean }>('secure');
+            const result = await client.get<OkBody>('secure');
 
             expect(result).toEqual({ ok: true });
             expect(refreshes).toBe(1);
@@ -303,8 +330,14 @@ describe('wireHttpClient', () => {
 
         it('threads the merged construction inputs to the factory', () => {
             const config = createConfig();
+
+            /** Pass-through preset interceptor, checked by identity. */
             const presetInterceptor: RequestInterceptor = request => request;
+
+            /** Pass-through module interceptor, checked by identity. */
             const moduleInterceptor: RequestInterceptor = request => request;
+
+            /** Unauthorized handler checked by identity. */
             const onUnauthorized: UnauthorizedHandler = () => Promise.resolve(true);
 
             const tools = captureTools({

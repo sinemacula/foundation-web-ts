@@ -24,6 +24,7 @@ function wire<T>(entries: ReadonlyArray<readonly [string, T]>): Record<string, T
     return Object.fromEntries(entries);
 }
 
+/** A JSON response carrying the serialised payload with the given status. */
 function jsonResponse(payload: unknown, status = 200): Response {
     return new Response(JSON.stringify(payload), {
         status,

@@ -15,6 +15,7 @@ import { installSessionContext, resetSessionContext } from './session-context';
 
 /** Build a session API stand-in that fails loudly if any method is invoked. */
 function createSessionApiStub(): SessionApi {
+    /** Reject every call so any unexpected API use fails the test. */
     const fail = (): Promise<never> => Promise.reject(new Error('not implemented'));
 
     return { login: fail, refresh: fail, logout: fail, currentUser: fail };

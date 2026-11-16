@@ -9,8 +9,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TokenRefreshCoordinator } from './token-refresh-coordinator';
 
+/** A promise paired with the callbacks that settle it. */
+interface Deferred<T> {
+    /** The pending promise handed to the code under test. */
+    promise: Promise<T>;
+
+    /** Fulfils the promise with the given value. */
+    resolve: (value: T) => void;
+
+    /** Rejects the promise with the given reason. */
+    reject: (reason?: unknown) => void;
+}
+
 /** Creates a deferred promise so tests can control resolution timing. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;
 

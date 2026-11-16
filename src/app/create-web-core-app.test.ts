@@ -87,10 +87,12 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/** Build a JSON response with the given body and status. */
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+/** Build a fetch spy serving the runtime env for env.json URLs and apiResponder for the rest. */
 function makeFetch(
     runtime: Record<string, string> | (() => Record<string, string>) = {},
     apiResponder: (url: string, init?: RequestInit) => Response = () => jsonResponse(null),
@@ -106,11 +108,23 @@ function makeFetch(
     });
 }
 
-type TestWindow = Window & {
+/** Test controls added to the fake window on top of the Window surface. */
+interface TestWindowControls {
+    /**
+     * Invoke every listener registered for the event type.
+     */
     dispatchToListeners(type: string, event: Event): void;
-    listenerCount(type: string): number;
-};
 
+    /**
+     * Count the listeners registered for the event type.
+     */
+    listenerCount(type: string): number;
+}
+
+/** A fake window that tracks its event listeners. */
+type TestWindow = Window & TestWindowControls;
+
+/** Build an online window stub with the given navigator languages and a light-scheme matchMedia. */
 function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
     const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
 
@@ -150,6 +164,7 @@ function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
     } as unknown as TestWindow;
 }
 
+/** Define the test app configuration, reading overridable values from the environment. */
 function defineTestConfiguration(environment: Environment) {
     return {
         api: { baseUrl: environment.string('API_URL', 'https://api.test'), timeout: 5_000 },
@@ -172,6 +187,7 @@ function defineTestConfiguration(environment: Environment) {
 
 type TestConfiguration = ReturnType<typeof defineTestConfiguration>;
 
+/** Build the config options for the test configuration, optionally loading a runtime env URL. */
 function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['config'] {
     return {
         createEnvironment: (runtime: Readonly<Record<string, string>>): Environment =>
@@ -181,16 +197,31 @@ function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['
     };
 }
 
+/** The platform seams passed to createWebCoreApp, kept so tests can inspect them. */
 interface Seams {
+    /** The fetch spy for runtime env and API calls. */
     readonly fetchFn: ReturnType<typeof makeFetch>;
+
+    /** The in-memory storage behind appStorage. */
     readonly storage: MemoryStorage;
+
+    /** The fake window that tracks listeners. */
     readonly targetWindow: TestWindow;
+
+    /** The detached document the app stamps. */
     readonly targetDocument: Document;
+
+    /** The fixed clock returning 1000. */
     readonly clock: () => number;
+
+    /** The in-memory router history. */
     readonly history: RouterHistory;
+
+    /** The browser locale candidates used for detection. */
     readonly localeCandidates: readonly string[];
 }
 
+/** Build fresh platform seams around the given fetch spy. */
 function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
     return {
         fetchFn,
@@ -203,6 +234,7 @@ function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
     };
 }
 
+/** Build a root component that records "mounted" into events when mounted. */
 function makeRoot(events: string[] = []): ReturnType<typeof defineComponent> {
     return defineComponent({
         setup() {
@@ -215,6 +247,7 @@ function makeRoot(events: string[] = []): ReturnType<typeof defineComponent> {
     });
 }
 
+/** Build a home module with a single / route, applying any overrides. */
 function homeModule(overrides: Partial<ModuleDefinition> = {}): ModuleDefinition {
     return {
         name: 'home',
@@ -223,6 +256,7 @@ function homeModule(overrides: Partial<ModuleDefinition> = {}): ModuleDefinition
     };
 }
 
+/** Build an idle realtime connection that records its disconnect into order. */
 function makeRealtime(order: string[]): RealtimeConnection {
     return {
         state: 'idle',
@@ -241,6 +275,7 @@ function makeRealtime(order: string[]): RealtimeConnection {
     };
 }
 
+/** Boot the app with the home module, test config and fresh seams, applying any overrides. */
 function bootApp(
     overrides: Partial<WebCoreAppOptions<TestConfiguration>> = {},
 ): Promise<WebCoreApp<TestConfiguration>> {
@@ -526,6 +561,8 @@ describe('createWebCoreApp', () => {
 
                 return jsonResponse(null);
             });
+
+            /** Stamp the trace header so the module interceptor can append to it. */
             const preset: RequestInterceptor = request => ({
                 ...request,
                 headers: { ...request.headers, 'x-trace': 'preset' },
@@ -635,7 +672,11 @@ describe('createWebCoreApp', () => {
 
         it('installs the client returned by the http client override with the resolved tools', async () => {
             const fake = { get: vi.fn() } as unknown as HttpClient;
+
+            /** Pass-through preset interceptor, checked by identity. */
             const preset: RequestInterceptor = request => request;
+
+            /** Pass-through module interceptor, checked by identity. */
             const contributed: RequestInterceptor = request => request;
             const onUnauthorized = vi.fn<UnauthorizedHandler>(async () => false);
             const seams = makeSeams();

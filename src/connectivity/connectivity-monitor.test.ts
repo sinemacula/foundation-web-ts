@@ -9,6 +9,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConnectivityMonitor } from './connectivity-monitor';
 
+/** A fake window paired with helpers to drive and inspect its connectivity listeners. */
+interface FakeWindow {
+    /** The fake window handed to the monitor. */
+    window: Window;
+
+    /** Dispatches an online or offline event to every listener registered for it. */
+    emit: (type: 'online' | 'offline') => void;
+
+    /** The number of listeners currently registered for the given event type. */
+    listenerCount: (type: 'online' | 'offline') => number;
+}
+
 /**
  * Build a fake `Window` whose `online`/`offline` listeners can be triggered and
  * inspected directly, and whose `navigator.onLine` is fixed at creation.
@@ -17,11 +29,7 @@ import { ConnectivityMonitor } from './connectivity-monitor';
  * @returns the fake window plus test helpers to emit events and inspect
  * listeners
  */
-function fakeWindow(onLine: boolean): {
-    window: Window;
-    emit: (type: 'online' | 'offline') => void;
-    listenerCount: (type: 'online' | 'offline') => number;
-} {
+function fakeWindow(onLine: boolean): FakeWindow {
     const listeners = new Map<string, Set<EventListener>>();
 
     const target = {

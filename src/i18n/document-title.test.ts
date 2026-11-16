@@ -15,6 +15,7 @@ import { installDocumentTitleSync } from './document-title';
 
 const Empty = defineComponent({ render: () => null });
 
+/** Build an i18n instance with English page titles loaded, plus a router whose routes carry title meta. */
 async function buildEnv() {
     const i18n = createApplicationI18n('en-GB');
 

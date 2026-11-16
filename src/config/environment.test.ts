@@ -25,10 +25,12 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/** An environment source that reads from a fixed record. */
 function sourceFrom(values: Record<string, string>): EnvironmentSource {
     return { get: (key: string) => values[key] };
 }
 
+/** An environment source that defines no keys. */
 function emptySource(): EnvironmentSource {
     return { get: () => undefined };
 }

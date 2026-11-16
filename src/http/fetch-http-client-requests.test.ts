@@ -21,6 +21,7 @@ type FetchArgs = [input: RequestInfo | URL, init?: RequestInit];
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** A JSON response carrying the serialised body with the given status. */
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
         status,
@@ -28,16 +29,19 @@ function jsonResponse(body: unknown, status = 200): Response {
     });
 }
 
+/** A bodiless response with the given status. */
 function emptyResponse(status = 204): Response {
     return new Response('', { status });
 }
 
+/** Wrap an implementation in a typed fetch spy so its calls can be inspected. */
 function makeFetch(
     impl: (...args: FetchArgs) => Promise<Response>,
 ): ReturnType<typeof vi.fn<(...args: FetchArgs) => Promise<Response>>> {
     return vi.fn<(...args: FetchArgs) => Promise<Response>>(impl);
 }
 
+/** Build a client against a fixed base URL with the given fetch and option overrides. */
 function makeClient(
     fetchFn: typeof fetch,
     extra: Partial<ConstructorParameters<typeof FetchHttpClient>[0]> = {},

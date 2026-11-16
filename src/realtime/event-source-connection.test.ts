@@ -12,14 +12,25 @@ import { describeRealtimeContract, type RealtimeContractHarness } from './test-s
 
 /** Minimal fake EventSource for injection via the factory. */
 class FakeEventSource {
+    /** The URL the adapter opened this source with. */
     readonly url: string;
+
+    /** The credentials flag the adapter passed in the init options. */
     readonly withCredentials: boolean;
+
+    /** The open handler the adapter assigns; fired by emitOpen(). */
     onopen: ((event: Event) => void) | null = null;
+
+    /** The error handler the adapter assigns; fired by emitError(). */
     onerror: ((event: Event) => void) | null = null;
 
+    /** The listeners the adapter registered, keyed by event type. */
     readonly #listeners: Map<string, Array<(event: MessageEvent) => void>> = new Map();
+
+    /** Whether close() has been called on this source. */
     #closed: boolean = false;
 
+    /** The number of times the adapter called close(). */
     closeCalls: number = 0;
 
     constructor(url: string, init: EventSourceInit) {
@@ -27,6 +38,9 @@ class FakeEventSource {
         this.withCredentials = init.withCredentials ?? false;
     }
 
+    /**
+     * Record a listener so emitMessage() can deliver events of the given type.
+     */
     addEventListener(type: string, listener: (event: MessageEvent) => void): void {
         let list = this.#listeners.get(type);
 
@@ -38,23 +52,39 @@ class FakeEventSource {
         list.push(listener);
     }
 
+    /**
+     * Mark the source closed and count the call.
+     */
     close(): void {
         this.#closed = true;
         this.closeCalls++;
     }
 
+    /**
+     * Whether the adapter has closed this source.
+     */
     get closed(): boolean {
         return this.#closed;
     }
 
+    /**
+     * Simulate the server accepting the stream.
+     */
     emitOpen(): void {
         this.onopen?.(new Event('open'));
     }
 
+    /**
+     * Simulate a stream error, which drives the adapter's reconnect path.
+     */
     emitError(): void {
         this.onerror?.(new Event('error'));
     }
 
+    /**
+     * Deliver a message event with the given data to each listener for the
+     * type.
+     */
     emitMessage(type: string, data: unknown): void {
         const listeners = this.#listeners.get(type) ?? [];
         const event = new MessageEvent(type, { data });
@@ -65,14 +95,24 @@ class FakeEventSource {
     }
 }
 
+/** A factory to inject into the adapter and the fakes it has created so far. */
+interface RecordingFactory {
+    /** Every fake the factory has created, in creation order. */
+    sources: FakeEventSource[];
+
+    /** The factory passed to the adapter as `eventSourceFactory`. */
+    factory: EventSourceFactory;
+}
+
 /**
  * Creates a typed {@link EventSourceFactory} that records each fake it creates.
  * The cast to `EventSource` is confined to a single line inside the closure so
  * every test body can use the strongly-typed {@link FakeEventSource} directly.
  */
-function makeFactory(): { sources: FakeEventSource[]; factory: EventSourceFactory } {
+function makeFactory(): RecordingFactory {
     const sources: FakeEventSource[] = [];
 
+    /** Build a fake source and record it before handing it to the adapter. */
     const factory: EventSourceFactory = (url, init) => {
         const source = new FakeEventSource(url, init);
 
@@ -169,6 +209,7 @@ describe('EventSourceConnection', () => {
             const globals = globalThis as Record<string, unknown>;
             const OriginalEventSource = globals['EventSource'];
 
+            /** Constructible stand-in installed as the global EventSource. */
             class FakeEventSourceShim extends FakeEventSource {}
 
             globals['EventSource'] = FakeEventSourceShim;

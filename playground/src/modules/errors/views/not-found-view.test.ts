@@ -13,8 +13,13 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import NotFoundView from '@/modules/errors/views/not-found-view.vue';
 
 interface MountedNotFoundView {
+    /** The DOM element the view is mounted into, attached to the document body. */
     readonly container: HTMLDivElement;
+
+    /** The in-memory router the view navigates with. */
     readonly router: ReturnType<typeof createRouter>;
+
+    /** Unmounts the app and detaches the container. */
     readonly unmount: () => void;
 }
 

@@ -9,9 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ApiQuery } from './api-query';
 
-// ---------------------------------------------------------------------------
-// Helper: parse the `filters` parameter back to an object
-// ---------------------------------------------------------------------------
+/** Parse the query's `filters` parameter back to an object, or `{}` when absent. */
 function parsedFilters(query: ApiQuery): unknown {
     const params = query.toQueryParameters();
 
@@ -22,12 +20,10 @@ function parsedFilters(query: ApiQuery): unknown {
     return JSON.parse(String(params['filters']));
 }
 
-// ---------------------------------------------------------------------------
-// Helper: build wire-style objects from entry tuples (mirrors the wire() idiom
-// used in other tests in this repo - keeps $-prefixed keys out of
-// object-literal key positions in test assertions where Biome might inspect
-// them).
-// ---------------------------------------------------------------------------
+/**
+ * Build a wire-style object from entry tuples, keeping $-prefixed keys out of
+ * object-literal key positions where Biome might inspect them.
+ */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
 }

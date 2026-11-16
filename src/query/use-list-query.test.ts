@@ -11,9 +11,7 @@ import { filter } from './list-filter';
 import { defineListQuery } from './list-query-definition';
 import { useListQuery } from './use-list-query';
 
-// ---------------------------------------------------------------------------
-// Helper: parse `filters` parameter back to an object
-// ---------------------------------------------------------------------------
+/** Parse the `filters` parameter back to an object, or `{}` when absent. */
 function parsedFilters(params: Record<string, unknown>): unknown {
     if (params['filters'] === undefined) {
         return {};
@@ -22,9 +20,7 @@ function parsedFilters(params: Record<string, unknown>): unknown {
     return JSON.parse(String(params['filters']));
 }
 
-// ---------------------------------------------------------------------------
-// Helper: wire object builder (keeps $-prefixed keys out of object literals)
-// ---------------------------------------------------------------------------
+/** Build a wire-style object from entry tuples, keeping $-prefixed keys out of object literals. */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
 }

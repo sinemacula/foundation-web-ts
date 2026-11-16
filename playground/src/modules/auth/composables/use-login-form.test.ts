@@ -33,7 +33,10 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
 }
 
 interface MountedLoginForm {
+    /** The composable result captured from the test component's setup. */
     readonly form: LoginForm;
+
+    /** Unmounts the test component's app. */
     readonly unmount: () => void;
 }
 

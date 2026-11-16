@@ -11,18 +11,76 @@ import { MemoryStorage } from '../storage/memory-storage';
 import type { ColorSchemePreference } from './color-scheme';
 import { ColorSchemeService, type ThemeColors } from './color-scheme-service';
 
+/** Fake MediaQueryList that counts listener registrations and lets a test fire a change. */
 interface FakeMql {
+    /** The match state reported to the service. */
     matches: boolean;
+
+    /** The media query the service last passed to matchMedia. */
     query: string;
+
+    /** The number of addEventListener calls. */
     addCount: number;
+
+    /** The number of removeEventListener calls. */
     removeCount: number;
+
+    /** The event names passed to addEventListener, in call order. */
     addEvents: string[];
+
+    /** The event names passed to removeEventListener, in call order. */
     removeEvents: string[];
+
+    /**
+     * Record the registration and keep the callback for fireChange.
+     */
     addEventListener(event: string, cb: () => void): void;
+
+    /**
+     * Record the removal and drop the stored callback.
+     */
     removeEventListener(event: string, cb: () => void): void;
+
+    /**
+     * Invoke the registered change callback, if any.
+     */
     fireChange(): void;
 }
 
+/** Overrides for the service built by makeService. */
+interface MakeServiceOptions {
+    /** The initial match state of the prefers-dark media query. */
+    matches?: boolean;
+
+    /** The value seeded into storage before the service is built. */
+    initialStored?: string;
+
+    /** The storage key passed to the service and used for seeding. */
+    storageKey?: string;
+
+    /** The default preference passed to the service. */
+    defaultPreference?: ColorSchemePreference;
+
+    /** The theme-color meta values passed to the service. */
+    themeColors?: ThemeColors;
+}
+
+/** The service under test plus the fakes it was built with. */
+interface ServiceFixture {
+    /** The service under test. */
+    service: ColorSchemeService;
+
+    /** The in-memory storage backing the service. */
+    storage: MemoryStorage;
+
+    /** The fake media query returned by the window stub. */
+    mql: FakeMql;
+
+    /** The detached document the service writes to. */
+    targetDocument: Document;
+}
+
+/** Build a FakeMql with the given initial match state. */
 function makeMql(matches: boolean): FakeMql {
     let handler: (() => void) | null = null;
 
@@ -51,13 +109,8 @@ function makeMql(matches: boolean): FakeMql {
     return mql;
 }
 
-function makeService(options?: {
-    matches?: boolean;
-    initialStored?: string;
-    storageKey?: string;
-    defaultPreference?: ColorSchemePreference;
-    themeColors?: ThemeColors;
-}): { service: ColorSchemeService; storage: MemoryStorage; mql: FakeMql; targetDocument: Document } {
+/** Build a ColorSchemeService over in-memory storage, a fake media query and a detached document. */
+function makeService(options?: MakeServiceOptions): ServiceFixture {
     const storage = new MemoryStorage();
 
     if (options?.initialStored !== undefined) {
@@ -86,10 +139,12 @@ function makeService(options?: {
     return { service, storage, mql, targetDocument };
 }
 
+/** Read the data-theme attribute from the document root. */
 function dataTheme(doc: Document): string | null {
     return doc.documentElement.getAttribute('data-theme');
 }
 
+/** Read the content of the theme-color meta tag, or null when absent. */
 function metaColor(doc: Document): string | null {
     return doc.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? null;
 }

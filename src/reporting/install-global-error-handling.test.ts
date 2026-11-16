@@ -14,10 +14,43 @@ import { installGlobalErrorHandling } from './install-global-error-handling';
 
 const Stub = defineComponent({ render: () => null });
 
-function makeReporter(): ErrorReporter & {
-    captureErrorCalls: Array<{ error: unknown; context: Readonly<Record<string, unknown>> | undefined }>;
-} {
-    const captureErrorCalls: Array<{ error: unknown; context: Readonly<Record<string, unknown>> | undefined }> = [];
+/** One captureError() call recorded by the fake reporter. */
+interface CapturedError {
+    /** The error the handler reported. */
+    error: unknown;
+
+    /** The context the handler attached, or `undefined` when none was passed. */
+    context: Readonly<Record<string, unknown>> | undefined;
+}
+
+/** The recording surface the fake reporter adds on top of {@link ErrorReporter}. */
+interface ReporterRecorder {
+    /** Every captureError() call, in order. */
+    captureErrorCalls: CapturedError[];
+}
+
+/** The test controls the fake window adds on top of {@link Window}. */
+interface WindowControls {
+    /**
+     * Fire an `error` event built from the init at each registered error
+     * listener.
+     */
+    dispatchError(init: ErrorEventInit): void;
+
+    /**
+     * Fire a simulated `unhandledrejection` event carrying the reason.
+     */
+    dispatchRejection(reason: unknown): void;
+
+    /**
+     * The number of listeners currently registered for the event type.
+     */
+    listenerCount(type: string): number;
+}
+
+/** Build an {@link ErrorReporter} fake that records captureError() calls and ignores the rest. */
+function makeReporter(): ErrorReporter & ReporterRecorder {
+    const captureErrorCalls: CapturedError[] = [];
 
     return {
         captureErrorCalls,
@@ -33,11 +66,8 @@ function makeReporter(): ErrorReporter & {
     };
 }
 
-function makeWindow(): Window & {
-    dispatchError(init: ErrorEventInit): void;
-    dispatchRejection(reason: unknown): void;
-    listenerCount(type: string): number;
-} {
+/** Build a fake window that tracks listeners and lets a test dispatch error and rejection events. */
+function makeWindow(): Window & WindowControls {
     const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
 
     const win = {
@@ -84,11 +114,7 @@ function makeWindow(): Window & {
                 }
             }
         },
-    } as unknown as Window & {
-        dispatchError(init: ErrorEventInit): void;
-        dispatchRejection(reason: unknown): void;
-        listenerCount(type: string): number;
-    };
+    } as unknown as Window & WindowControls;
 
     return win;
 }

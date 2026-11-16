@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { COLOR_SCHEME_BOOT_SCRIPT, COLOR_SCHEME_STORAGE_KEY, composeColorSchemeStorageKey } from './color-scheme';
 
+/** Evaluate the boot script against stubbed storage and document, returning the applied data-theme. */
 function runBootScript(stored: string | null, throwOnRead = false): string | null {
     let applied: string | null = null;
 

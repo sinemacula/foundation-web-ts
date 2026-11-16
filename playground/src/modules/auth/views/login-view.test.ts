@@ -37,8 +37,13 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
 }
 
 interface MountedLoginView {
+    /** The DOM element the view is mounted into, attached to the document body. */
     readonly container: HTMLDivElement;
+
+    /** The in-memory router the view navigates with. */
     readonly router: ReturnType<typeof createRouter>;
+
+    /** Unmounts the app and detaches the container. */
     readonly unmount: () => void;
 }
 

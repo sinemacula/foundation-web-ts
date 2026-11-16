@@ -25,17 +25,36 @@ const EXPIRES_AT_KEY = 'auth.expires_at';
  */
 const SESSION_EXPIRY_EPOCH_MS = 1_798_761_599_000;
 
+/** The arguments of one recorded login call. */
+interface LoginCall {
+    /** The credentials passed to login. */
+    credentials: unknown;
+
+    /** The device descriptor passed to login. */
+    device: SessionDevice;
+}
+
 /**
  * An in-memory {@link SessionApi} fake that records every call and replays
  * queued outcomes in order.
  */
 class FakeSessionApi implements SessionApi {
+    /** The names of every API method called, in order. */
     readonly calls: string[] = [];
-    readonly loginCalls: Array<{ credentials: unknown; device: SessionDevice }> = [];
+
+    /** The arguments of every login call, in order. */
+    readonly loginCalls: LoginCall[] = [];
+
+    /** The refresh token passed to every refresh call, in order. */
     readonly refreshCalls: string[] = [];
 
+    /** Queued outcomes shared by login and refresh, oldest first. */
     readonly #sessions: Array<SessionTokens | Error> = [];
+
+    /** Queued outcomes for currentUser, oldest first. */
     readonly #users: Array<SessionUser | Error> = [];
+
+    /** The error every logout rejects with once set, or null to resolve. */
     #logoutError: Error | null = null;
 
     /**
@@ -65,6 +84,9 @@ class FakeSessionApi implements SessionApi {
         this.#logoutError = error;
     }
 
+    /**
+     * Record the login and settle with the next queued session outcome.
+     */
     login(credentials: unknown, device: SessionDevice): Promise<SessionTokens> {
         this.calls.push('login');
         this.loginCalls.push({ credentials, device });
@@ -72,6 +94,9 @@ class FakeSessionApi implements SessionApi {
         return take(this.#sessions);
     }
 
+    /**
+     * Record the refresh token and settle with the next queued session outcome.
+     */
     refresh(refreshToken: string): Promise<SessionTokens> {
         this.calls.push('refresh');
         this.refreshCalls.push(refreshToken);
@@ -79,12 +104,18 @@ class FakeSessionApi implements SessionApi {
         return take(this.#sessions);
     }
 
+    /**
+     * Record the logout, rejecting with the failLogout error when one is set.
+     */
     logout(): Promise<void> {
         this.calls.push('logout');
 
         return this.#logoutError === null ? Promise.resolve() : Promise.reject(this.#logoutError);
     }
 
+    /**
+     * Record the lookup and settle with the next queued user outcome.
+     */
     currentUser(): Promise<SessionUser> {
         this.calls.push('currentUser');
 
@@ -123,6 +154,15 @@ function user(): SessionUser {
     return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions: [] };
 }
 
+/** Context overrides a test can pass when installing the session context. */
+interface TestContextOverrides {
+    /** The Pinia store id, defaulting to auth. */
+    storeId?: string;
+
+    /** The wire timestamp parser, defaulting to one that records each value and returns null. */
+    parseTimestamp?: (value: string) => number | null;
+}
+
 describe('useSessionStore', () => {
     let storage: MemoryStorage;
     let fake: FakeSessionApi;
@@ -133,9 +173,7 @@ describe('useSessionStore', () => {
      *
      * @param overrides - optional context overrides
      */
-    function installTestContext(
-        overrides: { storeId?: string; parseTimestamp?: (value: string) => number | null } = {},
-    ): void {
+    function installTestContext(overrides: TestContextOverrides = {}): void {
         installSessionContext({
             storageKeys: {
                 accessToken: ACCESS_TOKEN_KEY,

@@ -22,8 +22,15 @@ const ACCESS_TOKEN_KEY = 'auth.access_token';
 
 const context = { to: { fullPath: '/settings/billing' }, from: {} } as unknown as MiddlewareContext;
 
+/** The session store state viewed as writable, so tests can set the user directly. */
+interface WritableSessionState {
+    /** The signed-in user, or null when signed out. */
+    user: SessionUser | null;
+}
+
 /** Build a session API stand-in that fails loudly if any method is invoked. */
 function createSessionApiStub(): SessionApi {
+    /** Reject every call so any unexpected API use fails the test. */
     const fail = (): Promise<never> => Promise.reject(new Error('not implemented'));
 
     return { login: fail, refresh: fail, logout: fail, currentUser: fail };
@@ -36,7 +43,7 @@ function userWithPermissions(permissions: readonly string[]): SessionUser {
 
 /** Write the session user directly onto the store state. */
 function setStoreUser(user: SessionUser): void {
-    (useSessionStore() as unknown as { user: SessionUser | null }).user = user;
+    (useSessionStore() as unknown as WritableSessionState).user = user;
 }
 
 describe('session guards', () => {

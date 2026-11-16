@@ -18,6 +18,7 @@ describe('BreadcrumbTrail', () => {
         });
 
         it('records a breadcrumb with the timestamp from the injected clock', () => {
+            /** Fixed clock so the recorded timestamp is predictable. */
             const clock = () => 1_000;
             const trail = new BreadcrumbTrail(50, clock);
 
@@ -27,6 +28,7 @@ describe('BreadcrumbTrail', () => {
         });
 
         it('records the optional data field when provided', () => {
+            /** Fixed clock so the recorded timestamp is predictable. */
             const clock = () => 2_000;
             const trail = new BreadcrumbTrail(50, clock);
 
@@ -42,6 +44,8 @@ describe('BreadcrumbTrail', () => {
 
         it('preserves insertion order across multiple adds', () => {
             let t = 0;
+
+            /** Clock that ticks by one per read, giving each breadcrumb a distinct timestamp. */
             const clock = () => ++t;
             const trail = new BreadcrumbTrail(50, clock);
 

@@ -16,6 +16,22 @@ import { installPageTracking } from './install-page-tracking';
 
 const Empty = defineComponent({ render: () => null });
 
+/** One recorded call to the tracker's page method. */
+interface PageCall {
+    /** The page name passed to the tracker. */
+    name: string;
+
+    /** The properties passed alongside the page name, if any. */
+    properties: Readonly<Record<string, unknown>> | undefined;
+}
+
+/** An analytics tracker that records its page calls for inspection. */
+interface RecordingTracker extends AnalyticsTracker {
+    /** Every page call received, in order. */
+    pageCalls: Array<PageCall>;
+}
+
+/** Build a memory-history router with named routes and one unnamed route. */
 function buildRouter() {
     return createApplicationRouter({
         history: createMemoryHistory(),
@@ -27,10 +43,9 @@ function buildRouter() {
     });
 }
 
-function makeTracker(): AnalyticsTracker & {
-    pageCalls: Array<{ name: string; properties: Readonly<Record<string, unknown>> | undefined }>;
-} {
-    const pageCalls: Array<{ name: string; properties: Readonly<Record<string, unknown>> | undefined }> = [];
+/** Build a tracker that records page calls and stubs the other methods. */
+function makeTracker(): RecordingTracker {
+    const pageCalls: Array<PageCall> = [];
 
     return {
         pageCalls,

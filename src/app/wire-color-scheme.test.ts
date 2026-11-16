@@ -12,14 +12,29 @@ import { colorScheme, resetWebCoreServices } from './services';
 import type { ColorSchemeWiringConfig, WireColorSchemeOptions } from './wire-color-scheme';
 import { wireColorScheme } from './wire-color-scheme';
 
+/** Fake MediaQueryList that counts listener registrations. */
 interface FakeMql {
+    /** The match state reported to the colour-scheme service. */
     matches: boolean;
+
+    /** The number of addEventListener calls. */
     addCount: number;
+
+    /** The number of removeEventListener calls. */
     removeCount: number;
+
+    /**
+     * Count a listener registration.
+     */
     addEventListener(event: string, cb: () => void): void;
+
+    /**
+     * Count a listener removal.
+     */
     removeEventListener(event: string, cb: () => void): void;
 }
 
+/** Build a FakeMql with the given initial match state. */
 function makeMql(matches: boolean): FakeMql {
     return {
         matches,
@@ -34,6 +49,7 @@ function makeMql(matches: boolean): FakeMql {
     };
 }
 
+/** Wrap a FakeMql in a window stub whose matchMedia always returns it. */
 function windowOf(mql: FakeMql): Window {
     return { matchMedia: () => mql } as unknown as Window;
 }
@@ -42,6 +58,7 @@ const config: ColorSchemeWiringConfig = {
     colorScheme: { default: 'system' },
 };
 
+/** Build wiring options over fresh storage, a light-scheme window and a detached document. */
 function baseOptions(overrides: Partial<WireColorSchemeOptions> = {}): WireColorSchemeOptions {
     return {
         config,
@@ -52,10 +69,12 @@ function baseOptions(overrides: Partial<WireColorSchemeOptions> = {}): WireColor
     };
 }
 
+/** Read the data-theme attribute from the document root. */
 function dataTheme(doc: Document): string | null {
     return doc.documentElement.getAttribute('data-theme');
 }
 
+/** Read the content of the theme-color meta tag, or null when absent. */
 function metaColor(doc: Document): string | null {
     return doc.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? null;
 }

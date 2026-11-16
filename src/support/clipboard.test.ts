@@ -9,10 +9,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { copyToClipboard } from './clipboard';
 
+/** A navigator whose clipboard writes go to the given function. */
 function fakeNavigator(writeText: (text: string) => Promise<void>): Navigator {
     return { clipboard: { writeText } } as unknown as Navigator;
 }
 
+/** A navigator with no clipboard API, as in insecure contexts. */
 function navigatorWithoutClipboard(): Navigator {
     return {} as unknown as Navigator;
 }

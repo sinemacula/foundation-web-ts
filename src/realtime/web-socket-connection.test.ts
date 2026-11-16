@@ -12,14 +12,28 @@ import { WebSocketConnection, type WebSocketFactory } from './web-socket-connect
 
 /** Minimal fake WebSocket for injection via the factory. */
 class FakeWebSocket {
+    /** The URL the adapter opened this socket with. */
     readonly url: string;
+
+    /** The subprotocols the adapter passed, if any. */
     readonly protocols: string | readonly string[] | undefined;
+
+    /** The open handler the adapter assigns; fired by emitOpen(). */
     onopen: ((event: Event) => void) | null = null;
+
+    /** The message handler the adapter assigns; fired by emitMessage(). */
     onmessage: ((event: MessageEvent) => void) | null = null;
+
+    /** The close handler the adapter assigns; fired by emitClose(). */
     onclose: ((event: CloseEvent) => void) | null = null;
 
+    /** Whether close() has been called on this socket. */
     #closed: boolean = false;
+
+    /** The number of times the adapter called close(). */
     closeCalls: number = 0;
+
+    /** Every payload the adapter sent, in order. */
     sentMessages: string[] = [];
 
     constructor(url: string, protocols?: string | readonly string[]) {
@@ -27,30 +41,58 @@ class FakeWebSocket {
         this.protocols = protocols;
     }
 
+    /**
+     * Record an outgoing payload.
+     */
     send(data: string): void {
         this.sentMessages.push(data);
     }
 
+    /**
+     * Mark the socket closed and count the call.
+     */
     close(): void {
         this.#closed = true;
         this.closeCalls++;
     }
 
+    /**
+     * Whether the adapter has closed this socket.
+     */
     get closed(): boolean {
         return this.#closed;
     }
 
+    /**
+     * Simulate the server accepting the connection.
+     */
     emitOpen(): void {
         this.onopen?.(new Event('open'));
     }
 
+    /**
+     * Simulate an incoming frame carrying the given data.
+     */
     emitMessage(data: string): void {
         this.onmessage?.(new MessageEvent('message', { data }));
     }
 
+    /**
+     * Simulate the connection dropping, which drives the adapter's reconnect
+     * path.
+     */
     emitClose(): void {
         this.onclose?.(new CloseEvent('close'));
     }
+}
+
+/** A factory to inject into the adapter and the fakes it has created so far. */
+interface RecordingFactory {
+    /** Every fake the factory has created, in creation order. */
+    sockets: FakeWebSocket[];
+
+    /** The factory passed to the adapter as `webSocketFactory`. */
+    factory: WebSocketFactory;
 }
 
 /**
@@ -58,9 +100,10 @@ class FakeWebSocket {
  * The cast to `WebSocket` is confined to a single line inside the closure so
  * every test body can use the strongly-typed {@link FakeWebSocket} directly.
  */
-function makeFactory(): { sockets: FakeWebSocket[]; factory: WebSocketFactory } {
+function makeFactory(): RecordingFactory {
     const sockets: FakeWebSocket[] = [];
 
+    /** Build a fake socket and record it before handing it to the adapter. */
     const factory: WebSocketFactory = (url, protocols) => {
         const socket = new FakeWebSocket(url, protocols);
 

@@ -9,6 +9,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IdleMonitor } from './idle-monitor';
 
+/** A fake window paired with helpers to drive and inspect its activity listeners. */
+interface FakeWindow {
+    /** The fake window handed to the monitor. */
+    window: Window;
+
+    /** Dispatches an event of the given type to every listener registered for it. */
+    emit: (type: string) => void;
+
+    /** The number of listeners currently registered for the given event type. */
+    listenerCount: (type: string) => number;
+}
+
 /**
  * Build a fake `Window` whose activity listeners can be triggered and inspected
  * directly.
@@ -16,11 +28,7 @@ import { IdleMonitor } from './idle-monitor';
  * @returns the fake window plus test helpers to emit events and inspect
  * listeners
  */
-function fakeWindow(): {
-    window: Window;
-    emit: (type: string) => void;
-    listenerCount: (type: string) => number;
-} {
+function fakeWindow(): FakeWindow {
     const listeners = new Map<string, Set<EventListener>>();
 
     const target = {

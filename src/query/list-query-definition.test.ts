@@ -41,6 +41,7 @@ describe('defineListQuery', () => {
     });
 
     it('preserves the base function', () => {
+        /** Base query transform the definition should keep by reference. */
         const base = (q: ApiQuery) => q.fields(['id', 'name']);
         const definition = defineListQuery({ base });
 

@@ -11,12 +11,15 @@ import { effectScope, getCurrentScope, ref } from 'vue';
 import type { ResourceFetcher } from './use-resource';
 import { useResource } from './use-resource';
 
-// ---------------------------------------------------------------------------
-// Helper: a promise a test can resolve or reject on demand
-// ---------------------------------------------------------------------------
+/** A promise a test can resolve or reject on demand. */
 interface Deferred<Value> {
+    /** The pending promise handed to the code under test. */
     readonly promise: Promise<Value>;
+
+    /** Settles the promise with a value. */
     readonly resolve: (value: Value) => void;
+
+    /** Settles the promise with a rejection. */
     readonly reject: (reason: unknown) => void;
 }
 
@@ -33,21 +36,29 @@ function createDeferred<Value>(): Deferred<Value> {
     return { promise, resolve, reject };
 }
 
-// ---------------------------------------------------------------------------
-// Helper: a fetcher that records every call so a test can drive each run
-// ---------------------------------------------------------------------------
+/** One recorded fetcher run, so a test can drive each run separately. */
 interface FetcherCall<Value> {
+    /** The abort signal useResource passed to this run. */
     readonly signal: AbortSignal;
+
+    /** Controls when and how this run settles. */
     readonly deferred: Deferred<Value>;
 }
 
-/** Creates a `ResourceFetcher` that queues a controllable deferred per call. */
-function createFetcherQueue<Value>(): {
+/** A recording fetcher and the runs it has received so far. */
+interface FetcherQueue<Value> {
+    /** The fetcher passed to useResource. */
     readonly fetcher: ResourceFetcher<Value>;
+
+    /** Every run the fetcher has received, in order. */
     readonly calls: FetcherCall<Value>[];
-} {
+}
+
+/** Creates a `ResourceFetcher` that queues a controllable deferred per call. */
+function createFetcherQueue<Value>(): FetcherQueue<Value> {
     const calls: FetcherCall<Value>[] = [];
 
+    /** Record the run and return a promise the test settles through its deferred. */
     const fetcher: ResourceFetcher<Value> = signal => {
         const deferred = createDeferred<Value>();
 

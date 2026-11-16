@@ -16,10 +16,12 @@ import { installChunkErrorRecovery, isChunkLoadError } from './chunk-error-recov
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** The error a browser raises when a lazy route chunk fails to load. */
 function chunkImportError(): TypeError {
     return new TypeError('Failed to fetch dynamically imported module: http://example.com/assets/broken.js');
 }
 
+/** Build a memory-history router whose `/broken` route loads through the given loader. */
 function buildRouter(brokenLoader: () => Promise<never>): Router {
     const routes: RouteRecordRaw[] = [
         { path: '/', component: EmptyComponent },
@@ -29,10 +31,12 @@ function buildRouter(brokenLoader: () => Promise<never>): Router {
     return createRouter({ history: createMemoryHistory(), routes });
 }
 
+/** Build an {@link ErrorReporter} whose methods are spies. */
 function fakeReporter(): ErrorReporter {
     return { captureError: vi.fn(), captureMessage: vi.fn(), setUser: vi.fn() };
 }
 
+/** Navigate to `/broken`, swallowing the push rejection so only the error handler is observed. */
 async function navigateToBroken(router: Router): Promise<void> {
     await router.push('/broken').catch(() => {
         // The router's own promise rejects alongside the onError handler under
@@ -49,6 +53,8 @@ describe('installChunkErrorRecovery', () => {
         const router = buildRouter(() => Promise.reject(chunkImportError()));
         const storage = new MemoryStorage();
         const reload = vi.fn();
+
+        /** Fixed clock so the stamped recovery time is predictable. */
         const clock = () => 1_000;
 
         installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
@@ -64,6 +70,8 @@ describe('installChunkErrorRecovery', () => {
         const reload = vi.fn();
         const reporter = fakeReporter();
         let now = 1_000;
+
+        /** Clock that reads `now`, so the test can advance time between navigations. */
         const clock = () => now;
 
         installChunkErrorRecovery({ router, storage, reporter, reload, clock, windowMs: 60_000 });
@@ -84,6 +92,8 @@ describe('installChunkErrorRecovery', () => {
         const storage = new MemoryStorage();
         const reload = vi.fn();
         let now = 1_000;
+
+        /** Clock that reads `now`, so the test can advance time between navigations. */
         const clock = () => now;
 
         installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
@@ -125,6 +135,8 @@ describe('installChunkErrorRecovery', () => {
         const storage = new MemoryStorage();
         const reload = vi.fn();
         let now = 1_000;
+
+        /** Clock that reads `now`, so the test can advance time between navigations. */
         const clock = () => now;
 
         installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });
@@ -142,6 +154,8 @@ describe('installChunkErrorRecovery', () => {
         const reload = vi.fn();
         const reporter = fakeReporter();
         let now = 0;
+
+        /** Clock that reads `now`, so the test can advance time between navigations. */
         const clock = () => now;
 
         installChunkErrorRecovery({ router, storage, reporter, reload, clock });
@@ -198,6 +212,8 @@ describe('installChunkErrorRecovery', () => {
         const storage = new MemoryStorage();
         const reload = vi.fn();
         let now = 1_000;
+
+        /** Clock that reads `now`, so the test can advance time between navigations. */
         const clock = () => now;
 
         const teardown = installChunkErrorRecovery({ router, storage, reload, clock, windowMs: 60_000 });

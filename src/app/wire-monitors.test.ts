@@ -32,6 +32,7 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/** Build a 200 runtime-env response reporting the given deployed version. */
 function versionResponse(version: string): Response {
     return new Response(JSON.stringify(wire([['APP_VERSION', version]])), {
         status: 200,
@@ -39,20 +40,32 @@ function versionResponse(version: string): Response {
     });
 }
 
+/** Build a fetch spy that always serves the given deployed version. */
 function makeFetch(version: string) {
     return vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
         versionResponse(version),
     );
 }
 
+/** The wiring options for one test plus the fakes they were built from. */
 interface Harness {
+    /** The settings reporting the running version 1.0.0. */
     readonly settings: MonitorWiringSettings;
+
+    /** The toast service returned by the toasts accessor. */
     readonly service: ToastService;
+
+    /** The toasts accessor spy passed to wireMonitors. */
     readonly toasts: () => ToastService;
+
+    /** The fetch spy serving the deployed version. */
     readonly fetchFn: ReturnType<typeof makeFetch>;
+
+    /** The options passed to wireMonitors, with any overrides applied. */
     readonly options: WireMonitorsOptions<MonitorWiringSettings>;
 }
 
+/** Build a harness whose fetch reports deployedVersion, applying any option overrides. */
 function makeHarness(
     overrides: Partial<WireMonitorsOptions<MonitorWiringSettings>> = {},
     deployedVersion = '2.0.0',

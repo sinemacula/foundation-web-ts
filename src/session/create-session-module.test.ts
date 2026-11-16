@@ -48,16 +48,33 @@ const REFRESH_TOKEN_KEY = 'auth.refresh_token';
 const EXPIRES_AT_KEY = 'auth.expires_at';
 const DEVICE_UUID_KEY = 'auth.device_uuid';
 
+/** The arguments of one recorded login call. */
+interface LoginCall {
+    /** The credentials passed to login. */
+    credentials: unknown;
+
+    /** The device descriptor passed to login. */
+    device: SessionDevice;
+}
+
 /**
  * An in-memory {@link SessionApi} fake that records every call and replays
  * queued outcomes in order.
  */
 class FakeSessionApi implements SessionApi {
+    /** The names of every API method called, in order. */
     readonly calls: string[] = [];
-    readonly loginCalls: Array<{ credentials: unknown; device: SessionDevice }> = [];
+
+    /** The arguments of every login call, in order. */
+    readonly loginCalls: LoginCall[] = [];
+
+    /** The refresh token passed to every refresh call, in order. */
     readonly refreshCalls: string[] = [];
 
+    /** Queued outcomes shared by login and refresh, oldest first. */
     readonly #sessions: Array<SessionTokens | Error> = [];
+
+    /** Queued outcomes for currentUser, oldest first. */
     readonly #users: Array<SessionUser | Error> = [];
 
     /**
@@ -78,6 +95,9 @@ class FakeSessionApi implements SessionApi {
         this.#users.push(outcome);
     }
 
+    /**
+     * Record the login and settle with the next queued session outcome.
+     */
     login(credentials: unknown, device: SessionDevice): Promise<SessionTokens> {
         this.calls.push('login');
         this.loginCalls.push({ credentials, device });
@@ -85,6 +105,9 @@ class FakeSessionApi implements SessionApi {
         return take(this.#sessions);
     }
 
+    /**
+     * Record the refresh token and settle with the next queued session outcome.
+     */
     refresh(refreshToken: string): Promise<SessionTokens> {
         this.calls.push('refresh');
         this.refreshCalls.push(refreshToken);
@@ -92,12 +115,18 @@ class FakeSessionApi implements SessionApi {
         return take(this.#sessions);
     }
 
+    /**
+     * Record the logout and resolve.
+     */
     logout(): Promise<void> {
         this.calls.push('logout');
 
         return Promise.resolve();
     }
 
+    /**
+     * Record the lookup and settle with the next queued user outcome.
+     */
     currentUser(): Promise<SessionUser> {
         this.calls.push('currentUser');
 
@@ -138,12 +167,36 @@ function user(overrides: Partial<SessionUser> = {}): SessionUser {
 
 type StorageListener = (event: StorageEvent) => void;
 
+/** The fields of a cross-tab storage change delivered by {@link FakeWindow}. */
+interface StorageChange {
+    /** The storage key that changed, or null when storage was cleared. */
+    key: string | null;
+
+    /** The key's new value, or null when it was removed. */
+    newValue: string | null;
+}
+
 /** A minimal fake window recording `storage` listeners for direct dispatch. */
 interface FakeWindow {
+    /**
+     * Register a listener; every listener is treated as a storage listener.
+     */
     addEventListener(type: string, listener: EventListenerOrEventListenerObject): void;
+
+    /**
+     * Remove a previously registered listener.
+     */
     removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void;
+
+    /**
+     * Count the listeners currently registered.
+     */
     listenerCount(): number;
-    dispatchStorage(init: { key: string | null; newValue: string | null }): void;
+
+    /**
+     * Deliver a storage event carrying the change to every listener.
+     */
+    dispatchStorage(init: StorageChange): void;
 }
 
 /** Build the fake window. */
@@ -158,7 +211,7 @@ function makeWindow(): FakeWindow {
             listeners.delete(listener as StorageListener);
         },
         listenerCount: (): number => listeners.size,
-        dispatchStorage: (init: { key: string | null; newValue: string | null }): void => {
+        dispatchStorage: (init: StorageChange): void => {
             const event = { key: init.key, newValue: init.newValue } as StorageEvent;
 
             for (const listener of listeners) {
@@ -170,6 +223,7 @@ function makeWindow(): FakeWindow {
 
 /** Build an HTTP client stand-in that fails loudly if any method is invoked. */
 function createHttpClientStub(): HttpClient {
+    /** Reject every call so any unexpected HTTP use fails the test. */
     const fail = (): Promise<never> => Promise.reject(new Error('The stub HTTP client must not be called.'));
 
     return { get: fail, post: fail, put: fail, patch: fail, delete: fail, download: fail };
@@ -177,7 +231,10 @@ function createHttpClientStub(): HttpClient {
 
 /** A recorded call made against {@link FakeHttpClient}. */
 interface RecordedHttpCall {
+    /** The HTTP method the module used. */
     readonly method: string;
+
+    /** The request path the module called. */
     readonly path: string;
 }
 
@@ -186,7 +243,10 @@ interface RecordedHttpCall {
  * payloads.
  */
 class FakeHttpClient implements HttpClient {
+    /** Every call made against the fake, in order. */
     readonly calls: RecordedHttpCall[] = [];
+
+    /** Response payloads waiting to be returned, oldest first. */
     readonly #queue: unknown[] = [];
 
     /**
@@ -198,30 +258,51 @@ class FakeHttpClient implements HttpClient {
         this.#queue.push(value);
     }
 
+    /**
+     * Record a GET and resolve with the next queued payload.
+     */
     get<T>(path: string): Promise<T> {
         return this.#consume('GET', path);
     }
 
+    /**
+     * Record a POST and resolve with the next queued payload.
+     */
     post<T>(path: string): Promise<T> {
         return this.#consume('POST', path);
     }
 
+    /**
+     * Record a PUT and resolve with the next queued payload.
+     */
     put<T>(path: string): Promise<T> {
         return this.#consume('PUT', path);
     }
 
+    /**
+     * Record a PATCH and resolve with the next queued payload.
+     */
     patch<T>(path: string): Promise<T> {
         return this.#consume('PATCH', path);
     }
 
+    /**
+     * Record a DELETE and resolve with the next queued payload.
+     */
     delete<T>(path: string): Promise<T> {
         return this.#consume('DELETE', path);
     }
 
+    /**
+     * Record a download and resolve with the next queued payload.
+     */
     download(path: string): Promise<Blob> {
         return this.#consume('DOWNLOAD', path);
     }
 
+    /**
+     * Record the call and resolve with the next queued payload, if any.
+     */
     #consume<T>(method: string, path: string): Promise<T> {
         this.calls.push({ method, path });
 
@@ -231,16 +312,26 @@ class FakeHttpClient implements HttpClient {
 
 /** A recording {@link ErrorReporter} capturing identity changes. */
 class RecordingReporter implements ErrorReporter {
+    /** Every identity passed to setUser, in order; null marks a cleared identity. */
     readonly users: Array<ReportedUser | null> = [];
 
+    /**
+     * Ignore captured errors.
+     */
     captureError(): void {
         // Identity tests only observe setUser.
     }
 
+    /**
+     * Ignore captured messages.
+     */
     captureMessage(): void {
         // Identity tests only observe setUser.
     }
 
+    /**
+     * Record the reported identity.
+     */
     setUser(reported: ReportedUser | null): void {
         this.users.push(reported);
     }
@@ -248,21 +339,36 @@ class RecordingReporter implements ErrorReporter {
 
 /** A recording {@link AnalyticsTracker} capturing identify and reset calls. */
 class RecordingAnalytics implements AnalyticsTracker {
+    /** Every user id passed to identify, in order. */
     readonly identified: string[] = [];
+
+    /** How many times reset has been called. */
     resets = 0;
 
+    /**
+     * Ignore tracked events.
+     */
     track(): void {
         // Identity tests only observe identify and reset.
     }
 
+    /**
+     * Ignore page views.
+     */
     page(): void {
         // Identity tests only observe identify and reset.
     }
 
+    /**
+     * Record the identified user id.
+     */
     identify(id: string): void {
         this.identified.push(id);
     }
 
+    /**
+     * Count the reset.
+     */
     reset(): void {
         this.resets += 1;
     }
@@ -270,20 +376,33 @@ class RecordingAnalytics implements AnalyticsTracker {
 
 /** A recording {@link FeatureFlags} capturing evaluation contexts. */
 class RecordingFeatureFlags implements FeatureFlags {
+    /** Every evaluation context passed to setContext, in order. */
     readonly contexts: FlagEvaluationContext[] = [];
 
+    /**
+     * Report every flag as disabled.
+     */
     isEnabled(): boolean {
         return false;
     }
 
+    /**
+     * Return the fallback for every variant lookup.
+     */
     variant<Value extends FlagValue>(_key: string, fallback: Value): Value {
         return fallback;
     }
 
+    /**
+     * Record the evaluation context.
+     */
     setContext(context: FlagEvaluationContext): void {
         this.contexts.push(context);
     }
 
+    /**
+     * Accept a subscription that never fires; unsubscribing is a no-op.
+     */
     onChange(): () => void {
         return () => undefined;
     }
@@ -291,13 +410,38 @@ class RecordingFeatureFlags implements FeatureFlags {
 
 /** Everything a test needs after registering the module. */
 interface Harness {
+    /** The session module under test. */
     readonly module: ModuleDefinition;
+
+    /** The in-memory storage the module persists tokens to. */
     readonly storage: MemoryStorage;
+
+    /** The active Pinia instance holding the session store. */
     readonly pinia: Pinia;
+
+    /** The fake window that receives the module's storage listener. */
     readonly win: FakeWindow;
+
+    /** The HTTP contributions the registry collected from the module. */
     readonly contributions: ModuleHttpContributions;
+
+    /** The boot context passed to the module's boot hook. */
     readonly bootContext: ModuleBootContext;
+
+    /** Every location pushed to the fake router, in order. */
     readonly pushes: RouteLocationRaw[];
+}
+
+/** Seams that shape the harness beyond the module options. */
+interface HarnessSetup {
+    /** The full path the fake router reports as current. */
+    fullPath?: string;
+
+    /** The error the fake router's push rejects with, if any. */
+    pushRejection?: Error;
+
+    /** Whether to use the shipped default API instead of injecting the fake. */
+    defaultApi?: boolean;
 }
 
 describe('createSessionModule', () => {
@@ -317,10 +461,7 @@ describe('createSessionModule', () => {
      * default-gateway opt-in
      * @returns the harness
      */
-    function createHarness(
-        options: SessionModuleOptions = {},
-        setup: { fullPath?: string; pushRejection?: Error; defaultApi?: boolean } = {},
-    ): Harness {
+    function createHarness(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): Harness {
         const module = createSessionModule(setup.defaultApi === true ? options : { api: () => fake, ...options });
         const storage = new MemoryStorage();
         const pinia = createPinia();
@@ -585,6 +726,8 @@ describe('createSessionModule', () => {
 
         it('passes the installed HTTP client to a custom API factory', () => {
             let received: HttpClient | null = null;
+
+            /** Capture the client the module passes in and return the fake API. */
             const factory = (http: HttpClient): SessionApi => {
                 received = http;
 

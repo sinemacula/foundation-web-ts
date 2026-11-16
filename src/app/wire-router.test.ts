@@ -19,6 +19,7 @@ import { wireRouter } from './wire-router';
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** Build an en-US i18n instance with a page.title message. */
 function buildI18n(): ApplicationI18n {
     const i18n = createApplicationI18n('en-US');
 
@@ -27,6 +28,7 @@ function buildI18n(): ApplicationI18n {
     return i18n;
 }
 
+/** Build router wiring options over memory history and a detached document. */
 function baseOptions(
     modules: readonly ModuleDefinition[],
     overrides: Partial<WireRouterOptions> = {},

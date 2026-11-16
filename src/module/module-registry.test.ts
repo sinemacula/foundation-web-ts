@@ -33,8 +33,20 @@ import {
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** A promise paired with the callbacks that settle it. */
+interface Deferred<T> {
+    /** The pending promise handed to the code under test. */
+    promise: Promise<T>;
+
+    /** Fulfils the promise with the given value. */
+    resolve: (value: T) => void;
+
+    /** Rejects the promise with the given reason. */
+    reject: (reason?: unknown) => void;
+}
+
 /** Creates a deferred promise so tests can control resolution timing. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;
 
@@ -58,6 +70,7 @@ function createPlatform(): ResolvedPlatform {
 
 /** Build an HTTP client stand-in that fails loudly if any method is invoked. */
 function createStubHttpClient(): HttpClient {
+    /** Reject every call so an unexpected request fails the test. */
     const reject = (): Promise<never> => Promise.reject(new Error('The stub HTTP client must not be called.'));
 
     return { get: reject, post: reject, put: reject, patch: reject, delete: reject, download: reject };

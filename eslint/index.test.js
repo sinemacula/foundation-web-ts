@@ -15,10 +15,12 @@ import config from './index.js';
 
 const linter = new Linter({ configType: 'flat' });
 
+/** Lint a source string against the preset as if it lived at the given path. */
 function lint(code, filename) {
     return linter.verify(code, config, { filename });
 }
 
+/** The rule id of each lint message, in report order. */
 function ruleIds(messages) {
     return messages.map(message => message.ruleId);
 }

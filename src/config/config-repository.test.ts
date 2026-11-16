@@ -9,6 +9,24 @@ import { describe, expect, it } from 'vitest';
 
 import { ConfigRepository } from './config-repository';
 
+/** The leaf object nested inside {@link NestedConfig}. */
+interface NestedValue {
+    /** The numeric leaf the freeze assertion targets. */
+    value: number;
+}
+
+/** A configuration tree with one nested object, used to check deep freezing. */
+interface NestedConfig {
+    /** The nested object expected to be frozen. */
+    nested: NestedValue;
+}
+
+/** A configuration tree with an array value, used to check arrays are frozen. */
+interface ItemsConfig {
+    /** The array expected to be frozen. */
+    items: number[];
+}
+
 describe('ConfigRepository', () => {
     describe('all', () => {
         it('returns the full configuration tree', () => {
@@ -105,14 +123,14 @@ describe('ConfigRepository', () => {
     describe('deep immutability', () => {
         it('deeply freezes nested objects so mutations are silently ignored in non-strict contexts', () => {
             const config = new ConfigRepository({ nested: { value: 42 } });
-            const all = config.all() as { nested: { value: number } };
+            const all = config.all() as NestedConfig;
 
             expect(Object.isFrozen(all.nested)).toBe(true);
         });
 
         it('deeply freezes array values inside the configuration', () => {
             const config = new ConfigRepository({ items: [1, 2, 3] });
-            const all = config.all() as { items: number[] };
+            const all = config.all() as ItemsConfig;
 
             expect(Object.isFrozen(all.items)).toBe(true);
         });

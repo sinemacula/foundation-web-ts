@@ -18,10 +18,20 @@ import { HttpError, HttpValidationError } from './http-error';
 /** Explicit overload signature so mock.calls carries a typed tuple, not []. */
 type FetchArgs = [input: RequestInfo | URL, init?: RequestInit];
 
+/** The JSON user body served by the parsing test. */
+interface UserBody {
+    /** The user id. */
+    id: number;
+
+    /** The user's display name. */
+    name: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** A JSON response carrying the serialised body with the given status. */
 function jsonResponse(body: unknown, status = 200, extra: Record<string, string> = {}): Response {
     return new Response(JSON.stringify(body), {
         status,
@@ -29,6 +39,7 @@ function jsonResponse(body: unknown, status = 200, extra: Record<string, string>
     });
 }
 
+/** A text/plain response carrying the body verbatim. */
 function textResponse(body: string, status = 200): Response {
     return new Response(body, {
         status,
@@ -36,10 +47,12 @@ function textResponse(body: string, status = 200): Response {
     });
 }
 
+/** A bodiless response with the given status. */
 function emptyResponse(status = 204): Response {
     return new Response('', { status });
 }
 
+/** An HTML error response, standing in for a non-JSON error page from a proxy or server. */
 function nonJsonErrorResponse(status: number): Response {
     return new Response('<html>error</html>', {
         status,
@@ -47,12 +60,14 @@ function nonJsonErrorResponse(status: number): Response {
     });
 }
 
+/** Wrap an implementation in a typed fetch spy so its calls can be inspected. */
 function makeFetch(
     impl: (...args: FetchArgs) => Promise<Response>,
 ): ReturnType<typeof vi.fn<(...args: FetchArgs) => Promise<Response>>> {
     return vi.fn<(...args: FetchArgs) => Promise<Response>>(impl);
 }
 
+/** Build a client against a fixed base URL with the given fetch and option overrides. */
 function makeClient(
     fetchFn: typeof fetch,
     extra: Partial<ConstructorParameters<typeof FetchHttpClient>[0]> = {},
@@ -78,7 +93,7 @@ describe('FetchHttpClient - success response parsing', () => {
         const fetchFn = makeFetch(async () => jsonResponse({ id: 1, name: 'Alice' }));
         const client = makeClient(fetchFn);
 
-        const result = await client.get<{ id: number; name: string }>('/users/1');
+        const result = await client.get<UserBody>('/users/1');
 
         expect(result).toStrictEqual({ id: 1, name: 'Alice' });
     });
