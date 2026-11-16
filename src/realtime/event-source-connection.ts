@@ -12,10 +12,10 @@
  */
 
 import { ExponentialBackoff } from '@sinemacula/foundation/realtime/exponential-backoff';
-import { runReconnect } from '@sinemacula/foundation/realtime/reconnect';
+import { RealtimeError } from '@sinemacula/foundation/realtime/realtime-error';
+import { type BeforeReconnectHook, runReconnect } from '@sinemacula/foundation/realtime/reconnect';
 import type {
     RealtimeConnection,
-    RealtimeMessage,
     RealtimeMessageHandler,
     RealtimeState,
     RealtimeStateHandler,
@@ -44,8 +44,11 @@ export interface EventSourceConnectionOptions {
     /** Override the EventSource constructor. Defaults to `(url, init) => new EventSource(url, init)`. */
     readonly eventSourceFactory?: EventSourceFactory;
 
-    /** Awaited after the backoff delay fires and before each reconnect attempt opens a new EventSource. Never called for the initial `connect()` or a manual `connect()` call. Wire the application's `TokenRefreshCoordinator` here so an expired token is refreshed before each reconnect, and pair it with the `url()` builder reading the fresh token; without this an expired-token connection retries forever with stale credentials. Rejection abandons the attempt and the next reconnect is scheduled through the existing backoff path. */
-    readonly beforeReconnect?: () => Promise<void>;
+    /** Awaited before each reconnect, never before a manual `connect()`; pair it with a `url()` builder that reads the fresh token. */
+    readonly beforeReconnect?: BeforeReconnectHook;
+
+    /** Receives the errors the connection contains rather than throws: a throwing subscriber or a failed reconnect open. */
+    readonly onError?: (error: unknown) => void;
 }
 
 /**
@@ -53,8 +56,7 @@ export interface EventSourceConnectionOptions {
  *
  * Reconnects automatically on error using the provided backoff strategy. All
  * registered event listeners are re-attached to every new EventSource after a
- * reconnect. When `beforeReconnect` is supplied, it is awaited before each
- * reconnect opens a new EventSource.
+ * reconnect.
  */
 export class EventSourceConnection implements RealtimeConnection {
     /** The endpoint URL, or a factory returning it per connect. */
@@ -70,7 +72,10 @@ export class EventSourceConnection implements RealtimeConnection {
     readonly #factory: EventSourceFactory;
 
     /** Optional hook awaited before each reconnect. */
-    readonly #beforeReconnect: (() => Promise<void>) | undefined;
+    readonly #beforeReconnect: BeforeReconnectHook | undefined;
+
+    /** The optional sink for errors the connection contains. */
+    readonly #onError: ((error: unknown) => void) | undefined;
 
     /** Registered message handlers, keyed by event name. */
     readonly #messageHandlers: Map<string, Set<RealtimeMessageHandler>> = new Map();
@@ -87,14 +92,17 @@ export class EventSourceConnection implements RealtimeConnection {
     /** The current zero-based reconnect attempt counter. */
     #attempt: number = 0;
 
-    /** The pending reconnect timer, or null when none. */
-    #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    /** The pending reconnect timer, or undefined when none. */
+    #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /** Advanced on every disconnect so a superseded reconnect attempt abandons itself. */
+    #generation: number = 0;
 
     /**
      * Construct a new SSE connection.
      *
-     * @param options - URL, credentials, backoff strategy, and optional
-     * EventSource factory
+     * @param options - URL, credentials, backoff strategy, optional EventSource
+     * factory, reconnect hook and error sink
      */
     constructor(options: EventSourceConnectionOptions) {
         this.#url = options.url;
@@ -102,6 +110,7 @@ export class EventSourceConnection implements RealtimeConnection {
         this.#backoff = options.backoff ?? new ExponentialBackoff();
         this.#factory = options.eventSourceFactory ?? ((url, init) => new EventSource(url, init));
         this.#beforeReconnect = options.beforeReconnect;
+        this.#onError = options.onError;
     }
 
     /**
@@ -113,19 +122,30 @@ export class EventSourceConnection implements RealtimeConnection {
 
     /**
      * Open the SSE connection. No-op when already connecting or open.
+     *
+     * @throws {@link RealtimeError} when the `url()` builder or EventSource
+     * factory throws; the state is left unchanged and the original error is the
+     * cause
      */
     connect(): void {
         if (this.#state === 'connecting' || this.#state === 'open') {
             return;
         }
 
-        this.#openSource();
+        try {
+            this.#openSource();
+        } catch (error) {
+            throw new RealtimeError('Cannot connect: the EventSource could not be opened.', { cause: error });
+        }
     }
 
     /**
-     * Close the connection permanently, cancelling any pending reconnect.
+     * Close the connection and cancel any pending reconnect until the next
+     * `connect()`, which restarts the backoff.
      */
     disconnect(): void {
+        this.#generation += 1;
+        this.#attempt = 0;
         this.#cancelReconnect();
         this.#closeSource();
         this.#setState('closed');
@@ -146,14 +166,14 @@ export class EventSourceConnection implements RealtimeConnection {
             this.#messageHandlers.set(event, handlers);
 
             if (this.#source !== null) {
-                this.#attachEventListener(this.#source, event);
+                this.#attachEventListener(this.#source, event, handlers);
             }
         }
 
         handlers.add(handler);
 
         return () => {
-            this.#messageHandlers.get(event)?.delete(handler);
+            handlers.delete(handler);
         };
     }
 
@@ -172,99 +192,126 @@ export class EventSourceConnection implements RealtimeConnection {
     }
 
     /**
-     * Open a fresh EventSource, wire its lifecycle handlers, and re-attach
-     * every registered event listener.
+     * Open a fresh EventSource and own it before announcing the connecting
+     * state, so a subscriber that disconnects in response closes it. A throwing
+     * `url()` builder or factory leaves the state untouched.
      */
     #openSource(): void {
-        this.#setState('connecting');
-
         const url = typeof this.#url === 'function' ? this.#url() : this.#url;
         const source = this.#factory(url, { withCredentials: this.#withCredentials });
 
         source.onopen = () => {
-            this.#attempt = 0;
-            this.#setState('open');
+            if (this.#source === source) {
+                this.#attempt = 0;
+                this.#setState('open');
+            }
         };
 
+        // Native EventSource retries on its own; closing it hands reconnects to
+        // the backoff and the beforeReconnect hook.
         source.onerror = () => {
-            source.close();
-            this.#source = null;
-            this.#scheduleReconnect();
+            if (this.#source === source) {
+                this.#closeSource();
+                this.#scheduleReconnect();
+            }
         };
 
-        for (const event of this.#messageHandlers.keys()) {
-            this.#attachEventListener(source, event);
+        for (const [event, handlers] of this.#messageHandlers) {
+            this.#attachEventListener(source, event, handlers);
         }
 
         this.#source = source;
+        this.#setState('connecting');
     }
 
     /**
-     * Attach a listener for one event name that fans frames out to its
-     * handlers.
+     * Attach a listener for one event name that fans frames out to its handlers
+     * while `source` is still the active EventSource.
      *
      * @param source - the EventSource to attach the listener to
      * @param event - the event name to listen for
+     * @param handlers - the live handler set registered for `event`
      */
-    #attachEventListener(source: EventSource, event: string): void {
+    #attachEventListener(source: EventSource, event: string, handlers: Set<RealtimeMessageHandler>): void {
         source.addEventListener(event, (messageEvent: MessageEvent) => {
-            const message: RealtimeMessage = { event, data: String(messageEvent.data) };
+            if (this.#source !== source) {
+                return;
+            }
 
-            this.#messageHandlers.get(event)?.forEach(handler => {
-                handler(message);
-            });
+            const message = { event, data: String(messageEvent.data) };
+
+            for (const handler of handlers) {
+                try {
+                    handler(message);
+                } catch (error) {
+                    this.#report(error);
+                }
+            }
         });
     }
 
     /**
-     * Enter the connecting state and schedule the next reconnect after the
-     * backoff delay for the current attempt.
+     * Schedule the next reconnect after the backoff delay for the current
+     * attempt, then enter the connecting state. The timer is stored first so a
+     * subscriber that disconnects in response cancels it.
      */
     #scheduleReconnect(): void {
         const delay = this.#backoff.delayFor(this.#attempt++);
 
-        this.#setState('connecting');
-
         this.#reconnectTimer = setTimeout(() => {
-            this.#reconnectTimer = null;
+            this.#reconnectTimer = undefined;
             void this.#runReconnect();
         }, delay);
+
+        this.#setState('connecting');
     }
 
     /**
-     * Run one reconnect attempt, awaiting the optional beforeReconnect hook
-     * first. A disconnect that lands while the hook is pending must leave no
-     * trace once it settles, so the closed state is re-checked afterwards.
+     * Run one reconnect attempt, abandoning it if a disconnect lands first.
      */
     async #runReconnect(): Promise<void> {
+        const generation = this.#generation;
+
         await runReconnect({
             beforeReconnect: this.#beforeReconnect,
-            isClosed: () => this.#state === 'closed',
+            isStale: () => this.#generation > generation,
             reopen: () => this.#openSource(),
             reschedule: () => this.#scheduleReconnect(),
+            onError: error => this.#report(error),
         });
     }
 
     /**
-     * Detach the lifecycle handlers from the active EventSource and close it.
+     * Pass a contained error to the `onError` sink, ignoring a throwing sink so
+     * one failure never starves the remaining subscribers.
+     *
+     * @param error - the contained error
+     */
+    #report(error: unknown): void {
+        try {
+            this.#onError?.(error);
+        } catch {
+            // The sink is the last resort; nothing is left to report to.
+        }
+    }
+
+    /**
+     * Release the active EventSource and close it. Ownership goes first, so its
+     * listeners ignore anything it still delivers.
      */
     #closeSource(): void {
-        if (this.#source !== null) {
-            this.#source.onopen = null;
-            this.#source.onerror = null;
-            this.#source.close();
-            this.#source = null;
-        }
+        const source = this.#source;
+
+        this.#source = null;
+        source?.close();
     }
 
     /**
      * Cancel any pending reconnect timer.
      */
     #cancelReconnect(): void {
-        if (this.#reconnectTimer !== null) {
-            clearTimeout(this.#reconnectTimer);
-            this.#reconnectTimer = null;
-        }
+        clearTimeout(this.#reconnectTimer);
+        this.#reconnectTimer = undefined;
     }
 
     /**
@@ -280,7 +327,11 @@ export class EventSourceConnection implements RealtimeConnection {
         this.#state = next;
 
         for (const handler of this.#stateHandlers) {
-            handler(next);
+            try {
+                handler(next);
+            } catch (error) {
+                this.#report(error);
+            }
         }
     }
 }
