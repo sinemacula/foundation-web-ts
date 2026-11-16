@@ -548,7 +548,7 @@ describe('createWebCoreApp', () => {
 
             await api().get('ping');
 
-            expect((captured?.headers as Record<string, string>)['x-trace']).toBe('preset+module');
+            expect(captured?.headers).toHaveProperty(['x-trace'], 'preset+module');
 
             app.dispose();
         });
