@@ -16,21 +16,20 @@
 
 import { execFileSync } from 'node:child_process';
 
+/** Paths that are never mutated: tests, test support, barrels, the playground entry point and translations. */
+const EXCLUDED = [
+    path => path.endsWith('.test.ts'),
+    path => path.includes('/test-support/'),
+    path => path.endsWith('/index.ts'),
+    path => path === 'playground/src/main.ts',
+    path => path.includes('/locales/'),
+];
+
 /** Whether a repo-relative POSIX path is in scope for mutation. */
 function isMutable(path) {
     const included = (path.startsWith('src/') || path.startsWith('playground/src/')) && path.endsWith('.ts');
 
-    if (!included) {
-        return false;
-    }
-
-    return !(
-        path.endsWith('.test.ts') ||
-        path.includes('/test-support/') ||
-        path.endsWith('/index.ts') ||
-        path === 'playground/src/main.ts' ||
-        path.includes('/locales/')
-    );
+    return included && !EXCLUDED.some(excluded => excluded(path));
 }
 
 /** The mutable files changed between `base` and HEAD (deletions excluded). */
