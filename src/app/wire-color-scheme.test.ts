@@ -91,9 +91,7 @@ describe('wireColorScheme', () => {
 
     it('resolves the system preference to dark when the OS prefers dark', () => {
         const targetDocument = document.implementation.createHTMLDocument('t');
-        const service = wireColorScheme(
-            baseOptions({ targetWindow: windowOf(makeMql(true)), targetDocument }),
-        );
+        const service = wireColorScheme(baseOptions({ targetWindow: windowOf(makeMql(true)), targetDocument }));
 
         expect(service.resolved()).toBe('dark');
         expect(dataTheme(targetDocument)).toBeNull();
@@ -102,9 +100,7 @@ describe('wireColorScheme', () => {
 
     it('applies the configured default preference when nothing is stored', () => {
         const targetDocument = document.implementation.createHTMLDocument('t');
-        const service = wireColorScheme(
-            baseOptions({ config: { colorScheme: { default: 'dark' } }, targetDocument }),
-        );
+        const service = wireColorScheme(baseOptions({ config: { colorScheme: { default: 'dark' } }, targetDocument }));
 
         expect(service.preference()).toBe('dark');
         expect(dataTheme(targetDocument)).toBe('dark');

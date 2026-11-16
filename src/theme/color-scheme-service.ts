@@ -11,11 +11,7 @@
  */
 
 import type { KeyValueStorage } from '../storage/key-value-storage';
-import {
-    COLOR_SCHEME_STORAGE_KEY,
-    type ColorSchemePreference,
-    type ResolvedColorScheme,
-} from './color-scheme';
+import { COLOR_SCHEME_STORAGE_KEY, type ColorSchemePreference, type ResolvedColorScheme } from './color-scheme';
 
 const DEFAULT_PREFERENCE: ColorSchemePreference = 'system';
 
