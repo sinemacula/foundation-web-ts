@@ -773,18 +773,7 @@ function assembleApp<T extends WebCoreConfig>(
     integration: AppIntegration,
     release: ReleaseLayer,
 ): WebCoreApp<T> {
-    const {
-        app,
-        pinia,
-        settings,
-        repository,
-        storage,
-        colorScheme,
-        toastService,
-        confirmService,
-        observability,
-        flags,
-    } = foundation;
+    const { app, pinia, settings, repository, storage, colorScheme, observability, flags } = foundation;
     const { http, switcher, i18n } = moduleLayer;
     const { router } = integration;
     const { realtimeConnection, monitors } = release;
@@ -801,8 +790,8 @@ function assembleApp<T extends WebCoreConfig>(
             config: repository,
             http,
             storage,
-            toasts: toastService,
-            confirm: confirmService,
+            toasts: foundation.toastService,
+            confirm: foundation.confirmService,
             reporting: observability.reporter,
             analytics: observability.analytics,
             logger: observability.logger,
