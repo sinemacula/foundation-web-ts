@@ -24,9 +24,9 @@ const { t, d } = useI18n();
 const usersList = useUsersList();
 
 const paginationLabel = computed(() => {
-    const meta = usersList.meta.value;
+    const last = usersList.lastPage.value;
 
-    return meta === null ? '' : t('users.index.pagination', { current: meta.currentPage, last: meta.lastPage });
+    return last === null ? '' : t('users.index.pagination', { current: usersList.page.value, last });
 });
 
 /**
@@ -106,7 +106,7 @@ function ariaSortFor(column: string): 'ascending' | 'descending' | 'none' {
                 <span class="users-view__pagination-text">{{ paginationLabel }}</span>
                 <SmButton
                     variant="ghost"
-                    :disabled="usersList.meta.value !== null && usersList.page.value >= usersList.meta.value.lastPage"
+                    :disabled="usersList.meta.value !== null && !usersList.meta.value.hasMore"
                     @click="usersList.next"
                 >
                     {{ t('users.index.actions.nextPage') }}

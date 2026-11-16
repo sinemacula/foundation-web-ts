@@ -30,24 +30,12 @@ describe('userList', () => {
         expect(userList.filters).toEqual({});
     });
 
-    it('searches across full_name and email', () => {
+    it('sends the search term as the search parameter', () => {
         const { parameters, search } = useListQuery(userList);
 
         search('alice');
 
-        const filters = JSON.parse(String(parameters.value['filters']));
-
-        expect(filters).toEqual(
-            wire([
-                [
-                    '$or',
-                    wire([
-                        ['full_name', wire([['$like', 'alice']])],
-                        ['email', wire([['$like', 'alice']])],
-                    ]),
-                ],
-            ]),
-        );
+        expect(parameters.value['search']).toBe('alice');
     });
 
     it('sorts by full_name and created_at only', () => {

@@ -148,19 +148,17 @@ export async function mockUsersList(page: Page): Promise<void> {
             ? {
                   data: [userRow('user-3', 'Carol Page Two'), userRow('user-4', 'Dave Page Two')],
                   meta: wire([
-                      ['current_page', 2],
-                      ['last_page', 2],
-                      ['per_page', 25],
                       ['total', 27],
+                    ['count', 2],
+                    ['continue', false],
                   ]),
               }
             : {
                   data: [userRow('user-1', 'Alice Example'), userRow('user-2', 'Bob Example')],
                   meta: wire([
-                      ['current_page', 1],
-                      ['last_page', 2],
-                      ['per_page', 25],
                       ['total', 27],
+                    ['count', 25],
+                    ['continue', true],
                   ]),
               };
 

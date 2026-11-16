@@ -59,10 +59,9 @@ describe('useUsersList', () => {
             fake.queueResponse({
                 data: [userRow('u1', 'Alice Smith'), userRow('u2', 'Bob Jones')],
                 meta: wire([
-                    ['current_page', 1],
-                    ['last_page', 1],
-                    ['per_page', 25],
                     ['total', 2],
+                    ['count', 2],
+                    ['continue', false],
                 ]),
             });
 
@@ -76,7 +75,7 @@ describe('useUsersList', () => {
             expect(usersList.hasLoaded.value).toBe(true);
             expect(usersList.rows.value).toHaveLength(2);
             expect(usersList.rows.value[0]?.fullName).toBe('Alice Smith');
-            expect(usersList.meta.value).toEqual({ currentPage: 1, lastPage: 1, perPage: 25, total: 2 });
+            expect(usersList.meta.value).toEqual({ mode: 'length-aware', total: 2, count: 2, hasMore: false });
         });
 
         it('exposes an empty rows array and null meta before any fetch has resolved', () => {
@@ -189,10 +188,9 @@ describe('useUsersList', () => {
             fake.queueResponse({
                 data: [],
                 meta: wire([
-                    ['current_page', 1],
-                    ['last_page', 2],
-                    ['per_page', 25],
                     ['total', 30],
+                    ['count', 25],
+                    ['continue', true],
                 ]),
             });
 
@@ -209,10 +207,9 @@ describe('useUsersList', () => {
             fake.queueResponse({
                 data: [],
                 meta: wire([
-                    ['current_page', 1],
-                    ['last_page', 1],
-                    ['per_page', 25],
                     ['total', 5],
+                    ['count', 5],
+                    ['continue', false],
                 ]),
             });
 

@@ -2,8 +2,8 @@
  * Users list query definition.
  *
  * Declares the users list's query capabilities once, in the vocabulary the
- * screen and its tests use: free-text search across the full name and email
- * columns, sorting by full name or creation date, and a 25-row page size. No
+ * screen and its tests use: free-text search over the columns the API declares
+ * searchable, sorting by full name or creation date, and a 25-row page size. No
  * named filters yet - this list declares none.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
@@ -13,14 +13,17 @@
 import { filter } from '@sinemacula/foundation/query/list-filter';
 import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
 
+/** Rows per page of the users list. */
+export const USERS_PAGE_SIZE = 25;
+
 /**
  * The users list query definition, passed to `useListQuery` by
  * {@link useUsersList}.
  */
 export const userList = defineListQuery({
     filters: {},
-    search: filter.searchAcross(['full_name', 'email']),
+    search: filter.search(),
     sortable: ['full_name', 'created_at'],
     defaultSort: { column: 'created_at', direction: 'desc' },
-    pageSize: 25,
+    pageSize: USERS_PAGE_SIZE,
 });
