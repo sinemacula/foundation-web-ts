@@ -12,6 +12,7 @@
 
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { nextTick, watch } from 'vue';
 
 import { HttpError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
@@ -217,6 +218,77 @@ describe('useSessionStore', () => {
 
         await expect(login).resolves.toStrictEqual({ kind: 'superseded' });
         expect(store.user).toBeNull();
+    });
+
+    describe('sessionIdentity', () => {
+        it('is null while signed out', () => {
+            expect(useSessionStore().sessionIdentity()).toBeNull();
+        });
+
+        it('keeps the identity across a rotation, without notifying', async () => {
+            persistSnapshot(storage, tokens());
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'rotated' }) });
+
+            const store = useSessionStore();
+
+            await store.hydrate();
+
+            const identity = store.sessionIdentity();
+            const seen: unknown[] = [];
+
+            watch(
+                () => store.sessionIdentity(),
+                changed => seen.push(changed),
+            );
+            await store.refresh();
+            await nextTick();
+
+            expect(identity).not.toBeNull();
+            expect(store.sessionIdentity()).toBe(identity);
+            expect(seen).toStrictEqual([]);
+        });
+
+        it('notifies a new identity for a sign-in over the same tokens', async () => {
+            persistSnapshot(storage, tokens());
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+
+            const store = useSessionStore();
+
+            await store.hydrate();
+
+            const identity = store.sessionIdentity();
+            const seen: unknown[] = [];
+
+            watch(
+                () => store.sessionIdentity(),
+                changed => seen.push(changed),
+            );
+            await store.login({ email: 'a', password: 'b' });
+            await nextTick();
+
+            expect(store.sessionIdentity()).not.toBe(identity);
+            expect(seen).toStrictEqual([store.sessionIdentity()]);
+        });
+
+        it('notifies null on sign-out', async () => {
+            persistSnapshot(storage, tokens());
+
+            const store = useSessionStore();
+
+            await store.hydrate();
+
+            const seen: unknown[] = [];
+
+            watch(
+                () => store.sessionIdentity(),
+                changed => seen.push(changed),
+            );
+            await store.clearLocal();
+            await nextTick();
+
+            expect(seen).toStrictEqual([null]);
+        });
     });
 
     it('registers under the store id from the context', () => {
