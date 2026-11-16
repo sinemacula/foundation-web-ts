@@ -24,13 +24,10 @@ function isMutable(path) {
         return false;
     }
 
-    return !(
-        path.endsWith('.test.ts') ||
-        path.includes('/test-support/') ||
-        path.endsWith('/index.ts') ||
-        path === 'playground/src/main.ts' ||
-        path.includes('/locales/')
-    );
+    const isTestOrEntry = path.endsWith('.test.ts') || path.endsWith('/index.ts') || path === 'playground/src/main.ts';
+    const isSupportOrLocale = path.includes('/test-support/') || path.includes('/locales/');
+
+    return !isTestOrEntry && !isSupportOrLocale;
 }
 
 /** The mutable files changed between `base` and HEAD (deletions excluded). */
