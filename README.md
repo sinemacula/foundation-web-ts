@@ -42,8 +42,8 @@ real product wires the kernel, and is the template consuming apps follow.
 | `src/realtime/`      | Live connections behind a port: WebSocket and EventSource adapters sharing exponential-backoff reconnect                      | `RealtimeConnection`              | no        |
 | `src/reporting/`     | Error reporting through a swappable reporter, a breadcrumb trail, and a global error-handler installer                        | `ErrorReporter`                   | type-only |
 | `src/router/`        | Navigation: a middleware contract + pipeline, router factory, route-meta typing, chunk-load recovery, and navigation progress | `RouteMiddleware` (contract)      | runtime   |
-| `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and a default `/auth` gateway   | `SessionApi`                      | runtime   |
-| `src/storage/`       | A synchronous key-value storage port with browser, in-memory and key-namespacing adapters                                     | `KeyValueStorage`                 | no        |
+| `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and session persistence         | `SessionApi`                      | runtime   |
+| `src/storage/`       | A synchronous key-value storage port with browser, strict, in-memory and namespacing adapters, plus a Web Locks session lock  | `KeyValueStorage`                 | no        |
 | `src/support/`       | Small shared utilities (`deepFreeze`, `isRecord`, clipboard) and the `ServiceHolder` singleton primitive                      | -                                 | no        |
 | `src/updates/`       | Polls the deployed runtime document for a new release and notifies when one appears                                           | `UpdateMonitor` (no port)         | no        |
 
@@ -283,30 +283,39 @@ which the boot guarantees happens before mount:
 support is opt-in and self-installs through the module contract, with no preset special case. At register it
 installs the session context and contributes the bearer-token interceptor plus the single unauthorized
 handler (a `TokenRefreshCoordinator`, so the reactive 401 path and the proactive refresh timer can never
-race); at the stores phase the session store hydrates from storage; at boot it wires cross-tab session
-mirroring, proactive refresh ahead of expiry, the session-loss redirect (login route plus the sanitised
-current path under the `redirect` query key) and identity fan-out to the reporting, analytics and
-feature-flag holders.
+race). At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor,
+refreshes and the boot hook all wait for that hydration, so the first navigation never sees a half-loaded
+session. At boot it wires the session-loss redirect (login route plus the sanitised current path under the
+`redirect` query key), cross-tab mirroring, identity fan-out to the reporting, analytics and feature-flag
+holders, proactive refresh ahead of expiry, and the realtime connection's session binding.
 
-Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`),
-`api` (the default gateway - `POST`/`PATCH`/`DELETE` on `auth`, `GET users/self`, a `{ data }` envelope and
-UTC `YYYY-MM-DD HH:MM:SS` expiry timestamps, each injectable via `endpoints`, `parseTimestamp`, `unwrap` and
-`mapUser` in `createDefaultSessionApi`), `storageKeys`, `routes`, `refreshSkewMs` (60 seconds), `deviceOs`
-(`WEB`), `generateUuid`, the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect` toggles (all true) and
-`identity` (per-channel mappings, or `false` to disable).
+The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`,
+`interactionRequired` with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A
+refused or pending refresh clears the session itself; the module never clears it a second time.
 
-The storage keys are a public contract - live sessions persist under them, so renaming any is a breaking
-change requiring an explicit migration:
+Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`), `api`
+(the foundation default gateway on the platform clock; required when the application declares its own user
+type), `storageKeys`, `routes`, `persistence`, `refreshSkewMs` (60 seconds), `deviceOs` (`WEB`),
+`generateUuid`, the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect`/`realtimeFollowsSession` toggles
+(all true) and `identity` (per-channel mappings, or `false` to disable).
 
-| Key            | Default              |
-|----------------|----------------------|
-| `accessToken`  | `auth.access_token`  |
-| `refreshToken` | `auth.refresh_token` |
-| `expiresAt`    | `auth.expires_at`    |
-| `deviceUuid`   | `auth.device_uuid`   |
+The session persists as one revisioned snapshot in `localStorage`, written through `StrictWebStorage` (storage
+failures surface instead of being swallowed) under a `WebLocksSessionLock` shared by every tab. The module
+refuses to register when the Web Locks API is unavailable rather than falling back to an unshared lock; supply
+`persistence` to store the session elsewhere, and pair it with `crossTabSync: false` plus your own calls to the
+store's `hydrate()` when that store does not raise `storage` events. The storage keys are a public contract:
+
+| Key          | Default            |
+|--------------|--------------------|
+| `session`    | `auth.session`     |
+| `deviceUuid` | `auth.device_uuid` |
 
 Keys are matched raw against cross-tab `storage` events, so the storage adapter must persist un-namespaced;
 an application wanting a prefix sets it in the keys themselves so event keys still match.
+
+With `realtimeFollowsSession`, the realtime connection connects once a session is present and disconnects when
+it is lost. Pass `sessionReconnectGuard()` from `src/session/session-realtime.ts` as the connection's
+`beforeReconnect` so each reconnect refreshes an expiring token first and stops for good when the session ends.
 
 Route identity is one configurable source feeding the guards, the session-loss redirect and the redirect
 sanitiser's loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set together with `login`
