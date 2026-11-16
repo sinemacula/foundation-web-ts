@@ -83,6 +83,53 @@ describe('useUsersList', () => {
 
             expect(usersList.rows.value).toEqual([]);
             expect(usersList.meta.value).toBeNull();
+            expect(usersList.lastPage.value).toBeNull();
+        });
+    });
+
+    describe('last page', () => {
+        it('derives the last page from the total and the page size', async () => {
+            fake.queueResponse({
+                data: [],
+                meta: wire([
+                    ['total', 51],
+                    ['count', 25],
+                    ['continue', true],
+                ]),
+            });
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            expect(usersList.lastPage.value).toBe(3);
+        });
+
+        it('reports page 1 as the last page of an empty list', async () => {
+            fake.queueResponse({
+                data: [],
+                meta: wire([
+                    ['total', 0],
+                    ['count', 0],
+                    ['continue', false],
+                ]),
+            });
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            expect(usersList.lastPage.value).toBe(1);
+        });
+
+        it('has no last page for a cursor-paginated response', async () => {
+            fake.queueResponse({ data: [], meta: wire([['continue', true]]) });
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            expect(usersList.lastPage.value).toBeNull();
         });
     });
 

@@ -77,7 +77,10 @@ async function flushAll(): Promise<void> {
 }
 
 interface MountedUsersView {
+    /** The element the view is mounted into. */
     readonly container: HTMLDivElement;
+
+    /** Unmount the view and detach its container. */
     readonly unmount: () => void;
 }
 

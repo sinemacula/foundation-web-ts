@@ -10,21 +10,6 @@ import { describe, expect, it } from 'vitest';
 
 import { userList } from '@/modules/users/queries/user-list';
 
-/**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write snake_case API field names as
- * plain string literals inside array elements rather than as object-literal
- * keys - keeping non-camelCase field names out of any position that Biome's
- * naming-convention rule inspects.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
- */
-function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
-    return Object.fromEntries(entries);
-}
-
 describe('userList', () => {
     it('declares no named filters', () => {
         expect(userList.filters).toEqual({});

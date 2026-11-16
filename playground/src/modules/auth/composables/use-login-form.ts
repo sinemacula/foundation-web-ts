@@ -5,13 +5,17 @@
  * view stays a thin template. Validation is handled by vee-validate 4 with a
  * zod 4 schema bridged through the shared typed-schema adapter. Client-side
  * validation errors and the server's 422 field errors are both surfaced as
- * field messages; anything else collapses to a form-level translation key.
+ * field messages; anything else collapses to a form-level translation key. A
+ * sign-in only succeeds once the session is authenticated: one that owes a
+ * further step keeps its pending session for the UI, and one overtaken by
+ * another session transition is not a success.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
 import { HttpError, HttpValidationError } from '@sinemacula/foundation/http/http-error';
+import type { LoginOutcome, PendingAuthentication } from '@sinemacula/foundation/session/session-outcomes';
 import { useSessionStore } from '@sinemacula/web-core/session/session-store';
 import { useForm } from 'vee-validate';
 import type { ComputedRef, Ref } from 'vue';
@@ -45,11 +49,14 @@ export interface LoginForm {
     /** Form-level (API) error translation key, or null when none. */
     readonly error: Ref<string | null>;
 
+    /** The pending session of a sign-in that owes a further step, or null. */
+    readonly pending: Ref<PendingAuthentication | null>;
+
     /** True while a submission is in flight. */
     readonly isSubmitting: ComputedRef<boolean> | Ref<boolean>;
 
     /**
-     * Validates first; returns false when invalid or when the API call fails.
+     * Validates first; returns true only when the sign-in authenticated.
      */
     submit(): Promise<boolean>;
 }
@@ -75,6 +82,7 @@ export function useLoginForm(): LoginForm {
     const passwordError = computed(() => errors.value.password ?? '');
 
     const error = ref<string | null>(null);
+    const pending = ref<PendingAuthentication | null>(null);
     const inFlight = ref(false);
 
     /**
@@ -94,13 +102,14 @@ export function useLoginForm(): LoginForm {
                 login: () => useSessionStore().login({ email: email.value, password: password.value }),
                 applyServerErrors: caught => applyServerValidationErrors(caught, setErrors),
                 error,
+                pending,
             });
         } finally {
             inFlight.value = false;
         }
     };
 
-    return { email, password, emailError, passwordError, error, isSubmitting, submit };
+    return { email, password, emailError, passwordError, error, pending, isSubmitting, submit };
 }
 
 /**
@@ -114,20 +123,23 @@ interface LoginAttempt {
     }>;
 
     /** Perform the session login with the current credentials. */
-    readonly login: () => Promise<void>;
+    readonly login: () => Promise<LoginOutcome>;
 
     /** Surface a caught failure as field errors; returns true when it did. */
     readonly applyServerErrors: (caught: unknown) => boolean;
 
     /** The form-level error key sink. */
     readonly error: Ref<string | null>;
+
+    /** The pending session sink. */
+    readonly pending: Ref<PendingAuthentication | null>;
 }
 
 /**
  * Validate the inputs and, when valid, attempt the session login.
  *
  * @param attempt - the form callbacks driving this attempt
- * @returns true on success, false on invalid input or a failed API call
+ * @returns true when the sign-in authenticated, otherwise false
  */
 async function attemptLogin(attempt: LoginAttempt): Promise<boolean> {
     const { valid } = await attempt.validate();
@@ -138,9 +150,15 @@ async function attemptLogin(attempt: LoginAttempt): Promise<boolean> {
 
     try {
         attempt.error.value = null;
-        await attempt.login();
+        attempt.pending.value = null;
 
-        return true;
+        const outcome = await attempt.login();
+
+        if (outcome.kind === 'interactionRequired') {
+            attempt.pending.value = outcome.pending;
+        }
+
+        return outcome.kind === 'authenticated';
     } catch (caught) {
         if (!attempt.applyServerErrors(caught)) {
             attempt.error.value = resolveLoginErrorKey(caught);

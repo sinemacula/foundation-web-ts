@@ -171,10 +171,7 @@ function useSearchDebounce(commit: (term: string) => void, initial: string): Ref
  * @returns a `next()` function that is a no-op once `meta` reports no further
  * page
  */
-function createGuardedNext(
-    meta: ComputedRef<PaginationMeta | null>,
-    advance: () => void,
-): () => void {
+function createGuardedNext(meta: ComputedRef<PaginationMeta | null>, advance: () => void): () => void {
     return (): void => {
         const currentMeta = meta.value;
 

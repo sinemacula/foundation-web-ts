@@ -7,8 +7,9 @@
 
 import { HttpError, HttpValidationError } from '@sinemacula/foundation/http/http-error';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import { useSessionStore } from '@sinemacula/web-core/session/session-store';
 import { createPinia, setActivePinia } from 'pinia';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, defineComponent, h } from 'vue';
 import type { LoginForm } from '@/modules/auth/composables/use-login-form';
 import { resolveLoginErrorKey, useLoginForm } from '@/modules/auth/composables/use-login-form';
@@ -16,6 +17,8 @@ import { initialiseApi, resetApi } from '@/services/api';
 import { initialiseStorage, resetStorage } from '@/services/storage';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
 import { installTestSession, resetSessionContext } from '@/test-support/install-test-session';
+
+const SESSION_KEY = 'auth.session';
 
 /**
  * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
@@ -32,8 +35,41 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
     return Object.fromEntries(entries);
 }
 
+/**
+ * Build the default gateway's session payload.
+ *
+ * @returns the wire session record
+ */
+function sessionPayload(): Record<string, unknown> {
+    return wire([
+        ['access_token', 'tok'],
+        ['refresh_token', 'ref'],
+        ['expires_in', 3600],
+    ]);
+}
+
+/**
+ * Queue the responses of one successful sign-in: the session, then the user.
+ *
+ * @param fake - the HTTP client fake the session gateway calls
+ */
+function queueSignIn(fake: FakeHttpClient): void {
+    fake.queueResponse({ data: sessionPayload() });
+    fake.queueResponse({
+        data: wire([
+            ['id', 'u1'],
+            ['first_name', 'Alice'],
+            ['last_name', 'Smith'],
+            ['email', 'alice@example.com'],
+        ]),
+    });
+}
+
 interface MountedLoginForm {
+    /** The login form returned by the composable. */
     readonly form: LoginForm;
+
+    /** Unmount the host component. */
     readonly unmount: () => void;
 }
 
@@ -77,10 +113,10 @@ function mountLoginForm(): MountedLoginForm {
 
 describe('useLoginForm', () => {
     let fake: FakeHttpClient;
+    let storage: MemoryStorage;
 
     beforeEach(() => {
-        const storage = new MemoryStorage();
-
+        storage = new MemoryStorage();
         initialiseStorage(storage);
         installTestSession(storage);
         fake = new FakeHttpClient();
@@ -154,26 +190,10 @@ describe('useLoginForm', () => {
     });
 
     describe('submit - API', () => {
-        it('returns true and clears error on a successful login', async () => {
+        it('returns true, signs in on the default gateway and persists the session', async () => {
             const { form, unmount } = mountLoginForm();
 
-            fake.queueResponse({
-                data: wire([
-                    ['token', 'tok'],
-                    ['refresh_token', 'ref'],
-                    ['expires_at', '2026-12-31 23:59:59'],
-                ]),
-            });
-            fake.queueResponse({
-                data: wire([
-                    ['id', 'u1'],
-                    ['first_name', 'Alice'],
-                    ['last_name', 'Smith'],
-                    ['full_name', 'Alice Smith'],
-                    ['email', 'alice@example.com'],
-                ]),
-            });
-
+            queueSignIn(fake);
             form.email.value = 'alice@example.com';
             form.password.value = 'correct-password';
 
@@ -181,7 +201,92 @@ describe('useLoginForm', () => {
 
             expect(result).toBe(true);
             expect(form.error.value).toBeNull();
+            expect(form.pending.value).toBeNull();
             expect(form.isSubmitting.value).toBe(false);
+            expect(fake.calls).toEqual([
+                {
+                    method: 'POST',
+                    path: 'auth/sign-in',
+                    body: { email: 'alice@example.com', password: 'correct-password', platform: 'WEB' },
+                },
+                { method: 'GET', path: 'users/self', body: undefined },
+            ]);
+            expect(JSON.parse(storage.get(SESSION_KEY) ?? 'null')).toMatchObject({
+                revision: 1,
+                tokens: { accessToken: 'tok', refreshToken: 'ref' },
+            });
+
+            unmount();
+        });
+
+        it('returns false and keeps the pending session when a further step is owed', async () => {
+            const { form, unmount } = mountLoginForm();
+
+            fake.queueResponse({
+                data: wire([
+                    ['pending_credential', 'pending-1'],
+                    ['requires', ['mfa']],
+                ]),
+            });
+            form.email.value = 'alice@example.com';
+            form.password.value = 'correct-password';
+
+            const result = await form.submit();
+
+            expect(result).toBe(false);
+            expect(form.pending.value).toEqual({ credential: 'pending-1', requires: ['mfa'] });
+            expect(form.error.value).toBeNull();
+            expect(fake.calls).toHaveLength(1);
+            expect(storage.get(SESSION_KEY)).toBeNull();
+
+            unmount();
+        });
+
+        it('clears the pending session on a subsequent submit attempt', async () => {
+            const { form, unmount } = mountLoginForm();
+
+            fake.queueResponse({ data: wire([['pending_credential', 'pending-1']]) });
+            form.email.value = 'alice@example.com';
+            form.password.value = 'correct-password';
+
+            await form.submit();
+
+            expect(form.pending.value).toEqual({ credential: 'pending-1', requires: [] });
+
+            queueSignIn(fake);
+
+            expect(await form.submit()).toBe(true);
+            expect(form.pending.value).toBeNull();
+
+            unmount();
+        });
+
+        it('returns false when another session transition overtakes the sign-in', async () => {
+            const { form, unmount } = mountLoginForm();
+
+            /** Resolve the queued sign-in response once it has been queued. */
+            let release: (payload: unknown) => void = () => undefined;
+
+            // The fake adopts a queued promise, holding the sign-in in flight.
+            fake.queueResponse(
+                new Promise(resolve => {
+                    release = resolve;
+                }),
+            );
+            form.email.value = 'alice@example.com';
+            form.password.value = 'correct-password';
+
+            const submission = form.submit();
+
+            await vi.waitFor(() => expect(fake.calls).toHaveLength(1));
+            await useSessionStore().clearLocal();
+            release({ data: sessionPayload() });
+
+            expect(await submission).toBe(false);
+            expect(form.error.value).toBeNull();
+            expect(form.pending.value).toBeNull();
+            expect(useSessionStore().isAuthenticated).toBe(false);
+            expect(fake.calls).toHaveLength(1);
 
             unmount();
         });
@@ -215,22 +320,7 @@ describe('useLoginForm', () => {
 
             expect(form.error.value).toBe('auth.login.errors.invalid');
 
-            fake.queueResponse({
-                data: wire([
-                    ['token', 'tok'],
-                    ['refresh_token', 'ref'],
-                    ['expires_at', '2026-12-31 23:59:59'],
-                ]),
-            });
-            fake.queueResponse({
-                data: wire([
-                    ['id', 'u1'],
-                    ['first_name', 'Alice'],
-                    ['last_name', 'Smith'],
-                    ['full_name', 'Alice Smith'],
-                    ['email', 'alice@example.com'],
-                ]),
-            });
+            queueSignIn(fake);
 
             await form.submit();
 
@@ -286,37 +376,18 @@ describe('useLoginForm', () => {
         it('guards against double-submit by returning false on the second call', async () => {
             const { form, unmount } = mountLoginForm();
 
-            // Queue the session + user responses for one login; a second API
-            // call sequence would exhaust the queue and return undefined.
-            fake.queueResponse({
-                data: wire([
-                    ['token', 'tok'],
-                    ['refresh_token', 'ref'],
-                    ['expires_at', '2026-12-31 23:59:59'],
-                ]),
-            });
-            fake.queueResponse({
-                data: wire([
-                    ['id', 'u1'],
-                    ['first_name', 'Alice'],
-                    ['last_name', 'Smith'],
-                    ['full_name', 'Alice Smith'],
-                    ['email', 'alice@example.com'],
-                ]),
-            });
+            queueSignIn(fake);
 
             form.email.value = 'alice@example.com';
             form.password.value = 'correct-password';
 
             const first = form.submit();
-            const second = form.submit(); // called while first is in-flight
+            const second = form.submit();
 
             const [firstResult, secondResult] = await Promise.all([first, second]);
 
             expect(firstResult).toBe(true);
             expect(secondResult).toBe(false);
-            // POST auth + GET users/self = 2 calls total (guard blocks a second
-            // login)
             expect(fake.calls).toHaveLength(2);
 
             unmount();

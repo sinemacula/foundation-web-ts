@@ -27,6 +27,23 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
 }
 
 /**
+ * Build a session response in the default session gateway's wire shape.
+ *
+ * @param accessToken - the issued access token
+ * @param refreshToken - the issued refresh token
+ * @returns the response body
+ */
+function sessionResponse(accessToken: string, refreshToken: string): string {
+    return JSON.stringify(
+        wire([
+            ['access_token', accessToken],
+            ['refresh_token', refreshToken],
+            ['expires_in', 3600],
+        ]),
+    );
+}
+
+/**
  * Stub the GET users/self endpoint with a deterministic user record.
  *
  * @param page - the browser page under test
@@ -59,23 +76,13 @@ async function mockGetCurrentUser(page: Page, permissions: readonly string[] = [
  * @param page - the browser page under test
  */
 export async function mockLoginSuccess(page: Page): Promise<void> {
-    await page.route('**/auth', route => {
-        if (route.request().method() !== 'POST') {
-            return route.fallback();
-        }
-
-        return route.fulfill({
-            status: 201,
+    await page.route('**/auth/sign-in', route =>
+        route.fulfill({
+            status: 200,
             contentType: 'application/json',
-            body: JSON.stringify({
-                data: wire([
-                    ['token', 'e2e-access-token'],
-                    ['refresh_token', 'e2e-refresh-token'],
-                    ['expires_at', '2099-12-31 23:59:59'],
-                ]),
-            }),
-        });
-    });
+            body: sessionResponse('e2e-access-token', 'e2e-refresh-token'),
+        }),
+    );
 
     await mockGetCurrentUser(page);
 }
@@ -86,17 +93,33 @@ export async function mockLoginSuccess(page: Page): Promise<void> {
  * @param page - the browser page under test
  */
 export async function mockLoginFailure(page: Page): Promise<void> {
-    await page.route('**/auth', route => {
-        if (route.request().method() !== 'POST') {
-            return route.fallback();
-        }
-
-        return route.fulfill({
+    await page.route('**/auth/sign-in', route =>
+        route.fulfill({
             status: 401,
             contentType: 'application/json',
             body: JSON.stringify({ message: 'Invalid credentials.' }),
-        });
-    });
+        }),
+    );
+}
+
+/**
+ * Stub the login endpoint with a pending session that owes a second factor.
+ *
+ * @param page - the browser page under test
+ */
+export async function mockLoginInteractionRequired(page: Page): Promise<void> {
+    await page.route('**/auth/sign-in', route =>
+        route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(
+                wire([
+                    ['pending_credential', 'e2e-pending-credential'],
+                    ['requires', ['mfa']],
+                ]),
+            ),
+        }),
+    );
 }
 
 /**
@@ -105,13 +128,7 @@ export async function mockLoginFailure(page: Page): Promise<void> {
  * @param page - the browser page under test
  */
 export async function mockLogout(page: Page): Promise<void> {
-    await page.route('**/auth', route => {
-        if (route.request().method() !== 'DELETE') {
-            return route.fallback();
-        }
-
-        return route.fulfill({ status: 204 });
-    });
+    await page.route('**/auth/logout', route => route.fulfill({ status: 204 }));
 }
 
 /** Build one raw user row for the mocked users-list response. */
@@ -149,16 +166,16 @@ export async function mockUsersList(page: Page): Promise<void> {
                   data: [userRow('user-3', 'Carol Page Two'), userRow('user-4', 'Dave Page Two')],
                   meta: wire([
                       ['total', 27],
-                    ['count', 2],
-                    ['continue', false],
+                      ['count', 2],
+                      ['continue', false],
                   ]),
               }
             : {
                   data: [userRow('user-1', 'Alice Example'), userRow('user-2', 'Bob Example')],
                   meta: wire([
                       ['total', 27],
-                    ['count', 25],
-                    ['continue', true],
+                      ['count', 25],
+                      ['continue', true],
                   ]),
               };
 
@@ -195,9 +212,10 @@ export async function mockUsersListServerError(page: Page): Promise<void> {
 /**
  * Seed an authenticated session before the application boots.
  *
- * Writes both tokens to local storage from an init script, so the auth store
- * hydrates as signed-in on first load. Also registers the current-user mock so
- * any GET users/self triggered by the seeded session is handled.
+ * Writes the persisted session snapshot to local storage from an init script,
+ * so the session store hydrates as signed-in on first load. Also registers the
+ * current-user mock so any GET users/self triggered by the seeded session is
+ * handled.
  *
  * @param page - the browser page under test
  * @param permissions - the permission strings granted to the seeded user; pass
@@ -207,10 +225,12 @@ export async function seedAuthenticatedSession(
     page: Page,
     permissions: readonly string[] = ['users.view'],
 ): Promise<void> {
-    await page.addInitScript(() => {
-        window.localStorage.setItem('auth.access_token', 'e2e-seeded-token');
-        window.localStorage.setItem('auth.refresh_token', 'e2e-seeded-refresh-token');
+    const snapshot = JSON.stringify({
+        revision: 1,
+        tokens: { accessToken: 'e2e-seeded-token', refreshToken: 'e2e-seeded-refresh-token', expiresAtEpochMs: null },
     });
+
+    await page.addInitScript(value => window.localStorage.setItem('auth.session', value), snapshot);
 
     await mockGetCurrentUser(page, permissions);
 }
@@ -269,23 +289,13 @@ export async function mockUsersSelfUnauthorizedOnce(page: Page): Promise<void> {
 export async function mockAuthRefreshSuccess(page: Page): Promise<() => number> {
     let requestCount = 0;
 
-    await page.route('**/auth', route => {
-        if (route.request().method() !== 'PATCH' || route.request().resourceType() !== 'fetch') {
-            return route.fallback();
-        }
-
+    await page.route('**/auth/refresh', route => {
         requestCount += 1;
 
         return route.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify({
-                data: wire([
-                    ['token', 'e2e-refreshed-access-token'],
-                    ['refresh_token', 'e2e-refreshed-refresh-token'],
-                    ['expires_at', '2099-12-31 23:59:59'],
-                ]),
-            }),
+            body: sessionResponse('e2e-refreshed-access-token', 'e2e-refreshed-refresh-token'),
         });
     });
 

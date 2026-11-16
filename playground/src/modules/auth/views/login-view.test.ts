@@ -37,8 +37,13 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
 }
 
 interface MountedLoginView {
+    /** The element the view is mounted into. */
     readonly container: HTMLDivElement;
+
+    /** The router the view is mounted with. */
     readonly router: ReturnType<typeof createRouter>;
+
+    /** Unmount the view and detach its container. */
     readonly unmount: () => void;
 }
 
@@ -91,6 +96,26 @@ function submitForm(container: HTMLDivElement): void {
     }
 
     form.dispatchEvent(new Event('submit'));
+}
+
+/**
+ * Type a valid email and the given password into the mounted form.
+ *
+ * @param container - the mounted component root
+ * @param password - the password to enter
+ */
+function fillCredentials(container: HTMLDivElement, password: string): void {
+    const emailInput = container.querySelector<HTMLInputElement>('input[type="email"]');
+    const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
+
+    if (emailInput === null || passwordInput === null) {
+        throw new Error('form inputs not found');
+    }
+
+    emailInput.value = 'alice@example.com';
+    emailInput.dispatchEvent(new Event('input'));
+    passwordInput.value = password;
+    passwordInput.dispatchEvent(new Event('input'));
 }
 
 describe('LoginView', () => {
@@ -162,18 +187,8 @@ describe('LoginView', () => {
         initialiseApi(fake);
 
         const { container, unmount } = mountLoginView();
-        const emailInput = container.querySelector<HTMLInputElement>('input[type="email"]');
-        const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
 
-        if (emailInput === null || passwordInput === null) {
-            throw new Error('form inputs not found');
-        }
-
-        emailInput.value = 'alice@example.com';
-        emailInput.dispatchEvent(new Event('input'));
-        passwordInput.value = 'wrong-password';
-        passwordInput.dispatchEvent(new Event('input'));
-
+        fillCredentials(container, 'wrong-password');
         submitForm(container);
 
         await new Promise<void>(resolve => setTimeout(resolve, 50));
@@ -192,9 +207,9 @@ describe('LoginView', () => {
 
         fake.queueResponse({
             data: wire([
-                ['token', 'tok'],
+                ['access_token', 'tok'],
                 ['refresh_token', 'ref'],
-                ['expires_at', '2026-12-31 23:59:59'],
+                ['expires_in', 3600],
             ]),
         });
         fake.queueResponse({
@@ -202,7 +217,6 @@ describe('LoginView', () => {
                 ['id', 'u1'],
                 ['first_name', 'Alice'],
                 ['last_name', 'Smith'],
-                ['full_name', 'Alice Smith'],
                 ['email', 'alice@example.com'],
             ]),
         });
@@ -214,23 +228,36 @@ describe('LoginView', () => {
         await router.isReady();
 
         const pushSpy = vi.spyOn(router, 'push');
-        const emailInput = container.querySelector<HTMLInputElement>('input[type="email"]');
-        const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
 
-        if (emailInput === null || passwordInput === null) {
-            throw new Error('form inputs not found');
-        }
-
-        emailInput.value = 'alice@example.com';
-        emailInput.dispatchEvent(new Event('input'));
-        passwordInput.value = 'correct-password';
-        passwordInput.dispatchEvent(new Event('input'));
-
+        fillCredentials(container, 'correct-password');
         submitForm(container);
 
         await new Promise<void>(resolve => setTimeout(resolve, 50));
 
         expect(pushSpy).toHaveBeenCalledWith('/');
+
+        unmount();
+    });
+
+    it('does not navigate when the sign-in owes a further step', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse({ data: wire([['pending_credential', 'pending-1']]) });
+        initialiseApi(fake);
+
+        const { container, router, unmount } = mountLoginView();
+
+        await router.isReady();
+
+        const pushSpy = vi.spyOn(router, 'push');
+
+        fillCredentials(container, 'correct-password');
+        submitForm(container);
+
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+
+        expect(fake.calls).toHaveLength(1);
+        expect(pushSpy).not.toHaveBeenCalled();
 
         unmount();
     });
