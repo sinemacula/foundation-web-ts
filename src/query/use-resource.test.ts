@@ -15,8 +15,13 @@ import { useResource } from './use-resource';
 // Helper: a promise a test can resolve or reject on demand
 // ---------------------------------------------------------------------------
 interface Deferred<Value> {
+    /** The promise the test settles on demand. */
     readonly promise: Promise<Value>;
+
+    /** Resolve the promise with the given value. */
     readonly resolve: (value: Value) => void;
+
+    /** Reject the promise with the given reason. */
     readonly reject: (reason: unknown) => void;
 }
 
@@ -37,17 +42,24 @@ function createDeferred<Value>(): Deferred<Value> {
 // Helper: a fetcher that records every call so a test can drive each run
 // ---------------------------------------------------------------------------
 interface FetcherCall<Value> {
+    /** The abort signal passed to the fetcher for this run. */
     readonly signal: AbortSignal;
+
+    /** The deferred that settles this run's promise. */
     readonly deferred: Deferred<Value>;
 }
 
 /** Creates a `ResourceFetcher` that queues a controllable deferred per call. */
 function createFetcherQueue<Value>(): {
+    /** The fetcher to hand to the composable. */
     readonly fetcher: ResourceFetcher<Value>;
+
+    /** Every call the fetcher has received, in order. */
     readonly calls: FetcherCall<Value>[];
 } {
     const calls: FetcherCall<Value>[] = [];
 
+    /** Queue a fresh deferred for this run and hand back its promise. */
     const fetcher: ResourceFetcher<Value> = signal => {
         const deferred = createDeferred<Value>();
 

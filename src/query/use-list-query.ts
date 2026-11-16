@@ -28,7 +28,11 @@ import { computed, ref } from 'vue';
 import type { QueryParameters } from '@sinemacula/foundation/http/http-client';
 import { ApiQuery } from '@sinemacula/foundation/query/api-query';
 import type { ListFilter } from '@sinemacula/foundation/query/list-filter';
-import type { FilterValueOf, ListQueryDefinition, SortDefault } from '@sinemacula/foundation/query/list-query-definition';
+import type {
+    FilterValueOf,
+    ListQueryDefinition,
+    SortDefault,
+} from '@sinemacula/foundation/query/list-query-definition';
 import { QueryError } from '@sinemacula/foundation/query/query-error';
 
 /** Default page size when the definition does not specify one. */

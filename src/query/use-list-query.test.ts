@@ -11,9 +11,7 @@ import { filter } from '@sinemacula/foundation/query/list-filter';
 import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
 import { useListQuery } from './use-list-query';
 
-// ---------------------------------------------------------------------------
-// Helper: parse `filters` parameter back to an object
-// ---------------------------------------------------------------------------
+/** Parse the `filters` parameter back to an object. */
 function parsedFilters(params: Record<string, unknown>): unknown {
     if (params['filters'] === undefined) {
         return {};
@@ -22,9 +20,7 @@ function parsedFilters(params: Record<string, unknown>): unknown {
     return JSON.parse(String(params['filters']));
 }
 
-// ---------------------------------------------------------------------------
-// Helper: wire object builder (keeps $-prefixed keys out of object literals)
-// ---------------------------------------------------------------------------
+/** Build a wire object, keeping $-prefixed keys out of object literals. */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
 }
@@ -916,7 +912,6 @@ describe('useListQuery', () => {
             expect(parsedFilters(parameters.value)).toEqual(wire([['priority', wire([['$ge', 5]])]]));
         });
     });
-
 
     // -------------------------------------------------------------------------
     // pageSize default 25
