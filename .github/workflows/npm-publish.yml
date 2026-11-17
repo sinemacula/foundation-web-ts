@@ -79,5 +79,8 @@ jobs:
             -   name: Show packed file list (dry run)
                 run: npm pack --dry-run
 
+            -   name: Check the packed exports and types
+                run: npm run check:pkg
+
             -   name: Publish
                 run: npm publish --provenance --access public

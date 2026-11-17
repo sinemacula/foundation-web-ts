@@ -17,13 +17,17 @@ export class DashboardPage {
     /** The dashboard heading. */
     readonly heading: Locator;
 
-    /** The sign out button. */
+    /** The header sign out button, which asks for confirmation. */
     readonly signOutButton: Locator;
+
+    /** The sign out confirmation dialog. */
+    readonly signOutDialog: Locator;
 
     constructor(page: Page) {
         this.page = page;
         this.heading = page.getByRole('heading', { name: 'Dashboard' });
-        this.signOutButton = page.getByRole('button', { name: 'Sign out' });
+        this.signOutButton = page.getByRole('banner').getByRole('button', { name: 'Sign out' });
+        this.signOutDialog = page.getByRole('alertdialog', { name: 'Sign out?' });
     }
 
     /**
@@ -31,5 +35,13 @@ export class DashboardPage {
      */
     async goto(): Promise<void> {
         await this.page.goto('/');
+    }
+
+    /**
+     * Sign out through the header button and its confirmation dialog.
+     */
+    async signOut(): Promise<void> {
+        await this.signOutButton.click();
+        await this.signOutDialog.getByRole('button', { name: 'Sign out' }).click();
     }
 }

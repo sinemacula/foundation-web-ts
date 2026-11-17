@@ -6,11 +6,19 @@
  */
 
 import { expect, test } from '../fixtures/app';
-
-const servedByPreview = process.env['CI'] !== undefined;
+import { SERVED_BY_PREVIEW } from '../support/environment';
 
 test.describe('static error pages', () => {
-    test.skip(!servedByPreview, 'error pages are only served by the production preview');
+    test.skip(!SERVED_BY_PREVIEW, 'error pages are only served by the production preview');
+
+    test('serves a page for every handled status', async ({ request }) => {
+        for (const status of [400, 403, 404, 405, 414, 416, 500, 501, 502, 503, 504]) {
+            const response = await request.get(`/errors/${status}.html`);
+
+            expect(response.status(), `errors/${status}.html`).toBe(200);
+            expect(await response.text()).toContain(`<title>${status} `);
+        }
+    });
 
     test.describe('English browser', () => {
         test.use({ locale: 'en-US' });
@@ -50,6 +58,25 @@ test.describe('static error pages', () => {
 
             await expect(page.locator('#e-title')).toHaveText('Not Found');
             await expect(page.locator('html')).toHaveAttribute('lang', 'en-US');
+        });
+
+        test('applies a stored dark theme', async ({ page }) => {
+            await page.addInitScript(() => window.localStorage.setItem('theme', 'dark'));
+
+            await page.goto('/errors/404.html');
+
+            await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+        });
+    });
+
+    test.describe('Canadian French browser', () => {
+        test.use({ locale: 'fr-CA' });
+
+        test('falls back to the base language', async ({ page }) => {
+            await page.goto('/errors/503.html');
+
+            await expect(page.locator('#e-title')).toHaveText('Service indisponible');
+            await expect(page.locator('html')).toHaveAttribute('lang', 'fr-FR');
         });
     });
 });

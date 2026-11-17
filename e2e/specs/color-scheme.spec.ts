@@ -8,8 +8,7 @@
 import type { Locator, Page } from '@playwright/test';
 
 import { expect, test } from '../fixtures/app';
-import { UsersPage } from '../pages/users-page';
-import { mockUsersList, seedAuthenticatedSession } from '../support/api-mock';
+import { SEEDED_SESSION } from '../support/api-mock';
 
 const LIGHT_THEME_COLOR = '#f8fafc';
 const DARK_THEME_COLOR = '#0f172a';
@@ -40,10 +39,31 @@ function storedPreference(page: Page): Promise<string | null> {
     return page.evaluate(() => window.localStorage.getItem('theme'));
 }
 
-test.describe('colour scheme switcher', () => {
-    test.beforeEach(async ({ page }) => {
-        await seedAuthenticatedSession(page);
+/** The counter the page keeps of OS colour-scheme changes. */
+interface SchemeChangeCounter {
+    /** How many changes the listener has seen. */
+    changes: number;
+}
+
+/**
+ * Count OS colour-scheme changes on a listener registered after the app's, so a
+ * count proves the app's own listener has already run.
+ */
+async function countSchemeChanges(page: Page): Promise<() => Promise<number>> {
+    await page.evaluate(() => {
+        const counter: SchemeChangeCounter = { changes: 0 };
+
+        Object.assign(window, { schemeChanges: counter });
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            counter.changes += 1;
+        });
     });
+
+    return () => page.evaluate(() => Reflect.get(window, 'schemeChanges').changes as number);
+}
+
+test.describe('colour scheme switcher', { tag: '@engine' }, () => {
+    test.use({ seededSession: SEEDED_SESSION });
 
     test('renders a three-way switcher on the authenticated layout', async ({ page, dashboardPage }) => {
         await dashboardPage.goto();
@@ -120,8 +140,12 @@ test.describe('colour scheme switcher', () => {
         await option(page, 'Dark').click();
         await expect(root(page)).toHaveAttribute('data-theme', 'dark');
 
+        const schemeChanges = await countSchemeChanges(page);
+
         await page.emulateMedia({ colorScheme: 'dark' });
+        await expect.poll(schemeChanges).toBe(1);
         await page.emulateMedia({ colorScheme: 'light' });
+        await expect.poll(schemeChanges).toBe(2);
 
         await expect(root(page)).toHaveAttribute('data-theme', 'dark');
         await expect(themeColor(page)).toHaveAttribute('content', DARK_THEME_COLOR);
@@ -165,10 +189,8 @@ test.describe('colour scheme switcher', () => {
         await expect(option(page, 'Dark')).toHaveClass(RESOLVED);
     });
 
-    test('renders the switcher on the users screen too', async ({ page }) => {
-        await mockUsersList(page);
-
-        const usersPage = new UsersPage(page);
+    test('renders the switcher on the users screen too', async ({ page, api, usersPage }) => {
+        await api.usersList();
 
         await usersPage.goto();
 
@@ -180,7 +202,7 @@ test.describe('colour scheme switcher', () => {
     });
 });
 
-test.describe('colour scheme boot', () => {
+test.describe('colour scheme boot', { tag: '@engine' }, () => {
     test('stamps a stored preference before the app boots', async ({ page }) => {
         await page.addInitScript(() => window.localStorage.setItem('theme', 'dark'));
 
