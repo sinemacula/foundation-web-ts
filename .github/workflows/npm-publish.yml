@@ -1,27 +1,51 @@
-# Publishes on the `v*` tag release-please pushes with an app token (release.yml
-# `use-app-token`); a tag pushed with the default token triggers no workflow.
-# Auth is OIDC trusted publishing, and `prepare` builds `dist/`.
+# ==============================================================================
+# NPM PUBLISH
+# ==============================================================================
+# Publishes the kernel to npm when release-please pushes a `v*` tag. The tag is
+# created with a GitHub App token (see release.yml `use-app-token`) so this
+# workflow is triggered; the automatic token would not fire it.
+#
+# Authentication is OIDC trusted publishing - no npm token. The `prepare`
+# lifecycle compiles `dist/`, so no build step is needed here beyond installing
+# dependencies.
+# ==============================================================================
 name: npm-publish
 
+# ==============================================================================
+# TRIGGERS
+# ==============================================================================
 on:
     push:
         tags:
             -   v*
     workflow_dispatch:
 
+# ==============================================================================
+# CONCURRENCY
+# ==============================================================================
 concurrency:
     group: npm-publish-${{ github.ref }}
     cancel-in-progress: false
 
+# ==============================================================================
+# PERMISSIONS
+# ==============================================================================
 permissions:
     contents: read
     id-token: write
 
+# ==============================================================================
+# DEFAULTS
+# ==============================================================================
 defaults:
     run:
         shell: bash
 
 jobs:
+
+    # ==========================================================================
+    # JOB: PUBLISH TO NPM
+    # ==========================================================================
     publish:
         name: Publish to npm
         runs-on: ubuntu-latest

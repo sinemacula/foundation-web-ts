@@ -1,5 +1,11 @@
+# ==============================================================================
+# QUALITY GATES
+# ==============================================================================
 name: Quality Gates
 
+# ==============================================================================
+# TRIGGERS
+# ==============================================================================
 on:
     push:
         branches: [ master ]
@@ -9,21 +15,35 @@ on:
         -   cron: 0 3 * * 1
     workflow_dispatch:
 
+# ==============================================================================
+# CONCURRENCY
+# ==============================================================================
 # The event name keeps scheduled and manual runs out of the push group, so a
 # merge to master cannot cancel one part way through.
 concurrency:
     group: quality-gates-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
     cancel-in-progress: true
 
+# ==============================================================================
+# PERMISSIONS
+# ==============================================================================
 permissions:
     contents: read
 
+# ==============================================================================
+# DEFAULTS
+# ==============================================================================
 defaults:
     run:
         shell: bash
 
 jobs:
-    # Knip, bundle size and mutation (scoped on PRs, full on schedule).
+
+    # ==========================================================================
+    # JOB: GATES
+    # ==========================================================================
+    # Knip, bundle size, and mutation (scoped on PRs, full on schedule) - all
+    # from the shared reusable workflow.
     gates:
         uses: sinemacula/.github/.github/workflows/node-quality-gates.yml@v3.0.2
         # The shared jobs inherit only what this job grants.
@@ -31,7 +51,11 @@ jobs:
             contents: read
             packages: read
 
-    # Dogfoods this repo's eslint preset; not part of the shared workflow.
+    # ==========================================================================
+    # JOB: STRUCTURE
+    # ==========================================================================
+    # Repo-specific: dogfood the web-core eslint preset. Consumers get the
+    # preset through qlty, so this job does not belong in the shared workflow.
     structure:
         name: Structure lint
         if: ${{ github.event_name != 'schedule' }}
@@ -43,7 +67,9 @@ jobs:
                 with:
                     persist-credentials: false
 
-            # Preset tests and mutation run only when the preset or deps change.
+            # The preset rule tests and mutation gate only need to run when the
+            # preset itself, or a dependency that could change rule behaviour,
+            # changes. The structure lint validates all source and runs always.
             -   name: Detect preset changes
                 id: changes
                 uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3

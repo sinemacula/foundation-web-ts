@@ -1,5 +1,11 @@
+# ==============================================================================
+# TESTS
+# ==============================================================================
 name: Tests
 
+# ==============================================================================
+# TRIGGERS
+# ==============================================================================
 on:
     push:
         branches: [ master ]
@@ -7,12 +13,20 @@ on:
         types: [ opened, synchronize, reopened, ready_for_review ]
     workflow_dispatch:
 
+# ==============================================================================
+# CONCURRENCY
+# ==============================================================================
 concurrency:
     group: tests-${{ github.event.pull_request.number || github.ref }}
     cancel-in-progress: true
 
 jobs:
-    # Typecheck, unit tests at 100% coverage on the Node matrix, build and e2e.
+
+    # ==========================================================================
+    # JOB: TESTS
+    # ==========================================================================
+    # Typecheck, unit tests at 100% coverage across the Node matrix, the build,
+    # and the Playwright e2e suite - all from the shared reusable workflow.
     tests:
         uses: sinemacula/.github/.github/workflows/node-tests.yml@v3.0.2
         # The shared jobs inherit only what this job grants; the coverage upload
