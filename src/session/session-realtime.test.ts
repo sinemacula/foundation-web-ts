@@ -77,6 +77,14 @@ describe('session realtime policy', () => {
     }
 
     /**
+     * Adopt a session another tab signed in over whatever is held.
+     */
+    async function adoptElsewhere(adopted: SessionTokens): Promise<void> {
+        persistSnapshot(storage, adopted, 10, 'lineage-elsewhere');
+        await useSessionStore().hydrate();
+    }
+
+    /**
      * Sign a new session in over whatever is held.
      */
     async function signIn(signedIn: SessionTokens): Promise<void> {
@@ -107,7 +115,9 @@ describe('session realtime policy', () => {
          * installed one.
          */
         function check(target?: RecordingConnection): Promise<unknown> {
-            return (target === undefined ? sessionReconnectGuard() : sessionReconnectGuard(() => target))();
+            return (target === undefined ? sessionReconnectGuard() : sessionReconnectGuard(() => target))(
+                new AbortController().signal,
+            );
         }
 
         it('decides only once the session has hydrated', async () => {
@@ -193,14 +203,17 @@ describe('session realtime policy', () => {
             await vi.waitFor(() => {
                 expect(gateway.refresh).toHaveBeenCalled();
             });
-            await useSessionStore().logout();
+
+            const signingOut = useSessionStore().logout();
+
             pending.resolve({ kind: 'refreshed', tokens: tokens({ accessToken: 'discarded' }) });
 
             await expect(verdict).resolves.toBe(false);
+            await signingOut;
             expect(connection.calls).toStrictEqual(['disconnect']);
         });
 
-        it('reconnects on a current session signed in during the refresh, not on the discarded one', async () => {
+        it('reconnects on a current session another tab signed in during the refresh, not on the discarded one', async () => {
             await hydrated(NOW);
 
             const pending = deferred<RefreshResult>();
@@ -212,14 +225,14 @@ describe('session realtime policy', () => {
             await vi.waitFor(() => {
                 expect(gateway.refresh).toHaveBeenCalled();
             });
-            await signIn(tokens({ accessToken: 'signed-in', expiresAtEpochMs: null }));
+            await adoptElsewhere(tokens({ accessToken: 'signed-in', expiresAtEpochMs: null }));
             pending.resolve({ kind: 'refreshed', tokens: tokens({ accessToken: 'discarded' }) });
 
             await expect(verdict).resolves.toBe(true);
             expect(useSessionStore().accessToken).toBe('signed-in');
         });
 
-        it('skips without refreshing again when the session signed in during the refresh is expiring', async () => {
+        it('skips without refreshing again when the session another tab signed in during the refresh is expiring', async () => {
             await hydrated(NOW);
 
             const pending = deferred<RefreshResult>();
@@ -231,7 +244,7 @@ describe('session realtime policy', () => {
             await vi.waitFor(() => {
                 expect(gateway.refresh).toHaveBeenCalled();
             });
-            await signIn(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
+            await adoptElsewhere(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
             pending.resolve({ kind: 'refreshed', tokens: tokens() });
 
             await expect(verdict).resolves.toBe(false);
@@ -262,6 +275,51 @@ describe('session realtime policy', () => {
             });
 
             await expect(check()).resolves.toBe(true);
+        });
+
+        it('skips without judging the session an attempt abandoned before it hydrated', async () => {
+            const controller = new AbortController();
+
+            await hydrated(NOW);
+            controller.abort();
+
+            await expect(sessionReconnectGuard()(controller.signal)).resolves.toBe(false);
+            expect(gateway.refresh).not.toHaveBeenCalled();
+            expect(connection.calls).toStrictEqual([]);
+        });
+
+        it('skips without disconnecting an attempt abandoned during a refused refresh', async () => {
+            const controller = new AbortController();
+            const pending = deferred<RefreshResult>();
+
+            await hydrated(NOW);
+            gateway.refresh.mockReturnValueOnce(pending.promise);
+
+            const verdict = sessionReconnectGuard()(controller.signal);
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalled();
+            });
+            controller.abort();
+            pending.resolve({ kind: 'rejected', error: new HttpError(401, 'refused') });
+
+            await expect(verdict).resolves.toBe(false);
+            expect(connection.calls).toStrictEqual([]);
+        });
+
+        it('skips without disconnecting when another tab signed in as a refused refresh settled', async () => {
+            await hydrated(NOW);
+            resetSessionContext();
+            install({
+                coordinator: new SessionRefreshCoordinator(async (): Promise<RefreshOutcome> => {
+                    await adoptElsewhere(tokens({ accessToken: 'signed-in', expiresAtEpochMs: null }));
+
+                    return { kind: 'rejected', error: new HttpError(401, 'refused') };
+                }),
+            });
+
+            await expect(check()).resolves.toBe(false);
+            expect(connection.calls).toStrictEqual([]);
         });
     });
 
@@ -412,7 +470,7 @@ describe('session realtime policy', () => {
                 expect(scheduler.delays()).toStrictEqual([2_000]);
             });
 
-            await signIn(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
+            await adoptElsewhere(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
 
             await vi.waitFor(() => {
                 expect(gateway.refresh).toHaveBeenCalledTimes(3);
@@ -422,7 +480,7 @@ describe('session realtime policy', () => {
             expect(scheduler.delays()).toStrictEqual([1_000]);
         });
 
-        it('retries instead of connecting when the session signed in during the refresh is expiring', async () => {
+        it('retries instead of connecting when the session another tab signed in during the refresh is expiring', async () => {
             const store = await hydrated(NOW);
             const pending = deferred<RefreshResult>();
 
@@ -432,7 +490,7 @@ describe('session realtime policy', () => {
                 expect(gateway.refresh).toHaveBeenCalled();
             });
 
-            await signIn(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
+            await adoptElsewhere(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
             pending.resolve({ kind: 'refreshed', tokens: tokens() });
             await settle();
 
@@ -459,7 +517,7 @@ describe('session realtime policy', () => {
             });
         });
 
-        it('reconnects for a session adopted over the held one with the same tokens', async () => {
+        it('reconnects for a session another tab signed in over the held one with the same tokens', async () => {
             const store = await hydrated(null);
 
             follow(store);
@@ -467,8 +525,7 @@ describe('session realtime policy', () => {
                 expect(connection.calls).toStrictEqual(['connect']);
             });
 
-            persistSnapshot(storage, tokens({ expiresAtEpochMs: null }), 5);
-            await store.hydrate();
+            await adoptElsewhere(tokens({ expiresAtEpochMs: null }));
 
             await vi.waitFor(() => {
                 expect(connection.calls).toStrictEqual(['connect', 'disconnect', 'connect']);
@@ -725,12 +782,14 @@ describe('session realtime policy', () => {
                 expect(gateway.refresh).toHaveBeenCalled();
             });
 
-            await store.logout();
+            const signingOut = store.logout();
+
             await vi.waitFor(() => {
                 expect(connection.calls).toStrictEqual(['disconnect']);
             });
 
             pending.resolve({ kind: 'rejected', error: new HttpError(401, 'refused') });
+            await signingOut;
             await settle();
 
             expect(connection.calls).toStrictEqual(['disconnect']);
