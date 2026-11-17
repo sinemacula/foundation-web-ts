@@ -23,12 +23,17 @@ function buildContainer(innerHtml: string): HTMLElement {
 }
 
 /**
- * Dispatch a keydown event on the active element.
+ * Dispatch a cancelable keydown event on the active element.
+ *
+ * @returns the dispatched event
  */
-function pressKey(key: string, shiftKey = false): void {
+function pressKey(key: string, shiftKey = false): KeyboardEvent {
     const target = document.activeElement ?? document.body;
+    const event = new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true });
 
-    target.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true }));
+    target.dispatchEvent(event);
+
+    return event;
 }
 
 describe('useFocusTrap', () => {
@@ -219,21 +224,34 @@ describe('useFocusTrap', () => {
         });
     });
 
-    describe('Tab when container becomes empty after activation', () => {
-        it('is a safe no-op when all focusable elements are removed after activate', () => {
+    describe('focused control removed after activation', () => {
+        it('holds Tab when nothing tabbable is left', () => {
             container = buildContainer('<button id="dyn">Dynamic</button>');
 
-            const el = ref<HTMLElement | null>(container);
-            const trap = useFocusTrap(el);
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
 
             trap.activate();
-
             (container.querySelector<HTMLElement>('#dyn') as HTMLElement).remove();
 
-            // With the button gone, the event must target the container itself.
-            expect(() => {
-                container.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: false, bubbles: true }));
-            }).not.toThrow();
+            expect(pressKey('Tab').defaultPrevented).toBe(true);
+
+            trap.deactivate();
+        });
+
+        it('pulls focus back in from the body', () => {
+            container = buildContainer('<button id="gone">Gone</button><button id="kept">Kept</button>');
+
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            (container.querySelector<HTMLElement>('#gone') as HTMLElement).remove();
+
+            expect(document.activeElement).toBe(document.body);
+
+            const event = pressKey('Tab');
+
+            expect(event.defaultPrevented).toBe(true);
+            expect(document.activeElement?.id).toBe('kept');
 
             trap.deactivate();
         });
@@ -383,8 +401,8 @@ describe('useFocusTrap', () => {
 
             const trap = useFocusTrap(ref<HTMLElement | null>(container));
 
-            const added = vi.spyOn(container, 'addEventListener');
-            const removed = vi.spyOn(container, 'removeEventListener');
+            const added = vi.spyOn(document, 'addEventListener');
+            const removed = vi.spyOn(document, 'removeEventListener');
 
             trap.activate();
             trap.activate();
@@ -393,6 +411,9 @@ describe('useFocusTrap', () => {
             expect(document.activeElement?.id).toBe('trigger');
             expect(container.hasAttribute('tabindex')).toBe(false);
             expect(removed.mock.calls).toStrictEqual(added.mock.calls);
+
+            added.mockRestore();
+            removed.mockRestore();
 
             (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
             pressKey('Tab');
@@ -421,7 +442,7 @@ describe('useFocusTrap', () => {
             (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
             pressKey('Tab');
 
-            expect(document.activeElement?.id).toBe('b');
+            expect(document.activeElement?.id).toBe('c');
 
             (replacement.querySelector<HTMLElement>('#d') as HTMLElement).focus();
             pressKey('Tab');
@@ -512,8 +533,8 @@ describe('useFocusTrap', () => {
 
             outerTrap.activate();
             innerTrap.activate();
-            pressKey('Tab');
 
+            expect(pressKey('Tab').defaultPrevented).toBe(true);
             expect(document.activeElement).toBe(inner);
 
             innerTrap.deactivate();

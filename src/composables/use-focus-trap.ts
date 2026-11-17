@@ -32,10 +32,10 @@ export interface FocusTrapControls {
  * The live state of one activated trap.
  */
 interface ActiveTrap {
-    /** The element the keydown listener is attached to. */
+    /** The container focus is kept inside. */
     readonly element: HTMLElement;
 
-    /** The keydown listener wrapping Tab inside `element`. */
+    /** The document-level keydown listener keeping Tab inside `element`. */
     readonly listener: (event: KeyboardEvent) => void;
 
     /** Whether activation added `tabindex="-1"` to make `element` focusable. */
@@ -63,7 +63,8 @@ function getTabbable(container: HTMLElement): HTMLElement[] {
 /**
  * Wrap Shift+Tab on the first tabbable element to the last and Tab on the last
  * to the first; from anywhere else outside the tabbable set, including the
- * container itself, move to the first or last, so focus never leaves.
+ * container itself or the body after the focused control was removed, move to
+ * the first or last, so focus never leaves.
  */
 function handleTrapKeydown(event: KeyboardEvent, container: HTMLElement): void {
     const tabbable = getTabbable(container);
@@ -89,7 +90,7 @@ function handleTrapKeydown(event: KeyboardEvent, container: HTMLElement): void {
  * from the trap stack.
  */
 function releaseTrap(trap: ActiveTrap): void {
-    trap.element.removeEventListener('keydown', trap.listener);
+    trap.element.ownerDocument.removeEventListener('keydown', trap.listener);
 
     if (trap.addedTabIndex) {
         trap.element.removeAttribute('tabindex');
@@ -150,7 +151,7 @@ export function useFocusTrap(container: Ref<HTMLElement | null>): FocusTrapContr
             addedTabIndex,
         };
 
-        el.addEventListener('keydown', active.listener);
+        el.ownerDocument.addEventListener('keydown', active.listener);
         trapStack.push(active);
         trap = active;
 
