@@ -102,16 +102,18 @@ describe('application boot', () => {
      */
     async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
         const runtime = options.runtime ?? runtimeDocument();
-        const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+        const fetchFn = vi.fn((input: RequestInfo | URL) => {
             const url = String(input);
 
             if (url.endsWith('/runtime-env.json')) {
-                return json(runtime);
+                return Promise.resolve(json(runtime));
             }
 
-            return url.endsWith('/users/self')
-                ? json(currentUser(options.permissions ?? []))
-                : new Response(null, { status: 500 });
+            return Promise.resolve(
+                url.endsWith('/users/self')
+                    ? json(currentUser(options.permissions ?? []))
+                    : new Response(null, { status: 500 }),
+            );
         });
 
         booted = await createPlaygroundApp({

@@ -39,7 +39,7 @@ function parseWireTimestamp(wireTimestamp: string): Date | null {
         return null;
     }
 
-    // Formatting back rejects other shapes and values Date rolls over, such as February 30.
+    // Round-tripping rejects other shapes and rolled-over dates like Feb 30.
     return parsed.toISOString().slice(0, 19).replace('T', ' ') === wireTimestamp ? parsed : null;
 }
 
