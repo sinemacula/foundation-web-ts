@@ -1,10 +1,10 @@
 # Contributing
 
-Contributions are welcome via GitHub pull requests. This guide covers the expectations for working on this package.
+Contributions are welcome via GitHub pull requests.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 22+ (`.nvmrc` pins the version used for development)
 - npm
 
 ## Getting Started
@@ -45,13 +45,15 @@ chore: update qlty configuration
 All code must pass static analysis before submission:
 
 ```bash
-npm run check    # Static analysis and lint checks via qlty (Biome, ESLint, knip)
-npm run fmt      # Format the codebase via qlty
-npm run smells   # Advisory code smells (duplication, complexity)
+npm run check            # Lint, static analysis and security scans via qlty (Biome, ESLint, ...)
+npm run fmt              # Format the codebase via qlty
+npm run smells           # Duplication and complexity analysis via qlty
+npm run lint:structure   # The module-contract ESLint preset over src, playground/src and e2e
+npm run deadcode         # Dead-code detection with Knip (runs outside qlty)
 ```
 
-Run everything through qlty rather than invoking the underlying tools directly; the shared configuration lives in
-`.qlty/` and is enforced by Qlty Cloud on every pull request.
+Run linting and formatting through qlty rather than invoking the underlying tools directly; the shared configuration
+lives in `.qlty/` and is enforced by qlty Cloud on every pull request.
 
 ### Testing
 
@@ -61,25 +63,25 @@ Run the full suite before submitting:
 npm run typecheck        # Type-check with vue-tsc
 npm run test:coverage    # Unit tests, with 100% coverage enforced
 npm run test:e2e         # End-to-end tests with Playwright
-npm run deadcode         # Dead-code detection with knip
-npm run build            # Production build
+npm run build            # Playground production build
+npm run build:dist       # Compile the kernel package to dist/
 ```
 
 Single test file or test:
 
 ```bash
 npx vitest run src/session/session-store.test.ts
-npx vitest run -t "awaits the user load"
+npx vitest run -t "adopts the persisted session on hydrate"
 ```
 
 ### Standards
 
-- The kernel (root `src/`) stays product-agnostic and framework-boundary-clean: no Vue component code,
-  ports-and-adapters at the edges. Product and application functionality belongs in `playground/`.
-- No barrel files; consumers import the kernel by subpath (e.g. `@sinemacula/web-core/http/http-client`).
+- The kernel (root `src/`) stays product-agnostic: no Vue component code, ports and adapters at the edges. Product and
+  application functionality belongs in `playground/`.
+- No barrel files; consumers import the kernel by subpath (e.g. `@sinemacula/web-core/app/create-web-core-app`).
 - Behaviour lives in plain TypeScript; Vue single-file components stay thin (template plus wiring).
-- Cross-module imports between playground modules go through a module's public surface (its `index.ts`),
-  never into its internals.
+- Imports between playground modules go through a module's public surface (`@/modules/<name>`, its `index.ts`), never
+  into its internals.
 - Wire-format keys (snake_case) never appear as object-literal keys; use the `wire()` entry-tuple idiom.
 - Styling uses the `--sm-*` design tokens; components never hard-code visual values.
 - New code ships with colocated tests; the 100% coverage thresholds and the mutation-testing gate
@@ -94,8 +96,8 @@ npx vitest run -t "awaits the user load"
 
 ## Security
 
-If you discover a security vulnerability, please report it directly to Sine Macula rather than opening a public issue.
-See [SECURITY.md](SECURITY.md) for details.
+Report security vulnerabilities directly to Sine Macula rather than opening a public issue. See
+[SECURITY.md](SECURITY.md) for details.
 
 ## License
 
