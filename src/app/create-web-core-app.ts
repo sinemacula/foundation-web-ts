@@ -875,6 +875,11 @@ function resolveRouter<T extends FoundationConfig>(
 
     teardowns.push(titleSyncTeardown);
 
+    // A navigation still awaiting a guard must not land once the app is gone.
+    teardowns.push(() => {
+        router.beforeResolve(() => false);
+    });
+
     return router;
 }
 

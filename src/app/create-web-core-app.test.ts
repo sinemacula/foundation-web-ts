@@ -1751,6 +1751,41 @@ describe('createWebCoreApp', () => {
             expect(host.innerHTML).toBe('');
         });
 
+        it('drops a navigation still waiting on a guard when disposed', async () => {
+            const gate = deferred<undefined>();
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        routes: [
+                            { path: '/', name: 'home.index', component: EmptyComponent },
+                            { path: '/other', name: 'home.other', component: EmptyComponent },
+                        ],
+                        guards: [
+                            {
+                                handle: async context => {
+                                    if (context.to.path === '/other') {
+                                        await gate.promise;
+                                    }
+
+                                    return next();
+                                },
+                            },
+                        ],
+                    }),
+                ],
+            });
+
+            await app.router.isReady();
+
+            const navigating = app.router.push('/other');
+
+            app.dispose();
+            gate.resolve(undefined);
+            await navigating;
+
+            expect(app.router.currentRoute.value.path).toBe('/');
+        });
+
         it('rejects a start after dispose', async () => {
             const app = await bootApp();
 
