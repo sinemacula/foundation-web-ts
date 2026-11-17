@@ -10,7 +10,7 @@
 import SmButton from '@/components/ui/sm-button.vue';
 import SmCard from '@/components/ui/sm-card.vue';
 import { useI18n } from 'vue-i18n';
-import { ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useFocusTrap } from '@sinemacula/web-core/composables/use-focus-trap';
 import { confirmDialogs } from '@/services/confirm';
@@ -18,19 +18,26 @@ import { confirmDialogs } from '@/services/confirm';
 const { t } = useI18n();
 const service = confirmDialogs();
 
-const panelRef = ref<HTMLElement | null>(null);
-const trap = useFocusTrap(panelRef);
+const dialogRef = ref<HTMLElement | null>(null);
+// Holds the element the trap was engaged on until release, as the v-if drops dialogRef first.
+const trapTarget = ref<HTMLElement | null>(null);
+const trap = useFocusTrap(trapTarget);
 
-watch(
-    () => service.active.value,
-    (active) => {
-        if (active !== null) {
-            trap.activate();
-        } else {
-            trap.deactivate();
-        }
-    },
-);
+/**
+ * Re-engage the focus trap on the rendered dialog for the active request.
+ */
+function syncTrap(): void {
+    trap.deactivate();
+    trapTarget.value = dialogRef.value;
+
+    if (service.active.value !== null) {
+        trap.activate();
+    }
+}
+
+watch(() => service.active.value, syncTrap, { flush: 'post' });
+onMounted(syncTrap);
+onBeforeUnmount(trap.deactivate);
 
 function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
@@ -42,6 +49,7 @@ function onKeydown(event: KeyboardEvent): void {
 <template>
     <div
         v-if="service.active.value !== null"
+        ref="dialogRef"
         class="confirm-host"
         role="alertdialog"
         aria-modal="true"
@@ -49,7 +57,7 @@ function onKeydown(event: KeyboardEvent): void {
         :aria-describedby="`confirm-message-${service.active.value.id}`"
         @keydown="onKeydown"
     >
-        <SmCard class="confirm-host__panel" ref="panelRef">
+        <SmCard class="confirm-host__panel">
             <h2 :id="`confirm-title-${service.active.value.id}`" class="confirm-host__title">
                 {{ t(service.active.value.title) }}
             </h2>
