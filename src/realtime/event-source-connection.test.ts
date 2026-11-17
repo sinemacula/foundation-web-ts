@@ -53,6 +53,23 @@ class FakeEventSource {
     }
 
     /**
+     * Unregister a listener for a named event.
+     */
+    removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+        this.#listeners.set(
+            type,
+            (this.#listeners.get(type) ?? []).filter(registered => registered !== listener),
+        );
+    }
+
+    /**
+     * Count the listeners registered for a named event.
+     */
+    listenerCount(type: string): number {
+        return this.#listeners.get(type)?.length ?? 0;
+    }
+
+    /**
      * Record a close call.
      */
     close(): void {
@@ -60,24 +77,46 @@ class FakeEventSource {
     }
 
     /**
-     * Simulate the source opening.
+     * Simulate the source opening, reaching the handler property and then any
+     * `open` listeners as the native source does.
      */
     emitOpen(): void {
-        this.onopen?.(new Event('open'));
+        this.#dispatchTransportEvent('open', this.onopen);
     }
 
     /**
-     * Simulate the source failing.
+     * Simulate the source failing, reaching the handler property and then any
+     * `error` listeners as the native source does.
      */
     emitError(): void {
-        this.onerror?.(new Event('error'));
+        this.#dispatchTransportEvent('error', this.onerror);
     }
 
     /**
-     * Simulate an incoming named event.
+     * Dispatch a data-less transport event to its handler property and listeners.
+     */
+    #dispatchTransportEvent(type: string, handler: ((event: Event) => void) | null): void {
+        const event = new Event(type);
+
+        handler?.(event);
+
+        for (const listener of this.#listeners.get(type) ?? []) {
+            listener(event as MessageEvent);
+        }
+    }
+
+    /**
+     * Simulate an incoming named event; like the native source, a frame named
+     * `open` or `error` also reaches the matching handler property first.
      */
     emitMessage(type: string, data: unknown): void {
         const event = new MessageEvent(type, { data });
+
+        if (type === 'open') {
+            this.onopen?.(event);
+        } else if (type === 'error') {
+            this.onerror?.(event);
+        }
 
         for (const listener of this.#listeners.get(type) ?? []) {
             listener(event);
@@ -135,7 +174,7 @@ function makeSseContractHarness(): RealtimeContractHarness {
     return {
         create(options) {
             const { sources, factory } = makeFactory();
-            const connection = new EventSourceConnection({ ...options, eventSourceFactory: factory });
+            const connection = new EventSourceConnection({ ...options, jitter: 0, eventSourceFactory: factory });
 
             return {
                 connection,
@@ -285,6 +324,182 @@ describe('EventSourceConnection', () => {
         });
     });
 
+    describe('server frames named after lifecycle events', () => {
+        it('delivers an error frame to subscribers without reconnecting', () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
+            const received: string[] = [];
+
+            conn.on('error', msg => received.push(msg.data));
+            conn.connect();
+            sources.at(0)?.emitOpen();
+            sources.at(0)?.emitMessage('error', 'quota exceeded');
+
+            expect(received).toEqual(['quota exceeded']);
+            expect(conn.state).toBe('open');
+            expect(sources.at(0)?.closeCalls).toBe(0);
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it('delivers an open frame to subscribers without touching the state', () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
+            const received: string[] = [];
+
+            conn.on('open', msg => received.push(msg.data));
+            conn.connect();
+            sources.at(0)?.emitMessage('open', 'early');
+
+            expect(received).toEqual(['early']);
+            expect(conn.state).toBe('connecting');
+        });
+
+        it('keeps a transport failure away from error subscribers', () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', jitter: 0, eventSourceFactory: factory });
+            const received: string[] = [];
+
+            conn.on('error', msg => received.push(msg.data));
+            conn.connect();
+            conn.on('later', () => undefined);
+            sources.at(0)?.emitError();
+
+            expect(received).toEqual([]);
+            expect(sources.at(0)?.closeCalls).toBe(1);
+            expect(conn.state).toBe('connecting');
+        });
+
+        it('keeps the connection opening away from open subscribers', () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
+            const received: string[] = [];
+
+            conn.on('open', msg => received.push(msg.data));
+            conn.connect();
+            sources.at(0)?.emitOpen();
+
+            expect(received).toEqual([]);
+            expect(conn.state).toBe('open');
+        });
+    });
+
+    describe('subscription churn', () => {
+        it('detaches an event name from the live source once its last handler leaves', () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
+
+            conn.connect();
+
+            for (let round = 0; round < 50; round++) {
+                const first = conn.on(`event-${round}`, () => undefined);
+                const second = conn.on(`event-${round}`, () => undefined);
+
+                first();
+
+                expect(sources.at(0)?.listenerCount(`event-${round}`)).toBe(1);
+
+                second();
+                second();
+            }
+
+            const received: string[] = [];
+
+            conn.on('event-0', msg => received.push(msg.data));
+            sources.at(0)?.emitMessage('event-0', 'again');
+
+            expect(sources.at(0)?.listenerCount('event-0')).toBe(1);
+            expect(sources.at(0)?.listenerCount('event-1')).toBe(0);
+            expect(received).toEqual(['again']);
+        });
+
+        it('attaches only live event names to a reconnected source', async () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({
+                url: 'http://sse',
+                backoff: fixedBackoff(100),
+                jitter: 0,
+                eventSourceFactory: factory,
+            });
+
+            const unsubscribers = Array.from({ length: 20 }, (_, index) => conn.on(`gone-${index}`, () => undefined));
+
+            conn.on('kept', () => undefined);
+            conn.connect();
+
+            for (const unsubscribe of unsubscribers) {
+                unsubscribe();
+            }
+
+            sources.at(0)?.emitError();
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(sources.at(1)?.listenerCount('kept')).toBe(1);
+            expect(sources.at(1)?.listenerCount('gone-0')).toBe(0);
+            expect(sources.at(1)?.listenerCount('gone-19')).toBe(0);
+        });
+
+        it('leaves a resubscribed name alone when a stale unsubscribe runs', () => {
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
+            const received: string[] = [];
+
+            conn.connect();
+
+            const stale = conn.on('tick', () => undefined);
+
+            stale();
+            conn.on('tick', msg => received.push(msg.data));
+            stale();
+            sources.at(0)?.emitMessage('tick', 'live');
+
+            expect(received).toEqual(['live']);
+        });
+
+        it('unsubscribes while disconnected without touching a source', () => {
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: makeFactory().factory });
+            const unsubscribe = conn.on('tick', () => undefined);
+
+            expect(() => unsubscribe()).not.toThrow();
+        });
+    });
+
+    describe('reconnect jitter', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it.each([
+            [undefined, 0.5, 750],
+            [undefined, 0, 1_000],
+            [1, 0.25, 750],
+            [0, 0.99, 1_000],
+        ])('with jitter %s and a random draw of %s waits %s ms', async (jitter, draw, expected) => {
+            vi.spyOn(Math, 'random').mockReturnValue(draw);
+
+            const { sources, factory } = makeFactory();
+            const conn = new EventSourceConnection({
+                url: 'http://sse',
+                backoff: fixedBackoff(1_000),
+                ...(jitter === undefined ? {} : { jitter }),
+                eventSourceFactory: factory,
+            });
+
+            conn.connect();
+            sources.at(0)?.emitError();
+            await vi.advanceTimersByTimeAsync(expected - 1);
+
+            expect(sources).toHaveLength(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+
+            expect(sources).toHaveLength(2);
+        });
+
+        it.each([-0.1, 1.1, Number.NaN])('rejects a jitter of %s', jitter => {
+            expect(() => new EventSourceConnection({ url: 'http://sse', jitter })).toThrow(RangeError);
+        });
+    });
+
     describe('source ownership', () => {
         it('closes the failed source so only the adapter reconnects', async () => {
             const { sources, factory } = makeFactory();
@@ -422,6 +637,7 @@ describe('EventSourceConnection', () => {
             const conn = new EventSourceConnection({
                 url: 'http://sse',
                 backoff: new ExponentialBackoff({ initialDelay: 100, multiplier: 2, maxDelay: 10_000 }),
+                jitter: 0,
                 eventSourceFactory: recording.factory,
                 onError: error => errors.push(error),
             });

@@ -31,6 +31,9 @@ export interface EventSourceConnectionOptions {
     /** Backoff strategy for reconnects; defaults to `new ExponentialBackoff()`. */
     readonly backoff?: ExponentialBackoff;
 
+    /** Fraction of each backoff delay, from 0 to 1, randomly taken off so clients spread their reconnects; defaults to 0.5. */
+    readonly jitter?: number;
+
     /** Overrides EventSource construction; defaults to the native constructor. */
     readonly eventSourceFactory?: EventSourceFactory;
 
@@ -41,9 +44,21 @@ export interface EventSourceConnectionOptions {
     readonly onError?: (error: unknown) => void;
 }
 
+const DEFAULT_JITTER = 0.5;
+
+/**
+ * Whether `event` carries a server-sent frame rather than a transport event;
+ * checked structurally so events from another realm or a factory-supplied
+ * EventSource still qualify.
+ */
+function isServerFrame(event: Event): event is MessageEvent {
+    return 'data' in event;
+}
+
 /**
  * SSE connection that reconnects on error with backoff, re-attaching every
- * registered listener to each new EventSource.
+ * registered listener to each new EventSource. Frames named `open` or `error`
+ * are delivered to their subscribers like any other event.
  */
 export class EventSourceConnection implements RealtimeConnection {
     /** The endpoint URL, or a factory returning it per connect. */
@@ -55,6 +70,9 @@ export class EventSourceConnection implements RealtimeConnection {
     /** The backoff strategy spacing reconnect attempts. */
     readonly #backoff: ExponentialBackoff;
 
+    /** The fraction of each backoff delay randomly taken off. */
+    readonly #jitter: number;
+
     /** The factory that constructs each EventSource. */
     readonly #factory: EventSourceFactory;
 
@@ -64,8 +82,11 @@ export class EventSourceConnection implements RealtimeConnection {
     /** The optional sink for errors the connection contains. */
     readonly #onError: ((error: unknown) => void) | undefined;
 
-    /** Registered message handlers, keyed by event name. */
+    /** Registered message handlers, keyed by event name; a name is dropped once its last handler leaves. */
     readonly #messageHandlers: Map<string, Set<RealtimeMessageHandler>> = new Map();
+
+    /** The listener attached to the active EventSource for each event name. */
+    readonly #attachedListeners: Map<string, (event: Event) => void> = new Map();
 
     /** Registered connection-state change handlers. */
     readonly #stateHandlers: Set<RealtimeStateHandler> = new Set();
@@ -85,10 +106,20 @@ export class EventSourceConnection implements RealtimeConnection {
     /** Advanced on every disconnect so a superseded reconnect attempt abandons itself. */
     #generation: number = 0;
 
+    /**
+     * @throws {RangeError} when `jitter` is not a number from 0 to 1
+     */
     constructor(options: EventSourceConnectionOptions) {
+        const jitter = options.jitter ?? DEFAULT_JITTER;
+
+        if (!(jitter >= 0 && jitter <= 1)) {
+            throw new RangeError(`jitter must be a number from 0 to 1, received ${jitter}.`);
+        }
+
         this.#url = options.url;
         this.#withCredentials = options.withCredentials ?? false;
         this.#backoff = options.backoff ?? new ExponentialBackoff();
+        this.#jitter = jitter;
         this.#factory = options.eventSourceFactory ?? ((url, init) => new EventSource(url, init));
         this.#beforeReconnect = options.beforeReconnect;
         this.#onError = options.onError;
@@ -152,6 +183,11 @@ export class EventSourceConnection implements RealtimeConnection {
 
         return () => {
             handlers.delete(handler);
+
+            if (handlers.size === 0 && this.#messageHandlers.get(event) === handlers) {
+                this.#messageHandlers.delete(event);
+                this.#detachEventListener(event);
+            }
         };
     }
 
@@ -177,8 +213,10 @@ export class EventSourceConnection implements RealtimeConnection {
         const url = typeof this.#url === 'function' ? this.#url() : this.#url;
         const source = this.#factory(url, { withCredentials: this.#withCredentials });
 
-        source.onopen = () => {
-            if (this.#source === source) {
+        // A server frame named `open` or `error` also reaches these handlers;
+        // only the transport's own data-less events drive the lifecycle.
+        source.onopen = (event: Event) => {
+            if (this.#source === source && !isServerFrame(event)) {
                 this.#attempt = 0;
                 this.#setState('open');
             }
@@ -186,8 +224,8 @@ export class EventSourceConnection implements RealtimeConnection {
 
         // Native EventSource retries on its own; closing it hands reconnects to
         // the backoff and the beforeReconnect hook.
-        source.onerror = () => {
-            if (this.#source === source) {
+        source.onerror = (event: Event) => {
+            if (this.#source === source && !isServerFrame(event)) {
                 this.#closeSource();
                 this.#scheduleReconnect();
             }
@@ -206,12 +244,12 @@ export class EventSourceConnection implements RealtimeConnection {
      * still the active EventSource.
      */
     #attachEventListener(source: EventSource, event: string, handlers: Set<RealtimeMessageHandler>): void {
-        source.addEventListener(event, (messageEvent: MessageEvent) => {
-            if (this.#source !== source) {
+        const listener = (frame: Event): void => {
+            if (this.#source !== source || !isServerFrame(frame)) {
                 return;
             }
 
-            const message = { event, data: String(messageEvent.data) };
+            const message = { event, data: String(frame.data) };
 
             for (const handler of handlers) {
                 try {
@@ -220,7 +258,22 @@ export class EventSourceConnection implements RealtimeConnection {
                     this.#report(error);
                 }
             }
-        });
+        };
+
+        source.addEventListener(event, listener);
+        this.#attachedListeners.set(event, listener);
+    }
+
+    /**
+     * Remove an event name's listener from the active EventSource.
+     */
+    #detachEventListener(event: string): void {
+        const listener = this.#attachedListeners.get(event);
+
+        if (listener !== undefined) {
+            this.#source?.removeEventListener(event, listener);
+            this.#attachedListeners.delete(event);
+        }
     }
 
     /**
@@ -229,7 +282,7 @@ export class EventSourceConnection implements RealtimeConnection {
      * subscriber that disconnects in response cancels it.
      */
     #scheduleReconnect(): void {
-        const delay = this.#backoff.delayFor(this.#attempt++);
+        const delay = this.#backoff.delayFor(this.#attempt++) * (1 - this.#jitter * Math.random());
 
         this.#reconnectTimer = setTimeout(() => {
             this.#reconnectTimer = undefined;
@@ -274,6 +327,7 @@ export class EventSourceConnection implements RealtimeConnection {
         const source = this.#source;
 
         this.#source = null;
+        this.#attachedListeners.clear();
         source?.close();
     }
 
