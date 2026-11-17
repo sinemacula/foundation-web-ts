@@ -180,7 +180,8 @@ export interface ModuleMessageSource {
 
 /**
  * Build a {@link ModuleMessageSource} that runs module loaders in parallel, at
- * most once per locale, with the same results as `collectModuleMessages`.
+ * most once per locale, with the same results as `collectModuleMessages`; a
+ * rejected load is forgotten so the next request retries it.
  */
 export function createModuleMessageSource(modules: readonly ModuleDefinition[]): ModuleMessageSource {
     const cache = new Map<string, Promise<Record<string, LocaleMessages>>>();
@@ -196,6 +197,10 @@ export function createModuleMessageSource(modules: readonly ModuleDefinition[]):
             const loading = loadModuleMessages(modules, locale);
 
             cache.set(locale, loading);
+
+            loading.catch(() => {
+                cache.delete(locale);
+            });
 
             return loading;
         },

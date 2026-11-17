@@ -647,4 +647,33 @@ describe('createModuleMessageSource', () => {
         expect(loader).toHaveBeenNthCalledWith(1, 'en-GB');
         expect(loader).toHaveBeenNthCalledWith(2, 'fr-FR');
     });
+
+    it('retries a locale whose load rejected', async () => {
+        const failure = new Error('chunk failed');
+        const loader = vi
+            .fn<(locale: string) => Promise<LocaleMessages | null>>()
+            .mockRejectedValueOnce(failure)
+            .mockResolvedValue({ key: 'value' });
+        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
+
+        await expect(source.messages('en-GB')).rejects.toBe(failure);
+        expect(await source.messages('en-GB')).toStrictEqual({ alpha: { key: 'value' } });
+        expect(await source.messages('en-GB')).toStrictEqual({ alpha: { key: 'value' } });
+        expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('shares a pending load that later rejects with every caller that joined it', async () => {
+        const { promise, reject } = deferred<LocaleMessages | null>();
+        const loader = vi.fn(() => promise);
+        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
+
+        const first = source.messages('en-GB');
+        const second = source.messages('en-GB');
+
+        reject(new Error('offline'));
+
+        await expect(first).rejects.toThrow('offline');
+        expect(second).toBe(first);
+        expect(loader).toHaveBeenCalledOnce();
+    });
 });
