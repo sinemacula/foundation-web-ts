@@ -11,15 +11,7 @@ import { createUsersClient, mapUserRow } from '@/modules/users/services/users-ap
 import { FakeHttpClient } from '@/test-support/fake-http-client';
 
 /**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write snake_case API field names as
- * plain string literals inside array elements rather than as object-literal
- * keys - keeping non-camelCase field names out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
+ * Build a record from pairs so snake_case wire keys avoid object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
@@ -45,48 +37,10 @@ describe('mapUserRow', () => {
         });
     });
 
-    it('throws when id is not a string', () => {
-        const row = wire([
-            ['id', 42],
-            ['full_name', 'Alice Smith'],
-            ['email', 'alice@example.com'],
-            ['created_at', '2026-01-01 00:00:00'],
-        ]);
-
-        expect(() => mapUserRow(row)).toThrow('The user row did not match the expected shape.');
-    });
-
-    it('throws when full_name is not a string', () => {
-        const row = wire([
-            ['id', 'u1'],
-            ['full_name', 42],
-            ['email', 'alice@example.com'],
-            ['created_at', '2026-01-01 00:00:00'],
-        ]);
-
-        expect(() => mapUserRow(row)).toThrow('The user row did not match the expected shape.');
-    });
-
-    it('throws when email is not a string', () => {
-        const row = wire([
-            ['id', 'u1'],
-            ['full_name', 'Alice Smith'],
-            ['email', 42],
-            ['created_at', '2026-01-01 00:00:00'],
-        ]);
-
-        expect(() => mapUserRow(row)).toThrow('The user row did not match the expected shape.');
-    });
-
-    it('throws when created_at is not a string', () => {
-        const row = wire([
-            ['id', 'u1'],
-            ['full_name', 'Alice Smith'],
-            ['email', 'alice@example.com'],
-            ['created_at', 42],
-        ]);
-
-        expect(() => mapUserRow(row)).toThrow('The user row did not match the expected shape.');
+    it.each(['id', 'full_name', 'email', 'created_at'])('throws when %s is not a string', field => {
+        expect(() => mapUserRow({ ...validRow(), [field]: 42 })).toThrow(
+            'The user row did not match the expected shape.',
+        );
     });
 });
 

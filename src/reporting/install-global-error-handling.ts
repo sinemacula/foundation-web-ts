@@ -1,9 +1,5 @@
 /**
- * Global error handling installer.
- *
- * Wires the Vue error handler and browser window error/rejection listeners to
- * the provided ErrorReporter so that all unhandled exceptions are captured in
- * one place regardless of their origin.
+ * Global error handling that routes Vue and window errors to one reporter.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -27,24 +23,16 @@ export interface GlobalErrorHandlingOptions {
     /** Optional breadcrumb trail; when present its snapshot is attached to every report. */
     readonly trail?: BreadcrumbTrail;
 
-    /** The window to attach native error listeners to (default globalThis.window). */
+    /** The window to attach native error listeners to; defaults to the global window. */
     readonly targetWindow?: Window;
 }
 
 /**
- * Install Vue and browser-global error listeners that forward to `reporter`.
+ * Forward Vue component errors, window errors and unhandled rejections to
+ * `reporter`.
  *
- * - `app.config.errorHandler` catches errors thrown inside Vue components.
- * - A `window 'error'` listener catches synchronous script errors.
- * - A `window 'unhandledrejection'` listener catches unhandled Promise
- *   rejections.
- *
- * The returned teardown restores the Vue error handler that was in place before
- * installation and removes both window listeners; calling it more than once is
- * a no-op.
- *
- * @param options - the app, reporter, optional trail and optional window target
- * @returns a teardown that undoes the installation
+ * @returns a teardown that restores the previous Vue error handler and removes
+ * the window listeners; repeat calls are no-ops
  */
 export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions): () => void {
     const { app, reporter, trail } = options;
@@ -61,7 +49,9 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
         reporter.captureError(err, context);
     };
 
-    /** Forward a synchronous window error to the reporter with breadcrumbs. */
+    /**
+     * Forward a synchronous window error to the reporter with breadcrumbs.
+     */
     const onError = (event: ErrorEvent): void => {
         const context: Record<string, unknown> = { source: 'window' };
 
@@ -97,8 +87,7 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
 
         installed = false;
 
-        // Conditional restore: exactOptionalPropertyTypes forbids assigning
-        // undefined back.
+        // The handler is an optional property, so an absent one is deleted.
         if (previousErrorHandler === undefined) {
             delete app.config.errorHandler;
         } else {

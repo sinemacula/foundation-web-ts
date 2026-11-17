@@ -1,11 +1,5 @@
 /**
- * End-to-end specs for the colour-scheme switcher.
- *
- * Exercises the full subsystem in a real browser: the three-way switcher, the
- * `[data-theme]` stamping and `theme-color` meta sync, persistence to local
- * storage, the pre-paint no-flash boot script, and OS-driven changes while
- * deferring to the system scheme. Network calls are stubbed at the browser
- * boundary (no real backend needed).
+ * End-to-end specs for the colour-scheme switcher and pre-paint boot script.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -126,7 +120,6 @@ test.describe('colour scheme switcher', () => {
         await option(page, 'Dark').click();
         await expect(root(page)).toHaveAttribute('data-theme', 'dark');
 
-        // An OS flip must not override an explicit preference.
         await page.emulateMedia({ colorScheme: 'dark' });
         await page.emulateMedia({ colorScheme: 'light' });
 
@@ -156,8 +149,6 @@ test.describe('colour scheme switcher', () => {
 
         await expect(dashboardPage.heading).toBeVisible();
 
-        // System preference: no forced attribute, but the resolved surface, the
-        // theme-color meta and the highlighted option all follow the OS.
         await expect(root(page)).not.toHaveAttribute('data-theme');
         await expect(themeColor(page)).toHaveAttribute('content', DARK_THEME_COLOR);
         await expect(option(page, 'Dark')).toHaveClass(RESOLVED);
@@ -193,10 +184,8 @@ test.describe('colour scheme boot', () => {
     test('stamps a stored preference before the app boots', async ({ page }) => {
         await page.addInitScript(() => window.localStorage.setItem('theme', 'dark'));
 
-        // The synchronous head boot script runs during parse; the colour-scheme
-        // service only stamps later, after the async boot resolves. Reading the
-        // attribute at domcontentloaded therefore proves the pre-paint script,
-        // not the service, applied the stored preference (no light flash).
+        // The service stamps only after the async boot, so at domcontentloaded
+        // the attribute can only come from the pre-paint head script.
         await page.goto('/login', { waitUntil: 'domcontentloaded' });
 
         expect(await root(page).getAttribute('data-theme')).toBe('dark');

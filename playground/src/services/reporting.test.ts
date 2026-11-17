@@ -9,9 +9,7 @@ import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-repor
 import { afterEach, describe, expect, it } from 'vitest';
 import { initialiseReporting, reporting, resetReporting } from '@/services/reporting';
 
-/**
- * Minimal no-op stub that satisfies the {@link ErrorReporter} interface.
- */
+/** No-op error reporter. */
 const stubReporter: ErrorReporter = {
     captureError: () => undefined,
     captureMessage: () => undefined,

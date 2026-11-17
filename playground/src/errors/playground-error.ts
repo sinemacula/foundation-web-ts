@@ -1,10 +1,5 @@
 /**
- * Shared playground failure.
- *
- * The playground is the reference application that exercises the kernel. Its
- * own modules throw this rather than the base `Error`, so a failure raised by
- * application code stays attributable and distinct from a kernel or transport
- * error.
+ * Application error type, distinct from kernel and transport errors.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

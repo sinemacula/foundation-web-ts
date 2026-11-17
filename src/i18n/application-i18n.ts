@@ -1,11 +1,5 @@
 /**
- * Application internationalisation wiring.
- *
- * Wraps vue-i18n behind three operations: building the instance, activating a
- * locale, and switching to a new locale at runtime. Activation lazily loads the
- * shared and per-module translations for that locale, installs them, and
- * synchronises the document `lang`/`dir` attributes. Shared translations are
- * injected by the host application; this package owns the mechanics only.
+ * vue-i18n wiring: instance creation, locale activation and runtime switching.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -24,7 +18,6 @@ import type { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 
 /**
  * Datetime and number formats installed on the i18n instance, keyed by locale.
- * Optional: an application with no formatting needs may omit both.
  */
 export interface LocaleFormats {
     /** Datetime formats installed per locale. */
@@ -35,13 +28,10 @@ export interface LocaleFormats {
 }
 
 /**
- * Build the application's vue-i18n instance.
- *
- * @param defaultLocale - the locale used until activation and as fallback
- * @param formats - optional datetime/number formats installed per locale
- * @returns the i18n instance, ready to install on the app
+ * Build the application's vue-i18n instance, using `defaultLocale` until
+ * activation and as the fallback.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types -- the vue-i18n legacy:false instance type is not nameable; it is inferred and re-exported as ApplicationI18n
+// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types -- vue-i18n's composition instance type is unnameable; see ApplicationI18n
 export function createApplicationI18n(defaultLocale: string, formats?: LocaleFormats) {
     return createI18n({
         fallbackLocale: defaultLocale,
@@ -83,21 +73,16 @@ export interface ActivateLocaleOptions {
     /** The document whose `lang`/`dir` attributes are set. Defaults to the global document. */
     readonly targetDocument?: Document;
 
-    /** Replaces the internal module-message collection for both the active and fallback locale loads when supplied. */
+    /** Replaces the default module-message loading for both the active and fallback locale. */
     readonly messageSource?: ModuleMessageSource;
 
-    /** Behaviour when a module name equals a shared top-level message key. Default 'module-wins' keeps the merge where module messages shadow the shared key; 'error' throws naming the module and the locale. */
+    /** When a module name equals a shared top-level key: 'module-wins' (default) shadows the shared key, 'error' throws an `I18nError`. */
     readonly onNamespaceCollision?: 'module-wins' | 'error';
 }
 
 /**
- * Load and activate a locale.
- *
- * When `fallbackLocale` is provided and differs from `locale`, its messages are
- * also loaded and installed so that vue-i18n's fallback chain resolves to real
- * translations rather than raw keys.
- *
- * @param options - the i18n instance, translation sources and target locale
+ * Install the messages for `locale`, and for `fallbackLocale` when it differs,
+ * then activate `locale` and set the document `lang`/`dir`.
  */
 export async function activateLocale(options: ActivateLocaleOptions): Promise<void> {
     await installLocaleMessages(options, options.locale);
@@ -162,24 +147,16 @@ export interface LocaleSwitcher {
     readonly current: ComputedRef<string>;
 
     /**
-     * Resolve, persist and activate a new locale.
+     * Match `locale` against the enabled locales, then persist and activate it.
      *
-     * @param locale - the requested locale (matched against the enabled set)
      * @throws {@link I18nError} when `locale` does not match any enabled locale
      */
     switchTo(locale: string): Promise<void>;
 }
 
 /**
- * Build a runtime locale switcher.
- *
- * Reuses {@link activateLocale} for the mechanics of loading and installing
- * translations, so switching a locale after boot follows exactly the same path
- * as activating one at boot.
- *
- * @param options - the i18n instance, module registry, locale service and
- * supported-locale metadata
- * @returns the locale switcher
+ * Build a runtime locale switcher that activates through
+ * {@link activateLocale}, the same path as boot.
  */
 export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher {
     const current = computed(() => options.i18n.global.locale.value);
@@ -213,13 +190,9 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
 }
 
 /**
- * Load one locale's shared and module translations and install the merged
- * result on the i18n instance.
+ * Load one locale's shared and module translations and install the merge.
  *
- * @param options - the activation options
- * @param locale - the locale whose messages are loaded
- * @throws {@link I18nError} when collisions are set to error and a module name
- * equals a shared top-level message key
+ * @throws {@link I18nError} when collisions are set to error and one occurs
  */
 async function installLocaleMessages(options: ActivateLocaleOptions, locale: string): Promise<void> {
     const sharedLoader = options.sharedLoaders?.[locale];

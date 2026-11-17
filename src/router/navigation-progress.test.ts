@@ -16,8 +16,7 @@ import { createNavigationProgress, type NavigationProgress } from './navigation-
 const EmptyComponent = defineComponent({ render: () => null });
 
 /**
- * A lazy route component whose resolution is controlled externally, so a test
- * can assert the in-flight state before letting navigation complete.
+ * A lazy route component whose load the test settles on demand.
  */
 interface DeferredComponent {
     /** The lazy loader the route registers. */
@@ -87,8 +86,7 @@ describe('createNavigationProgress', () => {
         const progress = createNavigationProgress(router);
 
         await router.push('/broken').catch(() => {
-            // The router's own promise rejects alongside the onError handler
-            // under test.
+            // The push rejects too; only the onError handler is under test.
         });
 
         expect(progress.isNavigating.value).toBe(false);
@@ -96,7 +94,7 @@ describe('createNavigationProgress', () => {
         progress.stop();
     });
 
-    it('stop() resets isNavigating to false immediately, even mid-navigation', async () => {
+    it('stop() resets isNavigating mid-navigation', async () => {
         const deferred = deferredComponent();
         const router = buildRouter(deferred.load);
         const progress = createNavigationProgress(router);
@@ -115,7 +113,7 @@ describe('createNavigationProgress', () => {
         expect(progress.isNavigating.value).toBe(false);
     });
 
-    it('stop() removes the router hooks so a later navigation no longer toggles isNavigating', async () => {
+    it('stop() stops tracking later navigations', async () => {
         const deferred = deferredComponent();
         const router = buildRouter(deferred.load);
         const progress = createNavigationProgress(router);
@@ -133,7 +131,7 @@ describe('createNavigationProgress', () => {
         expect(progress.isNavigating.value).toBe(false);
     });
 
-    it('registers stop() via onScopeDispose so disposing the enclosing scope resets isNavigating', async () => {
+    it('resets isNavigating when the enclosing effect scope is disposed', async () => {
         const deferred = deferredComponent();
         const router = buildRouter(deferred.load);
         const scope = effectScope();

@@ -45,7 +45,7 @@ interface Deferred<T> {
     readonly reject: (reason?: unknown) => void;
 }
 
-/** Creates a deferred promise so tests can control resolution timing. */
+/** Create a promise the test settles on demand. */
 function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
     let reject!: (reason?: unknown) => void;

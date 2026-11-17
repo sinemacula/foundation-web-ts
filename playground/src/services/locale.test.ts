@@ -11,9 +11,7 @@ import { computed } from 'vue';
 
 import { initialiseLocaleSwitcher, localeSwitcher, resetLocaleSwitcher } from '@/services/locale';
 
-/**
- * Minimal no-op stub that satisfies the {@link LocaleSwitcher} interface.
- */
+/** No-op locale switcher. */
 const stubSwitcher: LocaleSwitcher = {
     current: computed(() => 'en-US'),
     switchTo: async () => undefined,

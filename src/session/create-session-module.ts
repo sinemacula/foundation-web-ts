@@ -1,12 +1,5 @@
 /**
- * Session module factory.
- *
- * Builds the opt-in session module: a plain registry entry that installs the
- * session context, contributes the bearer-token interceptor and the single
- * unauthorized (token-refresh) handler at the register phase, starts hydrating
- * the persisted session at the stores phase, and wires the session lifecycle at
- * the boot phase. Login UI, locale copy and the user field mapping stay
- * app-side.
+ * The opt-in session module; login UI, copy and user mapping stay app-side.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -41,8 +34,8 @@ export type { SessionStorageKeys } from '@sinemacula/foundation/session/session-
 /**
  * Route identity over vue-router locations. Defaults: login
  * `{ name: 'auth.login' }`, loginPath '/login', home '/', forbidden
- * '/forbidden' - the forbidden default is a path string by design: the
- * application's fallback or errors module owns the page.
+ * '/forbidden' (a path, as the application's fallback or errors module owns
+ * that page).
  */
 export type SessionRoutes = BaseSessionRoutes<RouteLocationRaw>;
 
@@ -52,7 +45,7 @@ export type SessionRoutes = BaseSessionRoutes<RouteLocationRaw>;
 export type SessionApiFactory<U extends SessionUser, C> = (http: HttpClient) => SessionApi<U, C>;
 
 /**
- * Per-channel identity mappings fanned out to the reporting, analytics and
+ * Per-channel identity mappings applied to the reporting, analytics and
  * feature-flag holders whenever the session user changes.
  */
 export interface SessionIdentityMapping<U extends SessionUser> {
@@ -76,11 +69,10 @@ export interface SessionIdentityMapping<U extends SessionUser> {
 }
 
 /**
- * The settings of {@link createSessionModule} other than the gateway; every
- * default mirrors the organisation's reference application.
+ * The settings of {@link createSessionModule} other than the gateway.
  */
 export interface SessionModuleSettings<U extends SessionUser> {
-    /** Registry name (the module has no routes and no locales). Default 'session'. */
+    /** Registry name. Default 'session'. */
     readonly name?: string;
 
     /** The pinia store id the session store registers under. Default 'auth'. */
@@ -92,10 +84,10 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Overrides for the route identity. */
     readonly routes?: Partial<SessionRoutes>;
 
-    /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given. Cross-tab sync observes that localStorage key, so a persistence elsewhere disables `crossTabSync` and calls the store's `hydrate()` on its own change notifications. */
+    /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given. Cross-tab sync only observes that localStorage key, so with another persistence disable `crossTabSync` and call the store's `hydrate()` on its own change notifications. */
     readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
 
-    /** How long before expiry the session counts as expiring, refreshed proactively and before a realtime reconnect, in milliseconds. Default 60 seconds. */
+    /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed proactively and before a realtime reconnect. Default 60 seconds. */
     readonly refreshSkewMs?: number;
 
     /** The operating-system label reported in the device fingerprint. Default 'WEB'. */
@@ -110,7 +102,7 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Refresh the session ahead of its expiry. Default true. */
     readonly proactiveRefresh?: boolean;
 
-    /** Redirect to the login route when the session transitions from authenticated to unauthenticated, carrying the sanitised current path as the redirect query parameter. Default true. */
+    /** Redirect to the login route, carrying the sanitised current path, when an authenticated session is lost. Default true. */
     readonly sessionLossRedirect?: boolean;
 
     /** Connect the application's realtime connection while a session is held and disconnect it when the session ends. Default true; inert without a realtime connection. */
@@ -121,9 +113,8 @@ export interface SessionModuleSettings<U extends SessionUser> {
 }
 
 /**
- * The gateway option: optional over the default user shape, where it defaults
- * to the foundation gateway, and required for a custom user shape, which only
- * the application's gateway can map.
+ * The gateway option: optional over the default user shape, defaulting to the
+ * foundation gateway, and required for a custom user shape.
  */
 export type SessionGatewayOption<U extends SessionUser, C> = SessionUser extends U
     ? {
@@ -158,17 +149,11 @@ const DEFAULT_ROUTES: SessionRoutes = {
     forbidden: '/forbidden',
 };
 
-const DEFAULT_MODULE_NAME = 'session';
-const DEFAULT_STORE_ID = 'auth';
-const DEFAULT_DEVICE_OS = 'WEB';
 const DEFAULT_REFRESH_SKEW_MS = 60_000;
 
 /**
  * Create the session module over the application's own gateway, inferring the
  * user and credential shapes from it.
- *
- * @param options - the gateway and overrides for the reference defaults
- * @returns the module definition for the application registry
  */
 export function createSessionModule<U extends SessionUser, C>(
     options: SessionModuleSettings<U> & {
@@ -180,9 +165,6 @@ export function createSessionModule<U extends SessionUser, C>(
 /**
  * Create the session module. Over the default user shape the gateway defaults
  * to the foundation one; a custom user shape requires the application's own.
- *
- * @param options - overrides for the reference-application defaults
- * @returns the module definition for the application registry
  */
 export function createSessionModule<U extends SessionUser = SessionUser, C = PasswordCredentials>(
     ...options: SessionUser extends U ? [options?: SessionModuleOptions<U, C>] : [options: SessionModuleOptions<U, C>]
@@ -193,7 +175,7 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
     const routes: SessionRoutes = { ...DEFAULT_ROUTES, ...options.routes };
 
     return {
-        name: options.name ?? DEFAULT_MODULE_NAME,
+        name: options.name ?? 'session',
         routes: [],
         register: context => {
             registerSession(context, options, storageKeys, routes);
@@ -220,13 +202,8 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
 
 /**
  * Install the session context, contribute the bearer-token interceptor, and
- * claim the single unauthorized-handler slot. Every request, and every refresh,
- * first awaits the session's hydration, which itself sends no request.
- *
- * @param context - the module register context
- * @param options - the module options
- * @param storageKeys - the resolved storage keys
- * @param routes - the resolved route identity
+ * claim the unauthorized handler. Every request and refresh first awaits the
+ * session's hydration, which itself sends no request.
  */
 function registerSession(
     context: ModuleRegisterContext,
@@ -237,7 +214,7 @@ function registerSession(
     const { pinia, platform, storage } = context;
     const apiFactory = options.api ?? (http => createDefaultSessionApi<unknown>(http, { now: platform.clock }));
     const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
-    const deviceOs = options.deviceOs ?? DEFAULT_DEVICE_OS;
+    const deviceOs = options.deviceOs ?? 'WEB';
 
     const ready = createReadiness(pinia);
     const coordinator = createRefreshAuthority(pinia, ready);
@@ -247,7 +224,7 @@ function registerSession(
     installSessionContext({
         persistence: options.persistence?.(platform) ?? createDefaultPersistence(platform, storageKeys.session),
         routes,
-        storeId: options.storeId ?? DEFAULT_STORE_ID,
+        storeId: options.storeId ?? 'auth',
         coordinator,
         ready,
         clock: platform.clock,
@@ -275,10 +252,7 @@ function registerSession(
 
 /**
  * Build the session readiness: hydrate the persisted session once, on first
- * call, reporting a failure and leaving the state as it stands.
- *
- * @param pinia - the application pinia
- * @returns resolves the shared hydration, settled either way
+ * call, reporting a failure instead of rejecting.
  */
 function createReadiness(pinia: Pinia): () => Promise<void> {
     let hydration: Promise<void> | null = null;
@@ -296,12 +270,8 @@ function createReadiness(pinia: Pinia): () => Promise<void> {
 
 /**
  * Build the single refresh authority. Each refresh first awaits readiness, so
- * an empty store is never refreshed before the persisted session is in, and a
- * failed refresh is reported once, however many callers share it.
- *
- * @param pinia - the application pinia
- * @param ready - the session readiness
- * @returns the refresh coordinator
+ * an empty store is never refreshed, and a failure is reported once however
+ * many callers share it.
  */
 function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): SessionRefreshCoordinator {
     return new SessionRefreshCoordinator(async () => {
@@ -321,9 +291,6 @@ function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): Sessi
  * Persist the session snapshot in the target window's localStorage, failing
  * loudly, under a Web Locks lock every tab shares.
  *
- * @param platform - the resolved platform seams
- * @param key - the key the snapshot persists under
- * @returns the session persistence
  * @throws {@link SessionError} when the Web Locks API is unavailable
  */
 function createDefaultPersistence(platform: ResolvedPlatform, key: string): SessionPersistence {
@@ -343,16 +310,8 @@ function createDefaultPersistence(platform: ResolvedPlatform, key: string): Sess
 }
 
 /**
- * Return the stable device fingerprint for this browser.
- *
- * On first call a uuid is generated and persisted; subsequent calls reuse the
- * stored value so the same device always presents the same fingerprint.
- *
- * @param storage - the key-value store the uuid persists in
- * @param key - the storage key the uuid persists under
- * @param generateUuid - the uuid factory
- * @param os - the operating-system label to report
- * @returns the device fingerprint
+ * Return this browser's stable device fingerprint, generating and persisting
+ * its uuid on first call.
  */
 function deviceFingerprint(
     storage: KeyValueStorage,

@@ -10,15 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UpdateMonitor } from './update-monitor';
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping non-camelCase environment keys out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a record from pairs, keeping non-camelCase wire keys out of object
+ * literal key positions.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
@@ -85,44 +78,21 @@ describe('UpdateMonitor', () => {
         expect(handler).toHaveBeenCalledTimes(1);
     });
 
-    it('ignores non-ok responses', async () => {
-        const fetchFn = makeFetch(() => Promise.resolve(new Response('{}', { status: 404 })));
-        const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
-        const handler = vi.fn();
-
-        monitor.onUpdate(handler);
-        await monitor.checkNow();
-
-        expect(handler).not.toHaveBeenCalled();
-    });
-
-    it('ignores transport failures', async () => {
-        const fetchFn = makeFetch(() => Promise.reject(new Error('offline')));
-        const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
-        const handler = vi.fn();
-
-        monitor.onUpdate(handler);
-        await monitor.checkNow();
-
-        expect(handler).not.toHaveBeenCalled();
-    });
-
-    it('ignores documents without a usable version', async () => {
-        const fetchFn = makeFetch(
+    it.each<[string, () => Promise<Response>]>([
+        ['non-ok responses', () => Promise.resolve(new Response('{}', { status: 404 }))],
+        ['transport failures', () => Promise.reject(new Error('offline'))],
+        [
+            'documents without a usable version',
             async () =>
                 new Response('{"other":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
-        );
-        const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
-        const handler = vi.fn();
-
-        monitor.onUpdate(handler);
-        await monitor.checkNow();
-
-        expect(handler).not.toHaveBeenCalled();
-    });
-
-    it('ignores empty version strings', async () => {
-        const fetchFn = makeFetch(async () => versionResponse(''));
+        ],
+        ['empty version strings', async () => versionResponse('')],
+        [
+            'documents that are not records',
+            async () => new Response('[1,2]', { status: 200, headers: { 'content-type': 'application/json' } }),
+        ],
+    ])('ignores %s', async (_label, impl) => {
+        const fetchFn = makeFetch(impl);
         const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
         const handler = vi.fn();
 
@@ -215,19 +185,6 @@ describe('UpdateMonitor', () => {
         listeners.get('visibilitychange')?.(new Event('visibilitychange'));
 
         expect(fetchFn).not.toHaveBeenCalled();
-    });
-
-    it('ignores documents that are not records', async () => {
-        const fetchFn = makeFetch(
-            async () => new Response('[1,2]', { status: 200, headers: { 'content-type': 'application/json' } }),
-        );
-        const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
-        const handler = vi.fn();
-
-        monitor.onUpdate(handler);
-        await monitor.checkNow();
-
-        expect(handler).not.toHaveBeenCalled();
     });
 
     it('stops delivering to unsubscribed handlers', async () => {

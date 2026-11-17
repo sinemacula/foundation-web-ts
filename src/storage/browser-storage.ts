@@ -1,9 +1,5 @@
 /**
- * Key-value storage adapter over the Web Storage API.
- *
- * Web Storage can throw (private browsing, quota, disabled storage); every
- * operation here is best-effort so a storage failure never takes the
- * application down.
+ * Best-effort Web Storage adapter; storage failures never reach the caller.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

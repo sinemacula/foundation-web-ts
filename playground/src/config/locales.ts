@@ -34,9 +34,6 @@ export interface LocalesConfig {
 
 /**
  * Resolve the localisation configuration from the environment.
- *
- * @param env - the typed environment reader
- * @returns the resolved localisation configuration
  */
 export function localesConfig(env: Environment): LocalesConfig {
     return {

@@ -1,9 +1,6 @@
 <!--
-    Forbidden (403) screen.
-
-    Rendered when an authenticated visitor is redirected here by the
-    authorize() middleware for lacking a required permission. Deliberately
-    without DefaultLayout or GuestLayout chrome, matching not-found-view.
+    Forbidden (403) screen the authorize() middleware redirects to; rendered
+    without layout chrome, like not-found-view.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

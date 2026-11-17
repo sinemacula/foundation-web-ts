@@ -22,11 +22,7 @@ interface FakeWindow {
 }
 
 /**
- * Build a fake `Window` whose activity listeners can be triggered and inspected
- * directly.
- *
- * @returns the fake window plus test helpers to emit events and inspect
- * listeners
+ * Build a fake `Window` whose listeners can be triggered and inspected.
  */
 function fakeWindow(): FakeWindow {
     const listeners = new Map<string, Set<EventListener>>();
@@ -78,7 +74,7 @@ describe('IdleMonitor', () => {
         monitor.stop();
     });
 
-    it('resets the countdown when an activity event occurs', () => {
+    it.each(['pointerdown', 'keydown', 'wheel', 'touchstart'])('resets the countdown on a default %s event', type => {
         const fake = fakeWindow();
         const monitor = new IdleMonitor({ timeoutMs: 1_000, targetWindow: fake.window });
         const handler = vi.fn();
@@ -86,7 +82,7 @@ describe('IdleMonitor', () => {
         monitor.onIdle(handler);
         monitor.start();
         vi.advanceTimersByTime(600);
-        fake.emit('pointerdown');
+        fake.emit(type);
         vi.advanceTimersByTime(600);
 
         expect(handler).not.toHaveBeenCalled();

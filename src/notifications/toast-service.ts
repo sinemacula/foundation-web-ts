@@ -1,17 +1,5 @@
 /**
- * Toast notification state and lifecycle manager.
- *
- * This service owns only state (the active toast list) and lifecycle
- * (auto-dismiss timers). Rendering is entirely the application's concern - a
- * thin host component subscribes to {@link ToastService.toasts} and renders the
- * list; this service never touches the DOM.
- *
- * Auto-dismiss: when a toast is shown with a non-zero duration a `setTimeout`
- * is scheduled. Dismissing or clearing a toast cancels its pending timer so no
- * stale callbacks fire.
- *
- * Toast ids are derived from an internal incrementing sequence (`toast-1`,
- * `toast-2`, …) to keep them deterministic in tests.
+ * Toast notification state and auto-dismiss lifecycle.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -26,10 +14,7 @@ import type { ShowToastOptions, Toaster } from '@sinemacula/foundation/notificat
 export type ToastVariant = 'success' | 'error' | 'information' | 'warning';
 
 /**
- * A single toast notification.
- *
- * By convention {@link message} is a translation key; the rendering host is
- * responsible for translating it before display.
+ * A single toast notification; the rendering host translates its message.
  */
 export interface Toast {
     /** The unique id assigned when the toast was shown. */
@@ -48,11 +33,8 @@ export interface Toast {
 const DEFAULT_DURATION = 5_000;
 
 /**
- * Product-agnostic service that manages the reactive toast queue.
- *
- * Construct one shared instance per application and inject it wherever toasts
- * need to be triggered. Mount a single host component that reads {@link toasts}
- * to render the list.
+ * Reactive toast list, rendered by one app-wide host component that reads
+ * {@link toasts}; the service never touches the DOM.
  */
 export class ToastService implements Toaster {
     /** Fallback auto-dismiss duration in milliseconds. */
@@ -76,12 +58,9 @@ export class ToastService implements Toaster {
     }
 
     /**
-     * Show a toast notification.
+     * Show a toast, auto-dismissed after its duration unless that is 0.
      *
-     * @param variant - the visual emphasis
-     * @param message - the message (by convention a translation key)
-     * @param options - optional per-show overrides
-     * @returns the id of the newly created toast
+     * @returns the new toast's id
      */
     show(variant: ToastVariant, message: string, options?: ShowToastOptions): string {
         const id = `toast-${++this.#sequence}`;
@@ -104,9 +83,7 @@ export class ToastService implements Toaster {
     /**
      * Show a success toast.
      *
-     * @param message - the message (by convention a translation key)
-     * @param options - optional per-show overrides
-     * @returns the id of the newly created toast
+     * @returns the new toast's id
      */
     success(message: string, options?: ShowToastOptions): string {
         return this.show('success', message, options);
@@ -115,9 +92,7 @@ export class ToastService implements Toaster {
     /**
      * Show an error toast.
      *
-     * @param message - the message (by convention a translation key)
-     * @param options - optional per-show overrides
-     * @returns the id of the newly created toast
+     * @returns the new toast's id
      */
     error(message: string, options?: ShowToastOptions): string {
         return this.show('error', message, options);
@@ -126,9 +101,7 @@ export class ToastService implements Toaster {
     /**
      * Show an information toast.
      *
-     * @param message - the message (by convention a translation key)
-     * @param options - optional per-show overrides
-     * @returns the id of the newly created toast
+     * @returns the new toast's id
      */
     information(message: string, options?: ShowToastOptions): string {
         return this.show('information', message, options);
@@ -137,21 +110,14 @@ export class ToastService implements Toaster {
     /**
      * Show a warning toast.
      *
-     * @param message - the message (by convention a translation key)
-     * @param options - optional per-show overrides
-     * @returns the id of the newly created toast
+     * @returns the new toast's id
      */
     warning(message: string, options?: ShowToastOptions): string {
         return this.show('warning', message, options);
     }
 
     /**
-     * Dismiss a specific toast by id.
-     *
-     * Cancels any pending auto-dismiss timer for the toast. No-op for unknown
-     * ids.
-     *
-     * @param id - the toast id to remove
+     * Dismiss a toast and cancel its auto-dismiss timer; no-op for unknown ids.
      */
     dismiss(id: string): void {
         const timer = this.#timers.get(id);

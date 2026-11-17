@@ -1,9 +1,5 @@
 /**
- * Post-login redirect target attachment.
- *
- * The vue-router half of redirect handling: attaching a sanitised return path
- * to a route location. Validation itself lives in the foundation's
- * `session/redirect` sanitiser.
+ * Attaches a sanitised post-login return path to a vue-router location.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -14,15 +10,11 @@ import type { RouteLocationRaw } from 'vue-router';
 import { REDIRECT_QUERY_KEY } from '@sinemacula/foundation/session/redirect';
 
 /**
- * Attach a redirect target to a route location as a query parameter.
+ * Attach a redirect target to a route location as a query parameter, merging
+ * into an object location's query or appending to a string location's query
+ * string. Returns a new location; the input is never mutated.
  *
- * Accepts either the object form of `RouteLocationRaw` (merging into its
- * existing query) or the string form (appending to its existing query string).
- * The input location is never mutated; a new value is returned.
- *
- * @param location - the route location to append the redirect target to
- * @param targetPath - the sanitised path to return the visitor to after login
- * @returns a new route location carrying the redirect target
+ * @param targetPath - must already be sanitised; this only encodes it
  */
 export function appendRedirectTarget(location: RouteLocationRaw, targetPath: string): RouteLocationRaw {
     if (typeof location === 'string') {

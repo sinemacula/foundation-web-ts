@@ -23,14 +23,12 @@ ruleTester.run('module-name-matches-folder', rule, {
             filename: 'src/modules/auth/routes.ts',
             code: "const authRoutes: RouteRecordRaw[] = [{ name: 'auth.login' }];",
         },
-        // A sibling whose name merely ends in `module.ts` is not the module
-        // file.
+        // A sibling whose name merely ends in `module.ts`.
         {
             filename: 'src/modules/auth/submodule.ts',
             code: "export const authModule: ModuleDefinition = { name: 'login' };",
         },
-        // Not typed as a ModuleDefinition and not `satisfies` - out of scope
-        // (module-export-names is the backstop).
+        // Not typed as a ModuleDefinition - module-export-names covers it.
         {
             filename: 'src/modules/auth/module.ts',
             code: "const config = { name: 'anything' };",
@@ -40,8 +38,7 @@ ruleTester.run('module-name-matches-folder', rule, {
             filename: 'src/modules/auth/module.ts',
             code: "export const authModule = { name: 'login' } satisfies Record<string, string>;",
         },
-        // A module.ts sitting directly under modules/ has no folder to match
-        // against.
+        // Directly under modules/, so no folder to match against.
         {
             filename: 'src/modules/module.ts',
             code: "export const anyModule: ModuleDefinition = { name: 'whatever' };",
@@ -89,8 +86,7 @@ ruleTester.run('module-name-matches-folder', rule, {
             filename: 'src/modules/auth/module.ts',
             code: 'export const authModule: ModuleDefinition = { name: 123 };',
         },
-        // A computed key is skipped; a quoted `name` key resolves the same as
-        // an identifier.
+        // A computed key is skipped; a quoted `name` key is still read.
         {
             filename: 'src/modules/auth/module.ts',
             code: "export const authModule: ModuleDefinition = { [dynamic]: 1, 'name': 'auth' };",
@@ -119,8 +115,7 @@ ruleTester.run('module-name-matches-folder', rule, {
             code: "export const authModule: ModuleDefinition = { ...defaults, name: 'login' };",
             errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
         },
-        // Previously bypassed: satisfies / as / as const / qualified-type all
-        // now caught.
+        // satisfies / as / as const / qualified type.
         {
             filename: 'src/modules/auth/module.ts',
             code: "export const authModule = { name: 'login' } satisfies ModuleDefinition;",

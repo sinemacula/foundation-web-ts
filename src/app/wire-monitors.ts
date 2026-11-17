@@ -1,13 +1,6 @@
 /**
  * Update and connectivity monitor wiring for the bootstrap preset.
  *
- * The update monitor polls the deployed version and surfaces new releases
- * through an application-supplied sticky toast key or handler - the kernel
- * ships no translation keys, so without one of those the monitor stays off.
- * Enabling it explicitly while providing neither is a configuration error and
- * boot fails loudly. The connectivity monitor pauses update polling while the
- * browser is offline and resumes it when connectivity returns.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -97,10 +90,8 @@ export interface WiredMonitors {
 /**
  * Wire the update and connectivity monitors.
  *
- * @param options - the configuration, monitor options and platform seams
- * @returns the started monitors, each null when disabled
- * @throws {FoundationBootError} when updates are explicitly enabled with neither a
- * toast key nor an update handler
+ * @throws {FoundationBootError} when updates are explicitly enabled with
+ * neither a toast key nor an update handler
  */
 export function wireMonitors<T extends MonitorWiringSettings>(options: WireMonitorsOptions<T>): WiredMonitors {
     const updates = wireUpdates(options);
@@ -109,12 +100,8 @@ export function wireMonitors<T extends MonitorWiringSettings>(options: WireMonit
 }
 
 /**
- * Wire the deployed-version monitor.
- *
- * @param options - the monitor wiring options
- * @returns the started monitor, or null when it does not run
- * @throws {FoundationBootError} when updates are explicitly enabled with neither a
- * toast key nor an update handler
+ * Wire the deployed-version monitor, which stays off without a toast key or
+ * handler because the kernel ships no translation keys.
  */
 function wireUpdates<T extends MonitorWiringSettings>(options: WireMonitorsOptions<T>): UpdateMonitor | null {
     const wiring = options.updates;
@@ -151,11 +138,7 @@ function wireUpdates<T extends MonitorWiringSettings>(options: WireMonitorsOptio
 }
 
 /**
- * Resolve what happens when a new version is deployed.
- *
- * @param wiring - the update-monitor options
- * @param toasts - the lazy toast service accessor
- * @returns the update handler, or null when the application supplied none
+ * Resolve the new-version handler, or null when the application supplied none.
  */
 function resolveUpdateHandler<T>(
     wiring: UpdateMonitorWiring<T> | undefined,
@@ -177,11 +160,7 @@ function resolveUpdateHandler<T>(
 }
 
 /**
- * Resolve the update monitor's enabled state.
- *
- * @param enabled - the caller's flag or predicate, when provided
- * @param settings - the frozen application configuration
- * @returns whether the monitor should run
+ * Resolve whether the update monitor runs.
  */
 function resolveUpdatesEnabled<T extends MonitorWiringSettings>(
     enabled: boolean | ((settings: Readonly<T>) => boolean) | undefined,
@@ -196,10 +175,6 @@ function resolveUpdatesEnabled<T extends MonitorWiringSettings>(
 
 /**
  * Wire the connectivity monitor, pausing update polling while offline.
- *
- * @param options - the monitor wiring options
- * @param updates - the running update monitor, or null when it does not run
- * @returns the started monitor, or null when disabled
  */
 function wireConnectivity<T extends MonitorWiringSettings>(
     options: WireMonitorsOptions<T>,

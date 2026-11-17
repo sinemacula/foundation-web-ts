@@ -1,9 +1,5 @@
 <!--
-    Runtime locale switcher.
-
-    Thin presenter over the kernel locale switcher singleton: a native
-    <select> lists the enabled locales with their display names, bound to the
-    active locale; selecting a new one requests the switch.
+    Runtime locale switcher over the enabled locales.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited
@@ -20,15 +16,12 @@ const switcher = localeSwitcher();
 
 /**
  * Request a switch to the locale selected in the native `<select>`.
- *
- * @param event - the native `change` event from the `<select>`
  */
 function onChange(event: Event): void {
     const locale = (event.target as HTMLSelectElement).value;
 
     switcher.switchTo(locale).catch(() => {
-        // Invalid selection cannot occur: the <select> only lists enabled
-        // locales.
+        // Unreachable: the <select> only lists enabled locales.
     });
 }
 </script>

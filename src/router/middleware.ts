@@ -1,9 +1,5 @@
 /**
- * Route middleware, bound to vue-router.
- *
- * Specialises the framework-agnostic pipeline from `@sinemacula/foundation` to
- * vue-router's route and location types, and pulls in the route-meta
- * augmentation so middleware are type-checked at the route definition site.
+ * Route middleware types bound to vue-router routes and locations.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

@@ -1,9 +1,5 @@
 /**
- * Browser colour-scheme applier.
- *
- * Stamps `[data-theme]` for an explicit choice (removing it for `system`, which
- * defers to the pure-CSS `prefers-color-scheme` path) and syncs the
- * `theme-color` meta tag to the resolved surface colour.
+ * Applies the colour scheme to `[data-theme]` and the `theme-color` meta tag.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -52,10 +48,8 @@ export class DomColorSchemeApplier implements ColorSchemeApplier {
     }
 
     /**
-     * Stamp or clear `[data-theme]`, then sync the meta tag.
-     *
-     * @param resolved - the concrete scheme to apply
-     * @param preference - the raw preference behind it
+     * Stamp `[data-theme]`, or clear it for `system` so CSS
+     * `prefers-color-scheme` applies, then sync the meta tag.
      */
     apply(resolved: ResolvedColorScheme, preference: ColorSchemePreference): void {
         if (preference === 'system') {
@@ -69,8 +63,6 @@ export class DomColorSchemeApplier implements ColorSchemeApplier {
 
     /**
      * Point the `theme-color` meta tag at the resolved surface colour.
-     *
-     * @param resolved - the concrete scheme whose colour to apply
      */
     #syncMeta(resolved: ResolvedColorScheme): void {
         let meta = this.#document.querySelector('meta[name="theme-color"]');

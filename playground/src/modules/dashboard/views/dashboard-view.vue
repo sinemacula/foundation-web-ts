@@ -1,8 +1,5 @@
 <!--
-    Dashboard home screen.
-
-    Placeholder landing view demonstrating the authenticated layout, module
-    translations and sign-out flow.
+    Dashboard home screen with sign-out.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

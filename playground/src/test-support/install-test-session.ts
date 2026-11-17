@@ -1,13 +1,5 @@
 /**
- * Test seam installing the kernel session context.
- *
- * Component and composable tests that exercise the session store install the
- * context here instead of booting the full application. The session persists as
- * the revisioned snapshot under the default session key of the given storage,
- * hydrated on first readiness like the session module does, and the API gateway
- * is resolved lazily over the kernel HTTP client holder, so a test may swap the
- * installed fake client after this runs and the session still reaches the
- * current one.
+ * Test seam installing the kernel session context without booting the app.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -27,8 +19,6 @@ export { resetSessionContext } from '@sinemacula/web-core/session/session-contex
 
 /**
  * Install a session context matching the application's defaults.
- *
- * @param storage - the storage the session snapshot persists to
  */
 export function installTestSession(storage: KeyValueStorage): void {
     let hydration: Promise<void> | null = null;
@@ -47,6 +37,7 @@ export function installTestSession(storage: KeyValueStorage): void {
         schedule: scheduleOnTimers,
         refreshSkewMs: 60_000,
         device: () => ({ uuid: 'test-device-uuid', os: 'WEB' }),
+        // Resolved per access so a test can swap the installed client later.
         get api(): SessionApi {
             return createDefaultSessionApi(api());
         },

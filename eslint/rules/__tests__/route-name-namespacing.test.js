@@ -23,14 +23,12 @@ ruleTester.run('route-name-namespacing', rule, {
             filename: 'src/modules/auth/module.ts',
             code: "const config = { key: 'anything' };",
         },
-        // A sibling whose name merely ends in `route-names.ts` is not the
-        // contract file.
+        // A sibling whose name merely ends in `route-names.ts`.
         {
             filename: 'src/modules/auth/sub-route-names.ts',
             code: "export const AUTH_ROUTE_NAMES = { login: 'login' } as const;",
         },
-        // A route-names.ts directly under modules/ has no folder namespace to
-        // enforce.
+        // Directly under modules/, so no folder namespace to enforce.
         {
             filename: 'src/modules/route-names.ts',
             code: "export const ROUTE_NAMES = { login: 'anything' } as const;",
@@ -66,8 +64,7 @@ ruleTester.run('route-name-namespacing', rule, {
             filename: 'src/modules/auth/route-names.ts',
             code: "export const AUTH_ROUTE_NAMES = { profile: { view: 'auth.profile.view' } } as const;",
         },
-        // Non-string values (a number, a reference) carry no route name to
-        // check.
+        // Non-string values carry no route name.
         {
             filename: 'src/modules/auth/route-names.ts',
             code: 'export const AUTH_ROUTE_NAMES = { count: 1, dynamic: build() } as const;',
@@ -110,7 +107,7 @@ ruleTester.run('route-name-namespacing', rule, {
             code: "export const AUTH_ROUTE_NAMES = { profile: { view: 'view' } } as const;",
             errors: [{ messageId: 'unnamespaced', data: { value: 'view', folder: 'auth' } }],
         },
-        // Previously bypassed: satisfies / as const satisfies wrappers.
+        // satisfies / as const satisfies wrappers.
         {
             filename: 'src/modules/auth/route-names.ts',
             code: "export const AUTH_ROUTE_NAMES = { login: 'login' } as const satisfies Record<string, string>;",
@@ -121,7 +118,7 @@ ruleTester.run('route-name-namespacing', rule, {
             code: "export const AUTH_ROUTE_NAMES = { login: 'login' } satisfies Record<string, string>;",
             errors: [{ messageId: 'unnamespaced', data: { value: 'login', folder: 'auth' } }],
         },
-        // Previously bypassed: a template-literal value.
+        // A template-literal value.
         {
             filename: 'src/modules/auth/route-names.ts',
             code: 'export const AUTH_ROUTE_NAMES = { login: `login` } as const;',

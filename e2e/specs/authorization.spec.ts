@@ -1,10 +1,5 @@
 /**
- * End-to-end specs for route authorization.
- *
- * The users route is guarded by `authorize('users.view')`: an authenticated
- * visitor holding the permission is admitted; one lacking it is redirected to
- * the forbidden view. Unauthenticated access to guarded routes is covered by
- * the authentication specs.
+ * End-to-end specs for the permission-guarded users route.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

@@ -24,14 +24,12 @@ ruleTester.run('route-name-via-constant', rule, {
             filename: 'src/modules/auth/module.ts',
             code: "export const authModule = { name: 'auth' };",
         },
-        // A sibling whose name merely ends in `routes.ts` is not the contract
-        // file.
+        // A sibling whose name merely ends in `routes.ts`.
         {
             filename: 'src/modules/auth/subroutes.ts',
             code: "export const authRoutes = [{ path: '/x', name: 'auth.login' }];",
         },
-        // A `name` inside a nested non-route object (a transition) is not a
-        // route name.
+        // A `name` inside a nested non-route object (a transition).
         {
             filename: 'src/modules/auth/routes.ts',
             code: "export const authRoutes = [{ path: '/x', name: NAMES.login, meta: { transition: { name: 'fade' } } }];",
@@ -41,8 +39,7 @@ ruleTester.run('route-name-via-constant', rule, {
             filename: 'src/modules/auth/routes.ts',
             code: "export const authRoutes = [{ path: '/x', [dynamic]: 'auth.login' }];",
         },
-        // A non-string key on a route record is ignored, and a
-        // member-expression name is fine.
+        // A numeric key is ignored, and a member-expression name is fine.
         {
             filename: 'src/modules/auth/routes.ts',
             code: "export const authRoutes = [{ path: '/x', 5: 'y', name: NAMES.login }];",
@@ -71,8 +68,7 @@ ruleTester.run('route-name-via-constant', rule, {
             code: "export const authRoutes = [{ ...base, path: '/login', name: 'auth.login' }];",
             errors: [{ messageId: 'inline', data: { value: 'auth.login' } }],
         },
-        // Previously bypassed: a template-literal inline name on a route
-        // record.
+        // A template-literal inline name.
         {
             filename: 'src/modules/auth/routes.ts',
             code: "export const authRoutes = [{ path: '/login', name: `auth.login` }];",

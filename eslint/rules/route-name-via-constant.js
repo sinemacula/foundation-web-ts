@@ -1,12 +1,5 @@
 /**
- * Require route names to reference a `_ROUTE_NAMES` constant, not an inline
- * string.
- *
- * A route's `name` must be a member of the module's `_ROUTE_NAMES` map so the
- * value is defined once and referenced everywhere. Writing the name inline in
- * `routes.ts` drifts from the constant and defeats the namespacing guarantee.
- * Only `name` keys on a route record (an object that also carries `path` or
- * `component`) are checked, so nested `meta` names are left alone.
+ * Require route record names in `routes.ts` to reference a `_ROUTE_NAMES` map.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -42,7 +35,7 @@ function isRouteObject(objectExpression) {
     });
 }
 
-/** The inline route name a value carries (string literal or single-quasi template), or null. */
+/** The string or single-quasi template a value carries, or null. */
 function inlineName(value) {
     if (value.type === 'Literal' && typeof value.value === 'string') {
         return value.value;
@@ -55,7 +48,7 @@ function inlineName(value) {
     return null;
 }
 
-// Stryker disable all: declarative rule metadata, not behaviour (verified via messageId and data)
+// Stryker disable all: declarative rule metadata
 export default createRule({
     name: 'route-name-via-constant',
     meta: {

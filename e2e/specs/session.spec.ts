@@ -1,11 +1,6 @@
 /**
  * End-to-end specs for the token-refresh flow.
  *
- * Exercises the full application - the bearer-token interceptor, the
- * token-refresh coordinator, and the auth store - against a mocked network
- * boundary that rejects one authenticated request so the refresh-and-retry path
- * engages.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */

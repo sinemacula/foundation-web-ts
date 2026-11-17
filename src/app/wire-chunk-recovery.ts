@@ -1,10 +1,6 @@
 /**
  * Chunk-load-failure recovery wiring for the bootstrap preset.
  *
- * Installs the router's stale-deploy chunk recovery with the preset-resolved
- * storage, reporter and platform seams. Enabled by default; disabling it leaves
- * the router's error channel to the reporter alone.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -44,7 +40,6 @@ export interface WireChunkRecoveryOptions {
 /**
  * Wire chunk-load-failure recovery onto the router.
  *
- * @param options - the router, its collaborators and recovery tuning
  * @returns the teardown removing the error handler, or null when disabled
  */
 export function wireChunkRecovery(options: WireChunkRecoveryOptions): (() => void) | null {

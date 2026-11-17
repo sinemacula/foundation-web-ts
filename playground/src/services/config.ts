@@ -1,11 +1,5 @@
 /**
- * Application configuration service.
- *
- * App-typed wrapper over the kernel configuration holder, keeping the
- * Laravel-style accessors used across the application: `config()` for the
- * fully-typed tree, `configValue()` for dot-notation lookups. The bootstrap
- * preset installs the production repository; `initialiseConfiguration` is the
- * equivalent test-time seam over the configuration registry.
+ * App-typed configuration accessors over the kernel configuration holder.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -21,9 +15,8 @@ import { defineConfiguration } from '@/config';
 export { resetWebCoreServices as resetConfiguration } from '@sinemacula/web-core/app/services';
 
 /**
- * Resolve every configuration definition and install the frozen result.
- *
- * @param env - the typed environment reader
+ * Resolve and install the configuration tree; the boot preset does this in
+ * production, so this is the test seam.
  */
 export function initialiseConfiguration(env: Environment): void {
     installConfig(new ConfigRepository(defineConfiguration(env)));
@@ -32,7 +25,6 @@ export function initialiseConfiguration(env: Environment): void {
 /**
  * The fully-typed configuration tree.
  *
- * @returns the frozen configuration root
  * @throws Error when accessed before configuration is installed
  */
 export function config(): Readonly<Configuration> {
@@ -40,11 +32,8 @@ export function config(): Readonly<Configuration> {
 }
 
 /**
- * Resolve a configuration value by dot-notation path.
+ * Resolve a value by dot-notation path, or `fallback` when it does not resolve.
  *
- * @param path - the dot-notation path (e.g. `app.urls.api`)
- * @param fallback - the value returned when the path does not resolve
- * @returns the resolved value, or the fallback
  * @throws Error when accessed before configuration is installed
  */
 export function configValue(path: string, fallback?: unknown): unknown {

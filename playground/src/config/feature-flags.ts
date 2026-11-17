@@ -1,11 +1,5 @@
 /**
- * Feature-flag configuration definition.
- *
- * Reads the flag set from the runtime environment document so that flags can be
- * delivered at deploy time without rebuilding the artifact. A remote provider
- * (LaunchDarkly, PostHog, Flagsmith, Unleash, …) can replace this static
- * delivery mechanism by implementing the {@link FeatureFlags} port without
- * touching this file.
+ * Feature-flag configuration, read from the runtime document per deploy.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -24,9 +18,6 @@ export interface FeatureFlagsConfig {
 
 /**
  * Resolve the feature-flag configuration from the environment.
- *
- * @param env - the typed environment reader
- * @returns the resolved feature-flag configuration
  */
 export function featureFlagsConfig(env: Environment): FeatureFlagsConfig {
     return {

@@ -1,10 +1,5 @@
 /**
- * Strict key-value storage adapter over the Web Storage API.
- *
- * Unlike {@link BrowserStorage}, every Web Storage failure (private browsing,
- * quota, disabled storage) propagates, so a persistence layer that must never
- * mistake a lost write for a saved one, or an unreadable value for an absent
- * one, can rely on it.
+ * Web Storage adapter that throws on failure so a lost write never looks saved.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

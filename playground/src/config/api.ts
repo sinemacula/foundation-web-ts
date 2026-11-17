@@ -20,9 +20,6 @@ export interface ApiConfig {
 
 /**
  * Resolve the API client configuration from the environment.
- *
- * @param env - the typed environment reader
- * @returns the resolved API configuration
  */
 export function apiConfig(env: Environment): ApiConfig {
     return {

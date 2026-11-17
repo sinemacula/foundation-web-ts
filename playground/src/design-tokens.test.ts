@@ -1,11 +1,5 @@
 /**
- * Drift guards for the shared design tokens.
- *
- * The token stylesheet is copied into each application tree; these tests fail
- * the moment the copies diverge, or a component reaches past the role tokens
- * into a raw palette scale or semantic primitive that does not flip between
- * colour schemes. The template tree is git-excluded, so each guard is a no-op
- * where it is absent.
+ * Drift guards for the shared design tokens; absent copies are skipped.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -22,16 +16,11 @@ const THEME_CSS = ['playground/src/assets/styles/theme.css', 'template/src/asset
 
 const STYLE_ROOTS = ['playground/src', 'template/src'];
 
-// Components must consume the role tokens, which flip between colour schemes,
-// never a raw palette scale or semantic primitive, which are fixed and would
-// not follow a scheme change.
+// Palette scales and semantic primitives do not flip with the colour scheme.
 const RAW_COLOR_TOKEN = /--sm-(?:primary|secondary|neutral)-\d|--sm-(?:error|warning|information|success)\b/;
 
 /**
  * Every `.vue` and `.css` file below a directory tree.
- *
- * @param dir - the directory to walk
- * @returns the matching absolute file paths
  */
 function styleFiles(dir: string): string[] {
     const found: string[] = [];

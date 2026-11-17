@@ -13,15 +13,7 @@ import { initialiseApi, resetApi } from '@/services/api';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
 
 /**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write snake_case API field names as
- * plain string literals inside array elements rather than as object-literal
- * keys - keeping non-camelCase field names out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
+ * Build a record from pairs so snake_case wire keys avoid object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
@@ -78,7 +70,7 @@ describe('useUsersList', () => {
             expect(usersList.meta.value).toEqual({ mode: 'length-aware', total: 2, count: 2, hasMore: false });
         });
 
-        it('exposes an empty rows array and null meta before any fetch has resolved', () => {
+        it('starts with no rows, meta or last page', () => {
             const usersList = useUsersList();
 
             expect(usersList.rows.value).toEqual([]);
@@ -166,7 +158,7 @@ describe('useUsersList', () => {
             expect(fake.calls).toHaveLength(2);
         });
 
-        it('clears a pending debounce timer when the enclosing effect scope stops', async () => {
+        it('drops a pending search commit when the scope stops', async () => {
             fake.queueResponse({ data: [] });
 
             const scope = effectScope();

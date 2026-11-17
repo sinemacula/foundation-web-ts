@@ -1,9 +1,6 @@
 /**
  * Component tests for login-view.
  *
- * Mounts the view inside a minimal Vue app to exercise the template and setup
- * script; API behaviour is covered by use-login-form.test.ts.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -24,13 +21,7 @@ import { FakeHttpClient } from '@/test-support/fake-http-client';
 import { installTestSession, resetSessionContext } from '@/test-support/install-test-session';
 
 /**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write snake_case API field names as
- * plain string literals without triggering Biome's naming-convention rule.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
+ * Build a record from pairs so snake_case wire keys avoid object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
@@ -49,8 +40,6 @@ interface MountedLoginView {
 
 /**
  * Mount LoginView with the minimal plugins it needs.
- *
- * @returns the DOM container, router instance, and an unmount callback
  */
 function mountLoginView(): MountedLoginView {
     const pinia = createPinia();
@@ -85,8 +74,6 @@ function mountLoginView(): MountedLoginView {
 
 /**
  * Dispatch a submit event on the form inside the given container.
- *
- * @param container - the mounted component root
  */
 function submitForm(container: HTMLDivElement): void {
     const form = container.querySelector('form');
@@ -100,9 +87,6 @@ function submitForm(container: HTMLDivElement): void {
 
 /**
  * Type a valid email and the given password into the mounted form.
- *
- * @param container - the mounted component root
- * @param password - the password to enter
  */
 function fillCredentials(container: HTMLDivElement, password: string): void {
     const emailInput = container.querySelector<HTMLInputElement>('input[type="email"]');
@@ -142,7 +126,7 @@ describe('LoginView', () => {
         unmount();
     });
 
-    it('does not navigate when submit returns false (empty fields)', async () => {
+    it('does not navigate when validation fails', async () => {
         const { container, router, unmount } = mountLoginView();
 
         await router.isReady();
@@ -165,17 +149,11 @@ describe('LoginView', () => {
 
         const { container, unmount } = mountLoginView();
 
-        // Trigger email validation error by submitting with empty email
         submitForm(container);
 
         await new Promise<void>(resolve => setTimeout(resolve, 50));
 
-        // After the failed submit some error UI should be present in the DOM
-        // (the exact content depends on i18n key resolution but the element
-        // exists)
-        const emailInput = container.querySelector<HTMLInputElement>('input[type="email"]');
-
-        expect(emailInput).not.toBeNull();
+        expect(container.querySelector('.sm-text-input__error')).not.toBeNull();
 
         unmount();
     });
@@ -193,11 +171,7 @@ describe('LoginView', () => {
 
         await new Promise<void>(resolve => setTimeout(resolve, 50));
 
-        // The error paragraph should be rendered after the API rejects
-        const errorParagraph = container.querySelector('.login-form__error');
-
-        // The paragraph exists in the DOM when there is an API error
-        expect(errorParagraph).not.toBeNull();
+        expect(container.querySelector('.login-form__error')).not.toBeNull();
 
         unmount();
     });

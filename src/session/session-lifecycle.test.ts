@@ -44,10 +44,6 @@ describe('session lifecycle', () => {
 
     /**
      * Register the module over the fake gateway.
-     *
-     * @param options - module options
-     * @param setup - harness seams
-     * @returns the harness
      */
     function harness(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): SessionHarness {
         return createSessionHarness(createSessionModule({ api: () => gateway, ...options }), setup);
@@ -55,10 +51,6 @@ describe('session lifecycle', () => {
 
     /**
      * Register over a persisted session whose user loads, without booting.
-     *
-     * @param options - module options
-     * @param setup - harness seams
-     * @returns the harness
      */
     function persisted(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): SessionHarness {
         const target = harness(options, setup);
@@ -171,7 +163,7 @@ describe('session lifecycle', () => {
             });
         });
 
-        it('redirects a session the user fetch finds refused, the watcher being in place first', async () => {
+        it('redirects when the boot user fetch finds the session refused', async () => {
             const target = persisted();
 
             gateway.currentUser.mockReset();
@@ -442,11 +434,6 @@ describe('session lifecycle', () => {
         /**
          * Register over a persisted session expiring at the given instant, on a
          * platform clock and scheduler the test drives.
-         *
-         * @param expiresAtEpochMs - the persisted expiry
-         * @param options - module options
-         * @param setup - harness seams
-         * @returns the harness
          */
         function expiring(
             expiresAtEpochMs: number,

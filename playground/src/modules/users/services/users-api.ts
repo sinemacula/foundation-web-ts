@@ -1,10 +1,5 @@
 /**
- * Users API gateway.
- *
- * Scopes the kernel `ResourceClient` to the `users` endpoint: envelope
- * unwrapping, pagination-meta mapping and query merging all live in the kernel
- * already, so this file only supplies the two things specific to this resource
- * - the domain shape and the wire-record validator.
+ * Users API gateway: the row shape and validator for the `users` endpoint.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -29,15 +24,13 @@ export interface UserListItem {
     /** The user's email address. */
     readonly email: string;
 
-    /** When the user was created, as an ISO 8601 string. */
+    /** When the user was created, as the API's `YYYY-MM-DD HH:MM:SS` UTC timestamp. */
     readonly createdAt: string;
 }
 
 /**
  * Validate and map a raw wire record onto a {@link UserListItem}.
  *
- * @param raw - the raw wire record
- * @returns the mapped user row
  * @throws PlaygroundError when a required field is missing or of the wrong type
  */
 export const mapUserRow: ResourceMapper<UserListItem> = (raw: RawRecord): UserListItem => {
@@ -60,9 +53,6 @@ export const mapUserRow: ResourceMapper<UserListItem> = (raw: RawRecord): UserLi
 
 /**
  * Build a {@link ResourceClient} scoped to the `users` endpoint.
- *
- * @param client - the HTTP client to reach the API with
- * @returns a typed resource client for user list rows
  */
 export function createUsersClient(client: HttpClient): ResourceClient<UserListItem> {
     return new ResourceClient({ client, path: 'users', map: mapUserRow });

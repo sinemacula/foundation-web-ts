@@ -1,9 +1,6 @@
 /**
  * Page object for the login screen.
  *
- * Encapsulates every selector and interaction for the screen so specs read as
- * user behaviour and selector changes touch one file.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -50,9 +47,6 @@ export class LoginPage {
 
     /**
      * Fill the credentials and submit the form.
-     *
-     * @param email - the email address to sign in with
-     * @param password - the password to sign in with
      */
     async signIn(email: string, password: string): Promise<void> {
         await this.emailField.fill(email);

@@ -21,15 +21,7 @@ import { installTestSession, resetSessionContext } from '@/test-support/install-
 const SESSION_KEY = 'auth.session';
 
 /**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write snake_case API field names as
- * plain string literals inside array elements rather than as object-literal
- * keys - keeping non-camelCase field names out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
+ * Build a record from pairs so snake_case wire keys avoid object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
@@ -37,8 +29,6 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
 
 /**
  * Build the default gateway's session payload.
- *
- * @returns the wire session record
  */
 function sessionPayload(): Record<string, unknown> {
     return wire([
@@ -50,8 +40,6 @@ function sessionPayload(): Record<string, unknown> {
 
 /**
  * Queue the responses of one successful sign-in: the session, then the user.
- *
- * @param fake - the HTTP client fake the session gateway calls
  */
 function queueSignIn(fake: FakeHttpClient): void {
     fake.queueResponse({ data: sessionPayload() });
@@ -74,12 +62,7 @@ interface MountedLoginForm {
 }
 
 /**
- * Mount `useLoginForm` inside a real Vue component setup so that vee-validate's
- * lifecycle hooks (`onMounted`, `provide`) have a valid component instance to
- * attach to.
- *
- * @returns the form composable result and a cleanup function
- * @throws Error when the composable fails to initialise (should never happen)
+ * Mount `useLoginForm` in a real component, as vee-validate needs an instance.
  */
 function mountLoginForm(): MountedLoginForm {
     const forms: LoginForm[] = [];
@@ -143,46 +126,30 @@ describe('useLoginForm', () => {
     });
 
     describe('submit - validation', () => {
-        it('returns false and sets emailRequired key when email is empty', async () => {
+        it.each([
+            { email: '', password: 'secret', field: 'emailError', key: 'auth.login.validation.emailRequired' },
+            {
+                email: 'not-an-email',
+                password: 'secret',
+                field: 'emailError',
+                key: 'auth.login.validation.emailInvalid',
+            },
+            {
+                email: 'alice@example.com',
+                password: '',
+                field: 'passwordError',
+                key: 'auth.login.validation.passwordRequired',
+            },
+        ] as const)('rejects without calling the API and sets $key', async ({ email, password, field, key }) => {
             const { form, unmount } = mountLoginForm();
 
-            form.email.value = '';
-            form.password.value = 'secret';
+            form.email.value = email;
+            form.password.value = password;
 
             const result = await form.submit();
 
             expect(result).toBe(false);
-            expect(form.emailError.value).toBe('auth.login.validation.emailRequired');
-            expect(fake.calls).toHaveLength(0);
-
-            unmount();
-        });
-
-        it('returns false and sets emailInvalid key when email is malformed', async () => {
-            const { form, unmount } = mountLoginForm();
-
-            form.email.value = 'not-an-email';
-            form.password.value = 'secret';
-
-            const result = await form.submit();
-
-            expect(result).toBe(false);
-            expect(form.emailError.value).toBe('auth.login.validation.emailInvalid');
-            expect(fake.calls).toHaveLength(0);
-
-            unmount();
-        });
-
-        it('returns false and sets passwordRequired key when password is empty', async () => {
-            const { form, unmount } = mountLoginForm();
-
-            form.email.value = 'alice@example.com';
-            form.password.value = '';
-
-            const result = await form.submit();
-
-            expect(result).toBe(false);
-            expect(form.passwordError.value).toBe('auth.login.validation.passwordRequired');
+            expect(form[field].value).toBe(key);
             expect(fake.calls).toHaveLength(0);
 
             unmount();
@@ -190,7 +157,7 @@ describe('useLoginForm', () => {
     });
 
     describe('submit - API', () => {
-        it('returns true, signs in on the default gateway and persists the session', async () => {
+        it('signs in on the default gateway and persists the session', async () => {
             const { form, unmount } = mountLoginForm();
 
             queueSignIn(fake);
@@ -219,7 +186,7 @@ describe('useLoginForm', () => {
             unmount();
         });
 
-        it('returns false and keeps the pending session when a further step is owed', async () => {
+        it('keeps the pending session when a further step is owed', async () => {
             const { form, unmount } = mountLoginForm();
 
             fake.queueResponse({
@@ -264,10 +231,9 @@ describe('useLoginForm', () => {
         it('returns false when another session transition overtakes the sign-in', async () => {
             const { form, unmount } = mountLoginForm();
 
-            /** Resolve the queued sign-in response once it has been queued. */
+            /** Resolve the queued sign-in response. */
             let release: (payload: unknown) => void = () => undefined;
 
-            // The fake adopts a queued promise, holding the sign-in in flight.
             fake.queueResponse(
                 new Promise(resolve => {
                     release = resolve;
@@ -329,7 +295,7 @@ describe('useLoginForm', () => {
             unmount();
         });
 
-        it('sets field messages and leaves the form-level error null on a 422 with field errors', async () => {
+        it('surfaces 422 field errors as field messages', async () => {
             const { form, unmount } = mountLoginForm();
 
             fake.queueError(
@@ -357,7 +323,7 @@ describe('useLoginForm', () => {
             unmount();
         });
 
-        it('falls through to the generic error key on a 422 with an empty errors map', async () => {
+        it('falls back to the form-level error on a 422 without field errors', async () => {
             const { form, unmount } = mountLoginForm();
 
             fake.queueError(new HttpValidationError(422, 'Unprocessable', {}, {}));
@@ -373,7 +339,7 @@ describe('useLoginForm', () => {
             unmount();
         });
 
-        it('guards against double-submit by returning false on the second call', async () => {
+        it('ignores a second submit while one is in flight', async () => {
             const { form, unmount } = mountLoginForm();
 
             queueSignIn(fake);

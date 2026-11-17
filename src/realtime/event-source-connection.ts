@@ -1,11 +1,5 @@
 /**
- * SSE adapter for the {@link RealtimeConnection} port.
- *
- * Wraps the browser's native {@link EventSource} API. Note that native
- * EventSource cannot send custom request headers; the recommended pattern for
- * authenticated streams is to embed the token in the query string via the `url`
- * function form, which is called fresh on every connect so that per-connect
- * credentials are always current.
+ * SSE adapter for the {@link RealtimeConnection} port over native EventSource.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -23,25 +17,21 @@ import type {
 
 /**
  * Injectable factory for {@link EventSource} instances.
- *
- * @param url - the SSE endpoint URL
- * @param init - EventSource initialisation options
- * @returns a new EventSource
  */
 export type EventSourceFactory = (url: string, init: EventSourceInit) => EventSource;
 
 /** Construction options for {@link EventSourceConnection}. */
 export interface EventSourceConnectionOptions {
-    /** The SSE endpoint URL, or a function that returns it. The function form is called on every `connect()`, enabling per-connect auth tokens in the query string - the recommended way to authenticate SSE streams because native EventSource cannot send custom headers. */
+    /** The SSE endpoint, or a builder called on every connect; native EventSource cannot send headers, so put auth tokens in its query string. */
     readonly url: string | (() => string);
 
-    /** Pass `true` to include credentials (cookies) in the SSE request. Defaults to `false`. */
+    /** Whether the SSE request includes credentials (cookies); defaults to `false`. */
     readonly withCredentials?: boolean;
 
-    /** Backoff strategy for reconnects. Defaults to `new ExponentialBackoff()`. */
+    /** Backoff strategy for reconnects; defaults to `new ExponentialBackoff()`. */
     readonly backoff?: ExponentialBackoff;
 
-    /** Override the EventSource constructor. Defaults to `(url, init) => new EventSource(url, init)`. */
+    /** Overrides EventSource construction; defaults to the native constructor. */
     readonly eventSourceFactory?: EventSourceFactory;
 
     /** Awaited before each reconnect, never before a manual `connect()`; pair it with a `url()` builder that reads the fresh token. */
@@ -52,11 +42,8 @@ export interface EventSourceConnectionOptions {
 }
 
 /**
- * SSE adapter implementing {@link RealtimeConnection}.
- *
- * Reconnects automatically on error using the provided backoff strategy. All
- * registered event listeners are re-attached to every new EventSource after a
- * reconnect.
+ * SSE connection that reconnects on error with backoff, re-attaching every
+ * registered listener to each new EventSource.
  */
 export class EventSourceConnection implements RealtimeConnection {
     /** The endpoint URL, or a factory returning it per connect. */
@@ -98,12 +85,6 @@ export class EventSourceConnection implements RealtimeConnection {
     /** Advanced on every disconnect so a superseded reconnect attempt abandons itself. */
     #generation: number = 0;
 
-    /**
-     * Construct a new SSE connection.
-     *
-     * @param options - URL, credentials, backoff strategy, optional EventSource
-     * factory, reconnect hook and error sink
-     */
     constructor(options: EventSourceConnectionOptions) {
         this.#url = options.url;
         this.#withCredentials = options.withCredentials ?? false;
@@ -121,11 +102,10 @@ export class EventSourceConnection implements RealtimeConnection {
     }
 
     /**
-     * Open the SSE connection. No-op when already connecting or open.
+     * Open the SSE connection; no-op when already connecting or open.
      *
      * @throws {@link RealtimeError} when the `url()` builder or EventSource
-     * factory throws; the state is left unchanged and the original error is the
-     * cause
+     * factory throws, leaving the state unchanged with the original as cause
      */
     connect(): void {
         if (this.#state === 'connecting' || this.#state === 'open') {
@@ -152,10 +132,8 @@ export class EventSourceConnection implements RealtimeConnection {
     }
 
     /**
-     * Subscribe to messages for a specific event name.
+     * Subscribe to messages for one event name.
      *
-     * @param event - the event name to subscribe to
-     * @param handler - called for each matching incoming message
      * @returns an unsubscribe function
      */
     on(event: string, handler: RealtimeMessageHandler): () => void {
@@ -180,7 +158,6 @@ export class EventSourceConnection implements RealtimeConnection {
     /**
      * Subscribe to connection state changes.
      *
-     * @param handler - called each time the state transitions
      * @returns an unsubscribe function
      */
     onStateChange(handler: RealtimeStateHandler): () => void {
@@ -225,12 +202,8 @@ export class EventSourceConnection implements RealtimeConnection {
     }
 
     /**
-     * Attach a listener for one event name that fans frames out to its handlers
-     * while `source` is still the active EventSource.
-     *
-     * @param source - the EventSource to attach the listener to
-     * @param event - the event name to listen for
-     * @param handlers - the live handler set registered for `event`
+     * Fan one event name's frames out to its live handler set while `source` is
+     * still the active EventSource.
      */
     #attachEventListener(source: EventSource, event: string, handlers: Set<RealtimeMessageHandler>): void {
         source.addEventListener(event, (messageEvent: MessageEvent) => {
@@ -284,8 +257,6 @@ export class EventSourceConnection implements RealtimeConnection {
     /**
      * Pass a contained error to the `onError` sink, ignoring a throwing sink so
      * one failure never starves the remaining subscribers.
-     *
-     * @param error - the contained error
      */
     #report(error: unknown): void {
         try {
@@ -316,8 +287,6 @@ export class EventSourceConnection implements RealtimeConnection {
 
     /**
      * Transition to `next`, notifying state subscribers only on a real change.
-     *
-     * @param next - the state to transition to
      */
     #setState(next: RealtimeState): void {
         if (this.#state === next) {

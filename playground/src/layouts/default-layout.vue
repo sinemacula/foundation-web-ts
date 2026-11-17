@@ -1,8 +1,6 @@
 <!--
-    Authenticated application layout.
-
-    Header with the application brand and a slot for page-level actions;
-    content constrained to a centred column.
+    Authenticated layout: header with brand, navigation, switchers and an
+    actions slot over a centred content column.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

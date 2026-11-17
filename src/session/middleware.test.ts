@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { HttpError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
-import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { MiddlewareContext, RouteMiddleware } from '../router/middleware';
 import type { SessionRoutes } from './create-session-module';
@@ -24,14 +23,10 @@ import {
     deferred,
     persistSnapshot,
     tokens,
+    user,
 } from './test-support/session-fixtures';
 
 const context = { to: { fullPath: '/settings/billing' }, from: {} } as unknown as MiddlewareContext;
-
-/** An authenticated user record granted the given permissions. */
-function userWithPermissions(permissions: readonly string[]): SessionUser {
-    return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions };
-}
 
 describe('session guards', () => {
     let storage: MemoryStorage;
@@ -39,8 +34,6 @@ describe('session guards', () => {
 
     /**
      * Install a test session context over the test storage and gateway.
-     *
-     * @param routes - route-identity overrides
      */
     function installTestContext(routes: Partial<SessionRoutes> = {}): void {
         const base = createTestSessionContext();
@@ -54,20 +47,15 @@ describe('session guards', () => {
     }
 
     /**
-     * Persist a session and load the given user once it is hydrated.
-     *
-     * @param permissions - the permissions the user is granted
+     * Persist a session whose user, once hydrated, holds the given permissions.
      */
     function signIn(permissions: readonly string[] = []): void {
         persistSnapshot(storage, tokens());
-        gateway.currentUser.mockResolvedValue(userWithPermissions(permissions));
+        gateway.currentUser.mockResolvedValue(user({ permissions }));
     }
 
     /**
      * Run a guard over the shared navigation context.
-     *
-     * @param guard - the guard to run
-     * @returns the guard's result
      */
     function run(guard: RouteMiddleware): unknown {
         return guard.handle(context);

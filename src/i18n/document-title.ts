@@ -1,8 +1,5 @@
 /**
- * Document title synchronisation.
- *
- * Routes declare a translation key in `meta.title`; after every navigation the
- * document title becomes the translated key suffixed with the application name.
+ * Keeps the document title in sync with each route's translated `meta.title`.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -25,14 +22,14 @@ export interface DocumentTitleOptions {
     /** The application name suffixed to every title. */
     readonly appName: string;
 
-    /** The document whose title is set. Defaults to the global document. */
+    /** The document whose title is set; defaults to the global document. */
     readonly targetDocument?: Document;
 }
 
 /**
- * Install an after-navigation hook that keeps the document title in sync.
+ * Install an after-navigation hook setting the title to the translated
+ * `meta.title` suffixed with the app name, or the app name alone.
  *
- * @param options - the router, i18n instance and application name
  * @returns a teardown removing the navigation hook
  */
 export function installDocumentTitleSync(options: DocumentTitleOptions): () => void {

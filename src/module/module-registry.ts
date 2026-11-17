@@ -1,14 +1,5 @@
 /**
- * Module registry construction and lifecycle execution.
- *
- * `createModuleRegistry` validates a caller-owned module list (unique names, at
- * most one fallback) and fixes the effective order: declaration order with the
- * fallback module moved last. `registerModules` runs the synchronous register
- * phase and collects each module's HTTP contributions, `bootModules` runs the
- * boot phase and composes the returned teardowns into one LIFO disposal, and
- * `createModuleMessageSource` loads module translations in parallel with a
- * per-locale memo, preserving the namespacing semantics of
- * `collectModuleMessages`.
+ * Module registry validation, ordering and lifecycle execution.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -43,18 +34,15 @@ export class ModuleRegistryError extends Error {
  * A validated module list in its effective order.
  */
 export interface ModuleRegistry {
-    /** Effective order: declaration order, with the (at most one) fallback module moved last. Frozen. */
+    /** Modules in declaration order with the fallback module moved last; frozen. */
     readonly modules: readonly ModuleDefinition[];
 }
 
 /**
- * Validate and order a module list.
+ * Validate a module list and freeze it with the fallback module moved last.
  *
- * @param modules - the caller-owned module list, in declaration order
- * @returns the frozen registry, with the fallback module moved last
- * @throws {@link ModuleRegistryError} when a module name is duplicated, listing
- * every duplicate sorted, or when more than one module declares fallback,
- * naming each of them
+ * @throws {@link ModuleRegistryError} when module names repeat or more than one
+ * module declares fallback
  */
 export function createModuleRegistry(modules: readonly ModuleDefinition[]): ModuleRegistry {
     const seen = new Set<string>();
@@ -93,13 +81,11 @@ export function createModuleRegistry(modules: readonly ModuleDefinition[]): Modu
 }
 
 /**
- * Run every module's register hook sequentially in registry order.
+ * Run every module's register hook in registry order and return their HTTP
+ * contributions, frozen.
  *
- * @param modules - the registry's ordered module list
- * @param context - the register-phase context, minus the collector
- * @returns the frozen HTTP contributions collected across all modules
- * @throws {@link ModuleRegistryError} when a second module sets the
- * unauthorized handler, naming both contributing modules
+ * @throws {@link ModuleRegistryError} when the unauthorized handler is set more
+ * than once
  */
 export function registerModules(
     modules: readonly ModuleDefinition[],
@@ -147,14 +133,9 @@ export function registerModules(
 }
 
 /**
- * Run every module's boot hook sequentially in registry order.
- *
- * A rejected boot tears down the already-booted modules in LIFO order and
- * rethrows the failure.
- *
- * @param modules - the registry's ordered module list
- * @param context - the boot-phase context
- * @returns one composed teardown disposing every module in LIFO order
+ * Run every module's boot hook in registry order and return one teardown that
+ * disposes them LIFO; a failed boot disposes the modules already booted, then
+ * rethrows.
  */
 export async function bootModules(
     modules: readonly ModuleDefinition[],
@@ -192,22 +173,14 @@ export async function bootModules(
  */
 export interface ModuleMessageSource {
     /**
-     * Load and namespace every module's translations for one locale.
-     *
-     * @param locale - the locale to load
-     * @returns module translations keyed by module name
+     * Load every module's translations for one locale, keyed by module name.
      */
     messages(locale: string): Promise<Record<string, LocaleMessages>>;
 }
 
 /**
- * Build a {@link ModuleMessageSource} over a module list.
- *
- * Loaders run in parallel and each locale is loaded at most once; the
- * namespacing and null-skip semantics match `collectModuleMessages`.
- *
- * @param modules - the registry's ordered module list
- * @returns the memoised message source
+ * Build a {@link ModuleMessageSource} that runs module loaders in parallel, at
+ * most once per locale, with the same results as `collectModuleMessages`.
  */
 export function createModuleMessageSource(modules: readonly ModuleDefinition[]): ModuleMessageSource {
     const cache = new Map<string, Promise<Record<string, LocaleMessages>>>();
@@ -230,9 +203,7 @@ export function createModuleMessageSource(modules: readonly ModuleDefinition[]):
 }
 
 /**
- * Run the collected teardowns in reverse installation order.
- *
- * @param teardowns - the teardowns, in installation order
+ * Run the teardowns in reverse installation order.
  */
 function disposeLifo(teardowns: readonly ModuleTeardown[]): void {
     for (const teardown of [...teardowns].reverse()) {
@@ -241,11 +212,8 @@ function disposeLifo(teardowns: readonly ModuleTeardown[]): void {
 }
 
 /**
- * Load and namespace every module's translations for one locale in parallel.
- *
- * @param modules - the registry's ordered module list
- * @param locale - the locale to load
- * @returns module translations keyed by module name
+ * Load every module's translations for one locale in parallel, keyed by module
+ * name.
  */
 async function loadModuleMessages(
     modules: readonly ModuleDefinition[],

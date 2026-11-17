@@ -48,24 +48,12 @@ describe('color-scheme-boot', () => {
             );
         });
 
-        it('stamps data-theme for a stored dark preference', () => {
-            expect(runBootScript('dark')).toBe('dark');
+        it.each(['dark', 'light'])('stamps data-theme for a stored %s preference', stored => {
+            expect(runBootScript(stored)).toBe(stored);
         });
 
-        it('stamps data-theme for a stored light preference', () => {
-            expect(runBootScript('light')).toBe('light');
-        });
-
-        it('does not stamp for a stored system preference', () => {
-            expect(runBootScript('system')).toBeNull();
-        });
-
-        it('does not stamp when nothing is stored', () => {
-            expect(runBootScript(null)).toBeNull();
-        });
-
-        it('does not stamp for a garbage stored value', () => {
-            expect(runBootScript('purple')).toBeNull();
+        it.each(['system', null, 'purple'])('does not stamp for a stored %s value', stored => {
+            expect(runBootScript(stored)).toBeNull();
         });
 
         it('swallows a throwing storage read', () => {

@@ -1,9 +1,6 @@
 /**
  * End-to-end specs for the deployed-version update toast.
  *
- * Exercises the runtime environment document, the update monitor's
- * visibility-triggered poll, and the sticky toast that invites a refresh.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */

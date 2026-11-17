@@ -1,9 +1,6 @@
 <!--
-    Not-found (404) screen.
-
-    Rendered by the catch-all route for any URL that matches no other route.
-    Deliberately without DefaultLayout or GuestLayout chrome since the
-    visitor may not be signed in.
+    Not-found (404) screen for the catch-all route; rendered without layout
+    chrome since the visitor may not be signed in.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

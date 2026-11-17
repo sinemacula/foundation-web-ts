@@ -48,8 +48,6 @@ describe('session realtime policy', () => {
 
     /**
      * Install the session context over the test storage and gateway.
-     *
-     * @param overrides - collaborators to override
      */
     function install(overrides: Partial<SessionContext> = {}): void {
         installSessionContext(
@@ -65,10 +63,7 @@ describe('session realtime policy', () => {
     }
 
     /**
-     * Persist and hydrate a session expiring at the given instant.
-     *
-     * @param expiresAtEpochMs - the expiry, or null when unknown
-     * @returns the hydrated store
+     * Persist and hydrate a session expiring at the given instant, if known.
      */
     async function hydrated(expiresAtEpochMs: number | null): Promise<SessionStore> {
         persistSnapshot(storage, tokens({ expiresAtEpochMs }));
@@ -82,8 +77,6 @@ describe('session realtime policy', () => {
 
     /**
      * Sign a new session in over whatever is held.
-     *
-     * @param signedIn - the new session's tokens
      */
     async function signIn(signedIn: SessionTokens): Promise<void> {
         gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: signedIn });
@@ -109,10 +102,8 @@ describe('session realtime policy', () => {
 
     describe('sessionReconnectGuard', () => {
         /**
-         * Run one reconnect check against the given connection.
-         *
-         * @param target - the guarded connection; default the installed one
-         * @returns the hook's verdict
+         * Run one reconnect check against the given connection, or the
+         * installed one.
          */
         function check(target?: RecordingConnection): Promise<unknown> {
             return (target === undefined ? sessionReconnectGuard() : sessionReconnectGuard(() => target))();
@@ -278,9 +269,6 @@ describe('session realtime policy', () => {
 
         /**
          * Follow the session with the test connection until the test ends.
-         *
-         * @param store - the session store
-         * @returns the follower's teardown
          */
         function follow(store: SessionStore): ModuleTeardown {
             const teardown = followSession(connection, store);
@@ -684,9 +672,7 @@ describe('session realtime policy', () => {
             });
 
             pending.resolve({ kind: 'rejected', error: new HttpError(401, 'refused') });
-            await new Promise(resolve => {
-                setTimeout(resolve, 0);
-            });
+            await settle();
 
             expect(connection.calls).toStrictEqual(['disconnect']);
 

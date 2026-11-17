@@ -1,12 +1,5 @@
 /**
- * Session store.
- *
- * The pinia binding over the foundation session core. State starts signed out
- * and every action forwards the store's one state object plus the installed
- * session context into the core transitions, which key their bookkeeping by
- * that object's identity; nothing else writes the persisted session. That
- * object notifies every write, so the session identity the core keeps outside
- * the state can be watched.
+ * Pinia binding over the foundation session core transitions.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -54,11 +47,10 @@ export interface SessionStore<U extends SessionUser = SessionUser, C = PasswordC
     readonly isAuthenticated: boolean;
 
     /**
-     * The identity of the held session, or null when signed out. It survives a
-     * rotation and is new for every sign-in or adoption, even over the same
-     * tokens; reading it inside a watcher tracks it.
-     *
-     * @returns the session identity, compared by reference
+     * The identity of the held session, compared by reference, or null when
+     * signed out. It survives a rotation and is new for every sign-in or
+     * adoption, even over the same tokens; reading it inside a watcher tracks
+     * it.
      */
     sessionIdentity(): object | null;
 
@@ -70,19 +62,14 @@ export interface SessionStore<U extends SessionUser = SessionUser, C = PasswordC
     hydrate(): Promise<void>;
 
     /**
-     * Exchange credentials for a session, persist it, and load the user.
-     *
-     * @param credentials - the login credentials, forwarded to the gateway
-     * @returns what the sign-in did; only `authenticated` is a completed
-     * sign-in
+     * Exchange credentials for a session, persist it, and load the user. Only
+     * an `authenticated` outcome is a completed sign-in.
      */
     login(credentials: C): Promise<LoginOutcome>;
 
     /**
      * Exchange the refresh credential for a new session. A refusal clears the
      * session; a transient or other failure keeps it.
-     *
-     * @returns what the refresh did
      */
     refresh(): Promise<RefreshOutcome>;
 
@@ -110,11 +97,8 @@ export interface SessionStore<U extends SessionUser = SessionUser, C = PasswordC
 }
 
 /**
- * Resolve the session store over the installed session context.
- *
- * @param pinia - the pinia instance to resolve against; defaults to the active
- * instance
- * @returns the session store, registered under the context's store id
+ * Resolve the session store under the installed context's store id, on the
+ * given pinia or else the active one.
  */
 export function useSessionStore<U extends SessionUser = SessionUser, C = PasswordCredentials>(
     pinia?: Pinia,
@@ -124,9 +108,6 @@ export function useSessionStore<U extends SessionUser = SessionUser, C = Passwor
 
 /**
  * Define the session store under the given id.
- *
- * @param id - the pinia store id from the session context
- * @returns the pinia store hook
  */
 function sessionStoreDefinition(id: string): (pinia?: Pinia) => SessionStore<SessionUser, unknown> {
     const definition = defineStore(id, {
@@ -186,10 +167,8 @@ interface ObservedState {
 const observedStates = new WeakMap<SessionState, ObservedState>();
 
 /**
- * Resolve the observed view of a store state, the same one on every call.
- *
- * @param state - the store state
- * @returns the observed state
+ * Resolve the observed view of a store state, the same one on every call, as
+ * the core keys its bookkeeping by the state object's identity.
  */
 function observed(state: SessionState): ObservedState {
     let entry = observedStates.get(state);

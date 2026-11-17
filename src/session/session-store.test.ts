@@ -1,10 +1,5 @@
 /**
- * Unit tests for useSessionStore.
- *
- * The transition behaviour itself is covered by the foundation session-core
- * suite; these cases prove the pinia binding: the signed-out initial state, the
- * getter, every action delegating with the installed context over the one state
- * object, the outcomes passed through unchanged, and the store id.
+ * Unit tests for useSessionStore's pinia binding over the session core.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -38,8 +33,6 @@ describe('useSessionStore', () => {
 
     /**
      * Install a context over the test storage and gateway.
-     *
-     * @param storeId - the store id to register under
      */
     function install(storeId = 'auth'): void {
         installSessionContext(
@@ -48,9 +41,7 @@ describe('useSessionStore', () => {
     }
 
     /**
-     * Read the persisted snapshot.
-     *
-     * @returns the parsed snapshot, or null when none is stored
+     * Read the persisted snapshot, or null when none is stored.
      */
     function persisted(): unknown {
         return JSON.parse(storage.get(SESSION_KEY) ?? 'null');

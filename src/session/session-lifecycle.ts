@@ -1,13 +1,5 @@
 /**
- * Session lifecycle wiring.
- *
- * The boot-phase half of the session module. Once the persisted session is
- * hydrated it watches for session loss, mirrors other tabs' session changes,
- * fans the identity out, refreshes ahead of expiry, keeps the realtime
- * connection following the session, and finally loads the user. Watchers come
- * first, so a refusal the user fetch triggers is still redirected, and the
- * cross-tab listener is followed by a second hydration that catches a change
- * persisted before it was listening.
+ * Boot-phase wiring of the session module.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -55,11 +47,10 @@ export interface SessionLifecycleOptions {
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 
 /**
- * Wire the session lifecycle at the boot phase.
- *
- * @param context - the module boot context
- * @param options - the resolved lifecycle options
- * @returns one teardown removing every listener, timer and watcher
+ * Wire the session lifecycle once the session is hydrated, returning one
+ * teardown for every listener, timer and watcher. Watchers precede the user
+ * load so a refusal it triggers is still redirected, and a second hydration
+ * after the cross-tab listener catches a change persisted before it listened.
  */
 export async function bootSessionLifecycle(
     context: ModuleBootContext,
@@ -103,13 +94,7 @@ export async function bootSessionLifecycle(
 }
 
 /**
- * Redirect to the login route whenever the session transitions from
- * authenticated to unauthenticated.
- *
- * @param router - the application router
- * @param store - the session store
- * @param routes - the resolved route identity
- * @returns a teardown stopping the watcher
+ * Redirect to the login route whenever an authenticated session is lost.
  */
 function wireSessionLossRedirect(router: Router, store: SessionStore, routes: SessionRoutes): ModuleTeardown {
     return watch(
@@ -123,14 +108,8 @@ function wireSessionLossRedirect(router: Router, store: SessionStore, routes: Se
 }
 
 /**
- * Re-hydrate whenever another tab changes the persisted session, then load the
- * user of a session adopted from it. Only the target window's localStorage
- * under the session key, or a clear of it, counts.
- *
- * @param target - the window whose `storage` events are observed
- * @param store - the session store
- * @param sessionKey - the key the session snapshot persists under
- * @returns a teardown detaching the listener and abandoning pending work
+ * Re-hydrate whenever another tab changes the session key in the target
+ * window's localStorage, or clears it, then load the adopted session's user.
  */
 function wireCrossTabSync(target: Window, store: SessionStore, sessionKey: string): ModuleTeardown {
     const area = target.localStorage;
@@ -154,8 +133,6 @@ function wireCrossTabSync(target: Window, store: SessionStore, sessionKey: strin
 
     /**
      * Synchronise on a change to the session key, or a clear, of the area.
-     *
-     * @param event - the storage event
      */
     const onStorage = (event: StorageEvent): void => {
         if (event.storageArea === area && (event.key === sessionKey || event.key === null)) {
@@ -173,10 +150,6 @@ function wireCrossTabSync(target: Window, store: SessionStore, sessionKey: strin
 
 /**
  * Fan the identity of the current user out, then again whenever it changes.
- *
- * @param store - the session store
- * @param mapping - the resolved per-channel identity mappings
- * @returns a teardown stopping the watcher
  */
 function wireIdentityFanOut(
     store: SessionStore,
@@ -198,11 +171,6 @@ function wireIdentityFanOut(
  * Keep a single refresh armed ahead of the session expiry, through the refresh
  * authority so it never races a 401 refresh. A transient failure is left to the
  * 401 path and a refusal clears the session, which the loss watcher redirects.
- *
- * @param session - the session context, carrying the clock, scheduler, skew
- * and authority
- * @param store - the session store
- * @returns a teardown stopping the watcher and cancelling the armed refresh
  */
 function wireProactiveRefresh(session: SessionContext, store: SessionStore): ModuleTeardown {
     /**
@@ -211,9 +179,8 @@ function wireProactiveRefresh(session: SessionContext, store: SessionStore): Mod
     let cancel = (): void => undefined;
 
     /**
-     * Arm the refresh ahead of the expiry, replacing any armed one.
-     *
-     * @param expiresAtEpochMs - the expiry, or null to leave none armed
+     * Arm the refresh ahead of the expiry, replacing any armed one; a null
+     * expiry arms none.
      */
     const schedule = (expiresAtEpochMs: number | null): void => {
         cancel();
@@ -244,11 +211,8 @@ function wireProactiveRefresh(session: SessionContext, store: SessionStore): Mod
 }
 
 /**
- * Push the login route, carrying the sanitised current path as the redirect
- * query parameter when it is a safe return target.
- *
- * @param router - the application router
- * @param routes - the resolved route identity
+ * Push the login route, carrying the current path as the redirect query
+ * parameter when it is a safe return target.
  */
 function redirectToLogin(router: Router, routes: SessionRoutes): void {
     const target = sanitiseRedirectTarget(router.currentRoute.value.fullPath, routes.loginPath);
@@ -261,9 +225,6 @@ function redirectToLogin(router: Router, routes: SessionRoutes): void {
 
 /**
  * Merge the caller's identity mapping over the per-channel defaults.
- *
- * @param identity - the caller-supplied mapping
- * @returns the fully-resolved mapping
  */
 function resolveIdentityMapping(
     identity: SessionIdentityMapping<SessionUser>,
@@ -276,10 +237,8 @@ function resolveIdentityMapping(
 }
 
 /**
- * Map a session user onto the default error-reporter identity.
- *
- * @param user - the signed-in user
- * @returns the reported identity, with null email and name omitted
+ * Map a session user onto the default error-reporter identity, omitting a null
+ * email or name.
  */
 function defaultReportedIdentity(
     user: SessionUser,
@@ -294,9 +253,6 @@ function defaultReportedIdentity(
 /**
  * Fan the session identity out to the reporting, analytics and feature-flag
  * holders, clearing all three together on sign-out.
- *
- * @param mapping - the resolved per-channel mappings
- * @param user - the session user, or null when signed out
  */
 function applyIdentity(mapping: Required<SessionIdentityMapping<SessionUser>>, user: SessionUser | null): void {
     if (user === null) {
@@ -314,8 +270,6 @@ function applyIdentity(mapping: Required<SessionIdentityMapping<SessionUser>>, u
 
 /**
  * Report a session failure the lifecycle contains.
- *
- * @param error - the failure
  */
 function report(error: unknown): void {
     reporting().captureError(error);

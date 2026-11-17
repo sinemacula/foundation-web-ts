@@ -1,8 +1,5 @@
 /**
- * The @sinemacula/web-core ESLint plugin.
- *
- * Bundles the framework's module-contract rules. The flat-config preset in
- * index.js is what switches them on for a consumer's `modules/` tree.
+ * The @sinemacula/web-core ESLint plugin; index.js enables its rules.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

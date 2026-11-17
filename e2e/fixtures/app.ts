@@ -1,9 +1,5 @@
 /**
- * Application test fixtures.
- *
- * Extends Playwright's base test with page objects so specs receive them
- * ready-made. Import `test` and `expect` from this file, never from
- * `@playwright/test` directly.
+ * Page-object fixtures; specs import `test` and `expect` from here.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

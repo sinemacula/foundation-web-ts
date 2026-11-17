@@ -1,9 +1,5 @@
 /**
- * Tests for the flat-config preset wiring.
- *
- * These assert the preset switches the right rules on for the right files:
- * conventions and the import boundary everywhere (including .vue), the
- * feature-module contract only under modules/, and the test-file exemption.
+ * Tests for which rules the preset enables on which files.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

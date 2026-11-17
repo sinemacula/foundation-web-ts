@@ -1,8 +1,5 @@
 <!--
-    Primary action button.
-
-    Presentational only: props in, clicks out. The loading state disables the
-    button and shows a spinner alongside the label.
+    Action button; `loading` disables it and shows a spinner beside the label.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

@@ -1,9 +1,6 @@
 /**
  * Component tests for dashboard-view.
  *
- * Mounts the view inside a minimal Vue app to exercise the template and setup
- * script against a seeded, hydrated session.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -33,19 +30,13 @@ import { installTestSession, resetSessionContext } from '@/test-support/install-
 
 const SESSION_KEY = 'auth.session';
 
-/**
- * Minimal no-op stub that satisfies the {@link LocaleSwitcher} interface,
- * required because DashboardView renders DefaultLayout's locale switcher.
- */
+/** No-op locale switcher for DefaultLayout's locale switcher. */
 const stubLocaleSwitcher: LocaleSwitcher = {
     current: computed(() => 'en-US'),
     switchTo: async () => undefined,
 };
 
-/**
- * Minimal no-op stub for the colour-scheme service, required because
- * DashboardView renders DefaultLayout's colour-scheme switcher.
- */
+/** No-op colour-scheme service for DefaultLayout's colour-scheme switcher. */
 const stubColorScheme = {
     preference: () => 'system',
     resolved: () => 'light',
@@ -54,14 +45,7 @@ const stubColorScheme = {
 } as unknown as ColorSchemeService;
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write SCREAMING_SNAKE_CASE env keys
- * as plain string literals without triggering Biome's naming-convention rule on
- * object literal keys.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a record from pairs so non-camelCase keys avoid object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
@@ -81,8 +65,6 @@ interface MountedDashboardView {
 
 /**
  * Mount DashboardView with the minimal plugins it needs.
- *
- * @returns the DOM container, router instance, and an unmount callback
  */
 function mountDashboardView(): MountedDashboardView {
     const pinia = createPinia();

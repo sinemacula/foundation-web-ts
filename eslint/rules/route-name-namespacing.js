@@ -1,11 +1,5 @@
 /**
- * Require route names to be namespaced under the module folder.
- *
- * Every value in a module's `_ROUTE_NAMES` map must read `<folder>.<kebab>`
- * (for example `auth.login`, `errors.not-found`). The first segment is the
- * module name, which is also the i18n namespace, so an un-namespaced or
- * mis-namespaced route name collides across modules and breaks
- * title/translation lookup.
+ * Require `_ROUTE_NAMES` values to read `<folder>.<kebab>`, the i18n namespace.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -21,8 +15,7 @@ function escapeRegExp(value) {
 }
 
 /**
- * Every route-name string value in an object, recursively - both plain string
- * literals and single-quasi template literals (`` `auth.login` ``).
+ * Every string or single-quasi template value in an object, recursively.
  */
 function routeNameValues(objectExpression) {
     const values = [];
@@ -46,7 +39,7 @@ function routeNameValues(objectExpression) {
     return values;
 }
 
-// Stryker disable all: declarative rule metadata, not behaviour (verified via messageId and data)
+// Stryker disable all: declarative rule metadata
 export default createRule({
     name: 'route-name-namespacing',
     meta: {

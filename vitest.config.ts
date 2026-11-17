@@ -1,14 +1,5 @@
 /**
- * Vitest test-runner configuration.
- *
- * Tests are colocated with source (`*.test.ts`). Coverage over the kernel spans
- * the plain TypeScript surface: Vue single-file components are kept thin
- * (template plus wiring) so every line of behaviour lives in fully-covered
- * `.ts` modules. The eslint preset ships as plain JS with its own RuleTester
- * suite; it is folded in here so it clears the same coverage and mutation gates
- * rather than running blind alongside them.
- *
- * Kernel subpath imports resolve to source, so the suite runs without a build.
+ * Vitest config; kernel subpath imports resolve to source, so no build runs.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -44,6 +35,7 @@ export default defineConfig({
         coverage: {
             provider: 'v8',
             reporter: ['text', 'html', 'lcov'],
+            // SFCs stay thin wiring; behaviour lives in covered `.ts` modules.
             include: ['src/**/*.ts', 'playground/src/**/*.ts', 'eslint/**/*.js'],
             exclude: [
                 '**/*.test.ts',

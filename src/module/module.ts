@@ -1,11 +1,5 @@
 /**
- * Feature module contract.
- *
- * The application is composed of modules: each contributes routes, optional
- * lazily-loaded translations, global navigation guards, stores, and lifecycle
- * hooks, alongside its own internal views and services. The module list is a
- * caller-owned, explicitly ordered array consumed by `createModuleRegistry` in
- * `./module-registry` - no filesystem magic, no auto-imports.
+ * Feature module contract: routes, translations, guards, stores and hooks.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -34,7 +28,7 @@ import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-s
 export type LocaleMessages = Record<string, unknown>;
 
 /**
- * Resolve a module's translations for one locale.
+ * Resolves a module's translations for one locale, or null when it has none.
  */
 export type LocaleMessageLoader = (locale: string) => Promise<LocaleMessages | null>;
 
@@ -54,7 +48,7 @@ export type ScheduleTask = (task: () => void, delayMs: number) => () => void;
  * module hook.
  */
 export interface ResolvedPlatform {
-    /** The fetch implementation threaded to every module hook. */
+    /** The fetch implementation modules use. */
     readonly fetchFn: typeof fetch;
 
     /** The window modules read and drive. */
@@ -76,25 +70,25 @@ export interface ResolvedPlatform {
  */
 export interface ModuleHttpRegistrar {
     /**
-     * Appended after preset-level interceptors, in registry order.
+     * Add a request interceptor, run after the preset's, in registry order.
      */
     addRequestInterceptor(interceptor: RequestInterceptor): void;
 
     /**
-     * Single slot - one refresh authority per application. A second call throws
-     * a `ModuleRegistryError` naming both contributing modules.
+     * Set the application's single unauthorized handler; a second call throws a
+     * `ModuleRegistryError` naming both modules.
      */
     setUnauthorizedHandler(handler: UnauthorizedHandler): void;
 
     /**
-     * Run after the preset's response-error handler, in registry order.
+     * Add a response-error handler, run after the preset's, in registry order.
      */
     addResponseErrorHandler(handler: ResponseErrorHandler): void;
 }
 
 /**
- * Phase 1 context: contribute cross-cutting hooks before shared services exist.
- * Synchronous by design.
+ * Register-phase context, handed over synchronously before shared services
+ * exist.
  */
 export interface ModuleRegisterContext {
     /** The application configuration repository. */
@@ -117,8 +111,8 @@ export interface ModuleRegisterContext {
 }
 
 /**
- * Phase 2 context: runtime effects once the app, pinia, HTTP client, i18n and
- * router exist; runs before mount.
+ * Boot-phase context, handed over once the app, pinia, HTTP client, i18n and
+ * router exist, before mount.
  */
 export interface ModuleBootContext {
     /** The Vue application instance. */
@@ -150,13 +144,12 @@ export interface ModuleBootContext {
 }
 
 /**
- * A store hook instantiated eagerly at the stores phase; matches the shape of a
- * `defineStore` result, and its `$dispose` is composed into application
- * disposal.
+ * A `defineStore` hook instantiated at the stores phase; its `$dispose` joins
+ * application disposal.
  */
 export type ModuleStoreFactory = (pinia: Pinia) => {
     /**
-     * Dispose the store; composed into application disposal.
+     * Dispose the store.
      */
     $dispose(): void;
 };
@@ -165,7 +158,7 @@ export type ModuleStoreFactory = (pinia: Pinia) => {
  * A self-contained feature area of the application.
  */
 export interface ModuleDefinition {
-    /** Unique module name; also the namespace for its translations. Uniqueness is enforced by the registry. */
+    /** Unique module name, enforced by the registry; also the namespace for its translations. */
     readonly name: string;
 
     /** Routes contributed to the application router. */
@@ -174,28 +167,24 @@ export interface ModuleDefinition {
     /** Lazily-loaded translations, keyed under the module name. */
     readonly locales?: LocaleMessageLoader;
 
-    /** Global navigation middleware, run on every navigation before route-level `meta.middleware`, in registry order. Instances may be created at module-definition time and must defer all store and service access to `handle()`. */
+    /** Global middleware run on every navigation before route `meta.middleware`, in registry order; defer store and service access to `handle()`. */
     readonly guards?: readonly RouteMiddleware[];
 
-    /** Stores instantiated eagerly at the stores phase (after pinia and storage install, before i18n and the router), in registry order. A `useXStore` hook fits directly. */
+    /** Stores instantiated in registry order after pinia and storage install, before i18n and the router; a `useXStore` hook fits directly. */
     readonly stores?: readonly ModuleStoreFactory[];
 
-    /** Contribute HTTP machinery (interceptors, the single unauthorized handler, extra response-error handlers) before the client is built. Synchronous by design. */
+    /** Contributes HTTP interceptors and handlers, synchronously, before the client is built. */
     readonly register?: (context: ModuleRegisterContext) => void;
 
-    /** Imperative installation of module-owned runtime behaviour; runs after router creation, before mount. May return a teardown removing whatever it installed. */
+    /** Installs module runtime behaviour after router creation, before mount; may return a teardown for whatever it installed. */
     readonly boot?: (context: ModuleBootContext) => ModuleTeardown | undefined | Promise<ModuleTeardown | undefined>;
 
-    /** This module owns the application catch-all; the registry orders it last. At most one module per registry may declare it. Keeping the catch-all last within the module's own routes array remains the module's responsibility. */
+    /** Marks the module owning the catch-all route, which the registry orders last; at most one per registry, and the catch-all must still be last in its own routes. */
     readonly fallback?: boolean;
 }
 
 /**
- * Schedule a task on the global timers: the browser scheduling seam.
- *
- * @param task - the task to run
- * @param delayMs - the delay before it runs, in milliseconds
- * @returns a function cancelling the task
+ * The default {@link ScheduleTask}, backed by the global timers.
  */
 export function scheduleOnTimers(task: () => void, delayMs: number): () => void {
     const timer = setTimeout(task, delayMs);
@@ -206,10 +195,8 @@ export function scheduleOnTimers(task: () => void, delayMs: number): () => void 
 }
 
 /**
- * Build a {@link LocaleMessageLoader} from a per-locale import map.
- *
- * @param loaders - dynamic importers keyed by locale code
- * @returns a loader resolving null for locales the module does not provide
+ * Build a {@link LocaleMessageLoader} from per-locale dynamic importers; a
+ * locale without one resolves null.
  */
 export function createLocaleLoader(
     loaders: Readonly<Record<string, () => Promise<LocaleMessages>>>,
@@ -222,21 +209,14 @@ export function createLocaleLoader(
 }
 
 /**
- * Flatten the routes contributed by a set of modules.
- *
- * @param modules - the module registry
- * @returns every module route, in registry order
+ * Flatten every module's routes, in registry order.
  */
 export function collectModuleRoutes(modules: readonly ModuleDefinition[]): RouteRecordRaw[] {
     return modules.flatMap(definition => [...definition.routes]);
 }
 
 /**
- * Load and namespace every module's translations for one locale.
- *
- * @param modules - the module registry
- * @param locale - the locale to load
- * @returns module translations keyed by module name
+ * Load every module's translations for one locale, keyed by module name.
  */
 export async function collectModuleMessages(
     modules: readonly ModuleDefinition[],
@@ -256,10 +236,7 @@ export async function collectModuleMessages(
 }
 
 /**
- * Flatten the global navigation guards contributed by a set of modules.
- *
- * @param modules - the module registry
- * @returns every module guard, in registry order
+ * Flatten every module's global navigation guards, in registry order.
  */
 export function collectModuleGuards(modules: readonly ModuleDefinition[]): RouteMiddleware[] {
     return modules.flatMap(definition => [...(definition.guards ?? [])]);

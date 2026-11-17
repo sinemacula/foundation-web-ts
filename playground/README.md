@@ -2,16 +2,13 @@
 
 The reference application and development harness for [`@sinemacula/web-core`](../README.md).
 
-This workspace is a complete Vue 3 SPA built on the kernel. It exists for three reasons:
+This workspace is a complete Vue 3 SPA built on the kernel. It serves as:
 
-- **Reference consumer.** It depends on the kernel through the real package name and exports map, so every
-  import specifier here is exactly what an external consumer writes. When the kernel changes shape, this app
-  is the first thing that breaks.
-- **Permanent integration harness.** The Playwright end-to-end suite (`e2e/` at the repository root) and the
-  size-limit budgets run against this app, so the kernel is continuously proven inside a real boot sequence,
-  router and production build - not only unit tests.
-- **Development harness.** `npm run dev` at the repository root serves this app, giving kernel work an
-  immediate, clickable surface.
+- The reference consumer. It depends on the kernel through the real package name and exports map, so every
+  import specifier here is what an external consumer writes.
+- The integration harness. The Playwright suite (`e2e/` at the repository root) and the size-limit budgets
+  run against it, exercising the kernel through a real boot sequence, router and production build.
+- The development surface served by `npm run dev` at the repository root.
 
 The package is private and never published.
 
@@ -19,13 +16,13 @@ The package is private and never published.
 
 All scripts run from the repository root; `dev`, `build`, `preview` and `size` proxy to this workspace.
 
-| Script (repo root)  | Purpose                                             |
-|---------------------|-----------------------------------------------------|
-| `npm run dev`       | Vite dev server for this app                        |
-| `npm run build`     | Production build to `playground/dist/`              |
-| `npm run preview`   | Serve the production build locally                  |
-| `npm run test:e2e`  | Playwright end-to-end suite against this app        |
-| `npm run size`      | size-limit budgets over the built `dist/assets/*`   |
+| Script (repo root) | Purpose                                                |
+|--------------------|--------------------------------------------------------|
+| `npm run dev`      | Vite dev server for this app                           |
+| `npm run build`    | Production build and error pages to `playground/dist/` |
+| `npm run preview`  | Serve the production build locally                     |
+| `npm run test:e2e` | Playwright end-to-end suite against this app           |
+| `npm run size`     | size-limit budgets over the built `dist/assets/*`      |
 
 The root `typecheck`, `test`, `test:coverage`, `test:mutation`, `check` and `deadcode` scripts cover this
 workspace's source alongside the kernel's.
@@ -44,7 +41,7 @@ dependency, and `vite.config.ts` maps each kernel subpath export to its source f
 here are what a consuming app writes and need no package build:
 
 ```ts
-import { FetchHttpClient } from '@sinemacula/web-core/http/fetch-http-client';
+import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
 ```
 
 There are no barrel files - every kernel import is a subpath. The `@/*` alias resolves to this app's own
@@ -56,18 +53,21 @@ There are no barrel files - every kernel import is a subpath. The `@/*` alias re
 index.html                  Vite entry document
 public/                     Static assets copied verbatim into the artifact
 scripts/
+  generate-error-pages.mjs  Writes static HTTP error pages to dist/errors/ after each build
   generate-runtime-env.mjs  Renders runtime-env.json at deploy time
 src/
   main.ts                   Entry point and composition root - one createWebCoreApp call, then mount
   App.vue                   Application root: router outlet, progress, error panel, notification hosts
   assets/                   Global styles (theme tokens + app layer)
   config/                   Laravel-style typed configuration definitions
+  composables/              App-level composables (the fatal error boundary)
+  errors/                   The application's own error type
   services/                 App-typed wrappers over the kernel service accessors: config(), api(), ...
   modules/                  Feature modules: routes + views + stores + services + locales
   layouts/                  Page chrome
   locales/                  Shared translations (lazy-loaded)
-  components/               App-level hosts (toasts, confirm dialogs, navigation progress) and ui/ primitives
-  forms/                    Typed form schemas and server-error mapping
+  components/               App-level hosts and switchers (toasts, confirm, progress, locale, theme), ui/ primitives
+  forms/                    Zod-to-vee-validate schema adapter and server-error mapping
   test-support/             Unit-test fakes and seams: HTTP client, network guard, session-context installer
 ```
 
@@ -76,24 +76,22 @@ For what lives in the kernel itself, see the [root README](../README.md).
 ## Boot sequence
 
 `src/main.ts` is the whole composition root: one `createWebCoreApp` call, then `app.start('#app')`. The phase
-sequence - runtime environment, configuration, services, module lifecycle, i18n, router, observability,
-monitors - is kernel-owned and documented in the
-[root README](../README.md#bootstrapping-an-application); this app supplies only its own inputs:
+sequence is kernel-owned and documented in the [root README](../README.md#bootstrapping-an-application); this
+app supplies only its own inputs:
 
-- **Configuration** - `createWebEnvironment` over the fetched `/runtime-env.json`. In development, `VITE_*`
+- Configuration: `createWebEnvironment` over the fetched `/runtime-env.json`. In development, `VITE_*`
   variables are chained behind the runtime document as a fallback; in production the document must contain
-  every key in `REQUIRED_RUNTIME_KEYS` (`src/config/runtime.ts`) or boot fails loudly. `defineConfiguration`
-  (`src/config/*`) shapes the frozen tree read back through `config()`.
-- **Modules** - `[createSessionModule(), ...modules]`: the kernel session module with every default (this
-  app is the reference those defaults mirror) ahead of the explicit module list in `src/modules/index.ts`.
-- **Locales** - the shared loaders and datetime/number formats from `src/locales/`.
-- **Application copy** - the two toast keys the kernel never defaults: `common.states.error` for unexpected
-  HTTP failures and `common.updates.available` for the update monitor.
+  every key in `REQUIRED_RUNTIME_KEYS` (`src/config/runtime.ts`) or boot throws a `ConfigurationError`.
+  `defineConfiguration` (`src/config/*`) shapes the frozen tree read back through `config()`.
+- Modules: `[createSessionModule(), ...modules]`, the kernel session module with every default ahead of the
+  explicit module list in `src/modules/index.ts`.
+- Locales: the shared loaders and datetime/number formats from `src/locales/`.
+- Application copy: the two toast keys the kernel never defaults, `common.states.error` for unexpected HTTP
+  failures and `common.updates.available` for the update monitor.
 
-A failed boot renders a static message into the mount node instead of mounting. `src/boot.test.ts` pins what
-is app-specific about this composition by driving `createWebCoreApp` through the kernel's platform seams
-(fake fetch, memory storage, memory history); the phase machinery itself is covered by the kernel's own
-suite.
+A failed boot renders a static message into the mount node instead of mounting. `src/boot.test.ts` drives
+`createWebCoreApp` through the kernel's platform seams (fake fetch, memory storage, memory history) to pin
+what is app-specific about this composition; the phase machinery is covered by the kernel's own suite.
 
 ## Configuration (runtime, not build time)
 
@@ -109,10 +107,9 @@ config().app.urls.api;       // fully typed
 configValue('app.urls.api'); // dot-notation, for dynamic access
 ```
 
-Only the keys allow-listed in `generate-runtime-env.mjs` are ever exposed - never the full environment. One
-key carries a contract: `APP_VERSION` must change on every release (derive it from the commit, do not
-hard-code it), because the update monitor diffs it to detect new deployments. A constant value silently
-disables update detection.
+Only the keys allow-listed in `generate-runtime-env.mjs` (or named in `RUNTIME_ENV_KEYS`) are exposed.
+`APP_VERSION` must change on every release (derive it from the commit), because the update monitor diffs it
+to detect new deployments; a constant value silently disables update detection.
 
 ## Adding a feature module
 
@@ -120,9 +117,9 @@ disables update detection.
 2. Declare middleware on routes via `meta.middleware` (`authenticated()`, `guestOnly()`, `authorize(...)`).
 3. Add translations under `locales/` and register their loaders in `module.ts` - messages are namespaced
    under the module name automatically.
-4. Register the module in `src/modules/index.ts`. That is the only registration step - there is no filesystem
-   magic, and declaration order is the effective order except that the module marked `fallback: true` (the
-   errors module - it owns the catch-all route) is always ordered last by the registry.
+4. Register the module in `src/modules/index.ts`, the only registration step. Declaration order is the
+   effective order, except that the module marked `fallback: true` (the errors module, which owns the
+   catch-all route) is always ordered last by the registry.
 5. Modules that need more than routes and translations declare it on the definition: `guards` for global
    navigation middleware, `stores` for eagerly-instantiated pinia stores, `register` to contribute HTTP
    machinery, `boot` for runtime effects with a teardown. See the module contract in the
@@ -131,13 +128,12 @@ disables update detection.
 
 ## What is demo material
 
-The `auth` module is the reference login flow: the login view, form composable and locale copy over the
-kernel session module, whose generic machinery (store, guards, token refresh, redirect handling) it
-re-exports through `auth/index.ts` under the app's established names (`useAuthStore`, `authenticated`, ...).
-The `errors` module is the reference forbidden and not-found handling, owning the application catch-all
-through its `fallback` marker. The `users` and `dashboard` modules are demonstration content - an
-authenticated landing view and a query-backed list that give the end-to-end suite realistic pages to
-exercise. A real application would adapt the former and replace the latter.
+The `auth` module is the reference login flow: the login view, form composable and locale copy over the kernel
+session module, whose store and guards it re-exports through `auth/index.ts` as `useAuthStore`,
+`authenticated` and `authorize`. The `errors` module is the reference forbidden and not-found handling, owning
+the application catch-all through its `fallback` marker. The `dashboard` and `users` modules are demonstration
+content (an authenticated landing view and a query-backed list) that give the end-to-end suite realistic pages
+to exercise. A real application would adapt `auth` and `errors` and replace the rest.
 
 ## End-to-end tests
 
@@ -176,7 +172,7 @@ aws s3 cp runtime-env.json "s3://${BUCKET}/runtime-env.json" --cache-control no-
 ```
 
 Source maps are disabled (`build.sourcemap: false`): even a hidden map writes readable source into the promoted
-artifact, so they stay off until an error reporter both uploads and strips them. The build targets Vite's
-`baseline-widely-available` floor (pinned explicitly) - roughly Chrome 111 / Edge 111 / Firefox 114 / Safari
-16.4 / iOS 16.4. The other Vite 8 defaults (oxc minify, asset hashing, css code-split) are deliberate;
-`manualChunks` must not be added - it hard-fails the Rolldown build.
+artifact, so they stay off until an error reporter both uploads and strips them. The build pins Vite's
+`baseline-widely-available` target (Chrome 111, Edge 111, Firefox 114, Safari 16.4, iOS 16.4) and otherwise
+keeps Vite 8's defaults. Do not add `manualChunks`: Rolldown deprecates it in favour of `output.codeSplitting`
+and rejects its object form.

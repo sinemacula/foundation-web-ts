@@ -1,10 +1,6 @@
 /**
  * Component tests for users-view.
  *
- * Exercises the template's rendered states (loading, error, empty, table) and
- * the sort-header wiring; the composable's own behaviour is covered by
- * use-users-list.test.ts.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -26,19 +22,13 @@ import { initialiseConfiguration, resetConfiguration } from '@/services/config';
 import { initialiseLocaleSwitcher, resetLocaleSwitcher } from '@/services/locale';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
 
-/**
- * Minimal no-op stub that satisfies the {@link LocaleSwitcher} interface,
- * required because UsersView renders DefaultLayout's locale switcher.
- */
+/** No-op locale switcher for DefaultLayout's locale switcher. */
 const stubLocaleSwitcher: LocaleSwitcher = {
     current: computed(() => 'en-US'),
     switchTo: async () => undefined,
 };
 
-/**
- * Minimal no-op stub for the colour-scheme service, required because UsersView
- * renders DefaultLayout's colour-scheme switcher.
- */
+/** No-op colour-scheme service for DefaultLayout's colour-scheme switcher. */
 const stubColorScheme = {
     preference: () => 'system',
     resolved: () => 'light',
@@ -47,15 +37,7 @@ const stubColorScheme = {
 } as unknown as ColorSchemeService;
 
 /**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write snake_case API field names as
- * plain string literals inside array elements rather than as object-literal
- * keys - keeping non-camelCase field names out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
+ * Build a record from pairs so snake_case wire keys avoid object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
@@ -91,8 +73,7 @@ function mountUsersView(): MountedUsersView {
         legacy: false,
         locale: 'en-US',
         messages: {},
-        // A fixed UTC timeZone keeps the formatted assertion stable regardless
-        // of the machine running the test suite.
+        // Fixed UTC so the formatted date does not depend on the host timezone.
         datetimeFormats: {
             'en-US': { short: { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC' } },
         },
@@ -125,14 +106,7 @@ function mountUsersView(): MountedUsersView {
 }
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write SCREAMING_SNAKE_CASE env keys
- * as plain string literals without triggering Biome's naming-convention rule on
- * object literal keys.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build an env record from pairs, keeping its snake-case keys out of literals.
  */
 function wireEnv(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
@@ -241,7 +215,7 @@ describe('UsersView', () => {
         unmount();
     });
 
-    it('toggles aria-sort on a column header when its sort button is clicked', async () => {
+    it('updates aria-sort when a column sort button is clicked', async () => {
         const fake = new FakeHttpClient();
 
         fake.queueResponse({ data: [userRow('u1', 'Alice Smith')] });

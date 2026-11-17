@@ -1,8 +1,5 @@
 /**
- * Third-party service configuration definition.
- *
- * Keys are optional by design: a deployment that does not configure a service
- * resolves to null and the integration stays disabled.
+ * Third-party service configuration; an unset service resolves to null.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -29,9 +26,6 @@ export interface ServicesConfig {
 
 /**
  * Resolve the third-party service configuration from the environment.
- *
- * @param env - the typed environment reader
- * @returns the resolved service configuration
  */
 export function servicesConfig(env: Environment): ServicesConfig {
     return {

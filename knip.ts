@@ -1,17 +1,5 @@
 /**
- * Knip dead-code detection configuration.
- *
- * The repository is an npm workspace: the kernel package at the root plus the
- * playground harness. Kernel production entries are the sources behind the
- * manifest's conditional `exports`, which point at the compiled `dist` output;
- * the plain-JS eslint preset export already names a source file, which Knip
- * reads directly. Vue single-file components are compiled down to their script
- * blocks so Knip can follow imports through `.vue` files.
- *
- * The vite/vitest plugins are disabled in favour of listing the config files as
- * static entries: executing the Vite config under Knip's loader breaks on
- * ESM-only plugin packages, while static analysis resolves the same
- * dependencies without running anything.
+ * Knip config; entries map the `dist` exports back to their sources.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -41,6 +29,7 @@ const config: KnipConfig = {
             ],
             project: ['src/**/*.ts', 'e2e/**/*.ts', 'eslint/**/*.js'],
             playwright: false,
+            // Loading Vite configs under Knip breaks on ESM-only plugins.
             vitest: false,
         },
         playground: {

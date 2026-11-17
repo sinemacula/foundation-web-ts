@@ -1,8 +1,5 @@
 /**
- * In-memory {@link HttpClient} fake for tests.
- *
- * Records every call and replays queued results in order. An empty queue
- * resolves to undefined, matching a 204-style response.
+ * Call-recording {@link HttpClient} fake; an empty queue resolves undefined.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -48,18 +45,14 @@ export class FakeHttpClient implements HttpClient {
     readonly #queue: QueuedResult[] = [];
 
     /**
-     * Queue a successful response payload.
-     *
-     * @param value - the payload the next call resolves with
+     * Queue a payload for the next call to resolve with.
      */
     queueResponse(value: unknown): void {
         this.#queue.push({ kind: 'resolve', value });
     }
 
     /**
-     * Queue a failure.
-     *
-     * @param error - the error the next call rejects with
+     * Queue an error for the next call to reject with.
      */
     queueError(error: unknown): void {
         this.#queue.push({ kind: 'reject', error });

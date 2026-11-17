@@ -1,10 +1,5 @@
 /**
- * Configuration registry.
- *
- * Mirrors Laravel's `config/` directory: one typed definition per concern,
- * aggregated here into the single tree the {@link ConfigRepository} freezes at
- * boot. Add new definitions by creating a sibling file and registering it in
- * {@link defineConfiguration}.
+ * Configuration registry: one typed definition per concern, frozen at boot.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -20,9 +15,6 @@ import { servicesConfig } from './services';
 
 /**
  * Resolve every configuration definition against the environment.
- *
- * @param env - the typed environment reader
- * @returns the full configuration tree
  */
 export function defineConfiguration(env: Environment): Configuration {
     return {

@@ -1,19 +1,5 @@
 /**
- * Chunk-load-failure recovery for the router.
- *
- * A deploy removes the previous build's hashed chunk files, so a tab left open
- * since before that deploy fails to lazy-load any route it has not already
- * visited. The update monitor warns about this proactively by polling the
- * deployed version; this module recovers from it reactively, from inside the
- * router's own error channel, catching the tab that missed the warning or
- * navigated before it was shown.
- *
- * A chunk-load failure is treated as recoverable once per target path within a
- * rolling window: the first failure triggers a full document reload, which
- * fetches the fresh `index.html` and the chunks it now references. A second
- * failure for the same path inside that window means the reload did not cure it
- * - a genuinely broken deploy - so the failure is reported instead of retried
- * forever.
+ * Router recovery from the chunk-load failures a stale deploy leaves behind.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -45,7 +31,7 @@ export interface ChunkErrorRecoveryOptions {
     /** Performs the recovery reload; defaults to a full document navigation to `targetPath`. */
     readonly reload?: (targetPath: string) => void;
 
-    /** Resolves the current time; defaults to `Date.now`, injected for tests. */
+    /** Resolves the current epoch milliseconds; defaults to `Date.now`. */
     readonly clock?: () => number;
 
     /** The reload-loop guard window in milliseconds; defaults to sixty seconds. */
@@ -53,11 +39,10 @@ export interface ChunkErrorRecoveryOptions {
 }
 
 /**
- * Install a router error handler that recovers from stale-deploy chunk-load
- * failures and forwards every other router error to the reporter.
+ * Install a router error handler that reloads the document on a chunk-load
+ * failure, at most once per path within `windowMs`, and reports every other
+ * router error, including a chunk failure the reload did not cure.
  *
- * @param options - the router to guard plus its storage and reporter
- * dependencies and recovery tuning
  * @returns a teardown that removes the error handler
  */
 export function installChunkErrorRecovery(options: ChunkErrorRecoveryOptions): () => void {
@@ -89,24 +74,15 @@ export function installChunkErrorRecovery(options: ChunkErrorRecoveryOptions): (
 }
 
 /**
- * Determine whether an error is the browser's dynamic-import failure for a
- * chunk that no longer exists, as opposed to any other router error.
- *
- * @param error - the value thrown or passed to the router's error handler
- * @returns true when the error is an `Error` whose message matches a known
- * chunk-load failure
+ * Whether `error` is the browser's dynamic-import failure for a missing chunk.
  */
 export function isChunkLoadError(error: unknown): boolean {
     return error instanceof Error && CHUNK_ERROR_MESSAGE_PATTERN.test(error.message);
 }
 
 /**
- * Reload the current document at `targetPath`.
- *
- * A full document load, rather than a client-side navigation, is required so
- * the browser fetches the current `index.html` and its current hashed chunks.
- *
- * @param targetPath - the path to navigate the document to
+ * Load `targetPath` as a full document so the browser fetches the current
+ * `index.html` and the chunks it references.
  */
 function defaultReload(targetPath: string): void {
     globalThis.location.href = targetPath;

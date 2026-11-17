@@ -1,20 +1,5 @@
 /**
- * Generate self-contained, localised static HTTP error pages into the build.
- *
- * A single-page app on static hosting cannot render its in-app error views when
- * the failure happens before the app boots (origin/edge 5xx, malformed
- * requests) or its script fails to load. These pages cover those codes with
- * fully self-contained HTML - all CSS inlined (the shared design tokens plus a
- * small layout layer), no external stylesheet, font, script or asset reference,
- * since during an outage the hashed `assets/*` are exactly what may be failing.
- *
- * The copy lives in the shared locale tree (`src/locales/*`, `httpErrors`), so
- * it is the single source of truth and reusable in-app. This step gathers those
- * strings via the bundler's own esbuild and, for each code, embeds only that
- * code's variants inline. Each page renders the default locale into the body
- * (so it works with no JS) and an inline script upgrades it to the visitor's
- * language from `navigator.language`/the stored locale. Colour scheme follows
- * the same pre-paint boot script and media query the app uses.
+ * Writes localised static HTTP error pages into `dist/errors/` after a build.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -46,7 +31,7 @@ const errorKeys = {
     504: 'gatewayTimeout',
 };
 
-/** The pre-paint scheme stamp, a verbatim copy of the kernel boot script. */
+/** Verbatim copy of the kernel's first-paint colour-scheme boot script. */
 const bootScript = `try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}`;
 
 /** The layout layer, built on the inlined design tokens. */
@@ -117,12 +102,7 @@ const layoutStyles = `
         }`;
 
 /**
- * Load a shared-locale module for its default export. Node strips the type-only
- * import and the annotations natively, so the plain-data module imports without
- * a build step.
- *
- * @param file - absolute path to the module
- * @returns the module's default export
+ * Import a shared locale module's default export; Node strips its types.
  */
 async function loadMessages(file) {
     const loaded = await import(pathToFileURL(file).href);
@@ -130,34 +110,28 @@ async function loadMessages(file) {
     return loaded.default;
 }
 
-/** Escape the characters that would break out of body text. */
+/**
+ * Escape the characters that would break out of body text.
+ */
 function escapeHtml(value) {
     return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Turn a locale filename into its canonical tag (`fr-fr.ts` -> `fr-FR`). */
+/**
+ * Turn a locale filename into its canonical tag (`fr-fr.ts` -> `fr-FR`).
+ */
 function fileToTag(file) {
     const [language, region] = file.replace(/\.ts$/, '').split('-');
 
     return `${language}-${region.toUpperCase()}`;
 }
 
-/**
- * The client-side locale swap. It is a constant - no code is built from the
- * copy; instead it reads the inert data island (`#e-data`), then the stored
- * locale and browser languages, upgrades the default-locale copy already in the
- * document to the visitor's language when available, and syncs the document
- * title and `lang`.
- */
+/** Swaps in the stored or browser locale's copy from the `#e-data` island. */
 const swapScript = `(function(){var raw;try{raw=JSON.parse(document.getElementById('e-data').textContent)}catch(e){return}var v=raw.v,d=raw.d;function b(l){return String(l).slice(0,2).toLowerCase()}function m(){var c=[];try{c.push(localStorage.getItem('locale'))}catch(e){}var n=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];for(var j=0;j<n.length;j++)c.push(n[j]);for(var i=0;i<c.length;i++){var l=c[i];if(!l)continue;if(v[l])return l;var base=b(l);for(var k in v){if(b(k)===base)return k}}return d}var key=m(),p=v[key];var t=document.getElementById('e-title');if(t)t.textContent=p.t;var msg=document.getElementById('e-message');if(msg)msg.textContent=p.m;var h=document.getElementById('e-home');if(h)h.textContent=p.h;document.documentElement.lang=key;document.title=raw.code+' '+p.t})()`;
 
 /**
- * Render one self-contained, localised error page.
- *
- * @param code - the HTTP status code
- * @param variants - the per-locale copy, keyed by locale tag
- * @param tokens - the design-token stylesheet, inlined verbatim
- * @returns the complete HTML document
+ * Render one error page with everything inline, since during an outage the
+ * hashed assets may be what is failing.
  */
 function renderErrorPage(code, variants, tokens) {
     const fallback = variants[defaultLocale];

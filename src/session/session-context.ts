@@ -1,13 +1,5 @@
 /**
- * Session module context.
- *
- * The resolved session-module collaborators, installed once at the module's
- * register phase and read lazily by the session store, the guard factories, the
- * authorization helpers and the realtime reconnect guard: the foundation core
- * slice (persistence, the lazily-built API gateway, the device fingerprint)
- * plus the route identity, the store id, the single refresh authority, the
- * hydration readiness, the clock and skew expiry is judged by, and the
- * scheduler that times refreshes and retries.
+ * The session module's resolved collaborators, installed at its register phase.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -32,7 +24,7 @@ export interface SessionContext<U extends SessionUser = SessionUser, C = Passwor
     /** The pinia store id the session store registers under. */
     readonly storeId: string;
 
-    /** The single refresh authority every refresh path (401 retry, proactive timer, realtime reconnect) routes through, collapsing concurrent attempts into one and announcing those that end renewal. */
+    /** The single refresh authority every refresh path (401 retry, proactive timer, realtime reconnect) routes through. */
     readonly coordinator: SessionRefreshCoordinator;
 
     /** Settles once the persisted session has been hydrated into the store, starting hydration on first call; never rejects. */
@@ -51,9 +43,7 @@ export interface SessionContext<U extends SessionUser = SessionUser, C = Passwor
 const holder = createServiceHolder<SessionContext<SessionUser, unknown>>('session context');
 
 /**
- * Install the session context. Called once at the module's register phase.
- *
- * @param context - the resolved context to install
+ * Install the session context at the module's register phase.
  */
 export function installSessionContext<U extends SessionUser, C>(context: SessionContext<U, C>): void {
     holder.install(context as unknown as SessionContext<SessionUser, unknown>);
@@ -63,7 +53,6 @@ export function installSessionContext<U extends SessionUser, C>(context: Session
  * The installed session context, cast to the application's user and credential
  * shapes.
  *
- * @returns the installed context
  * @throws Error when accessed before {@link installSessionContext}
  */
 export function sessionContext<U extends SessionUser = SessionUser, C = PasswordCredentials>(): SessionContext<U, C> {
@@ -71,7 +60,7 @@ export function sessionContext<U extends SessionUser = SessionUser, C = Password
 }
 
 /**
- * Clear the session context back to its uninstalled state. Test-only.
+ * Clear the installed session context. Test-only.
  */
 export function resetSessionContext(): void {
     holder.reset();

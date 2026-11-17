@@ -1,8 +1,5 @@
 /**
- * Browser OS colour-scheme source.
- *
- * Sources the OS dark-scheme preference from `matchMedia` and notifies
- * subscribers when it changes.
+ * OS colour-scheme preference read from `matchMedia`.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -23,8 +20,6 @@ export class MatchMediaColorSchemeSource implements SystemColorSchemeSource {
 
     /**
      * Whether the OS currently prefers a dark scheme.
-     *
-     * @returns true when the OS prefers dark
      */
     prefersDark(): boolean {
         return this.#query.matches;
@@ -33,7 +28,6 @@ export class MatchMediaColorSchemeSource implements SystemColorSchemeSource {
     /**
      * Subscribe to OS-scheme changes.
      *
-     * @param cb - invoked when the OS scheme changes
      * @returns an unsubscribe function
      */
     subscribe(cb: () => void): () => void {

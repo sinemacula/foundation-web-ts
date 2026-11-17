@@ -21,8 +21,7 @@ function fakeReporter(): ErrorReporter {
 }
 
 /**
- * A component that throws during `setup()` once `shouldThrow` becomes true, so
- * the surrounding boundary only observes the error on a later render.
+ * Component that throws from `setup()` when `shouldThrow` is set.
  */
 const Thrower = defineComponent({
     props: { shouldThrow: { type: Boolean, required: true } },
@@ -47,11 +46,7 @@ interface MountedBoundary {
 }
 
 /**
- * Mount a host component that installs {@link useFatalBoundary} around a child
- * whose presence is controlled by the returned `showThrower` setter.
- *
- * @returns the boundary state, a setter for the guarded child, and an unmount
- * callback
+ * Mount a host installing {@link useFatalBoundary} around a toggleable child.
  */
 function mountBoundary(): MountedBoundary {
     let boundary!: FatalBoundary;

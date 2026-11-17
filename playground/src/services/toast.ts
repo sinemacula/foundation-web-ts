@@ -1,9 +1,5 @@
 /**
- * Application toast notification service.
- *
- * Thin delegating re-export of the kernel toast holder under the application's
- * established accessor names. `resetToasts` clears every kernel service holder
- * between tests.
+ * Toast accessors; `resetToasts` clears every kernel service holder.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

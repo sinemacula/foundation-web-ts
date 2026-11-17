@@ -3,23 +3,19 @@
 <div align="center">
 
 [![Latest Stable Version](https://img.shields.io/npm/v/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
-[![Node Version](https://img.shields.io/node/v/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
 [![Build Status](https://github.com/sinemacula/web-core-ts/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/sinemacula/web-core-ts/actions/workflows/tests.yml)
 [![Quality Gates](https://github.com/sinemacula/web-core-ts/actions/workflows/quality-gates.yml/badge.svg?branch=master)](https://github.com/sinemacula/web-core-ts/actions/workflows/quality-gates.yml)
-[![Maintainability](https://qlty.sh/gh/sinemacula/projects/web-core-ts/maintainability.svg)](https://qlty.sh/gh/sinemacula/projects/web-core-ts)
 [![Code Coverage](https://qlty.sh/gh/sinemacula/projects/web-core-ts/coverage.svg)](https://qlty.sh/gh/sinemacula/projects/web-core-ts)
-[![Total Downloads](https://img.shields.io/npm/dt/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
-[![License](https://img.shields.io/github/license/sinemacula/web-core-ts.svg)](LICENSE)
 
 </div>
 
-`@sinemacula/web-core` is the Vue kernel on which Sine Macula web applications are built. It layers the
-browser and Vue bindings - the composition root, feature modules, routing, i18n, the session module, realtime and
-release monitoring - over the platform-agnostic `@sinemacula/foundation`, with no product code and no UI.
+`@sinemacula/web-core` is the Vue kernel Sine Macula web applications are built on. It layers the browser and Vue
+bindings - the composition root, feature modules, routing, i18n, the session module, realtime and release monitoring -
+over the platform-agnostic `@sinemacula/foundation`, with no product code and no UI.
 
-The repository root is the package: `src/` is the published kernel source. The repository is also the
-**reference architecture** for consuming frontends - the playground application under `playground/` shows how a
-real product wires the kernel, and is the template consuming apps follow.
+The repository root is the package: `src/` is the published kernel source. The playground application under
+`playground/` is the reference consumer: it shows how a real product wires the kernel, and is the template consuming
+apps follow.
 
 ## What lives here
 
@@ -50,28 +46,30 @@ real product wires the kernel, and is the template consuming apps follow.
 npm install @sinemacula/web-core vue vue-router vue-i18n pinia
 ```
 
-`vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies - install them alongside the kernel. The package
-is ESM-only and ships compiled `dist/` with type declarations.
+`vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies. The package is ESM-only and ships compiled `dist/`
+with type declarations.
 
 ## Import style
 
-No barrel exports. Import the file you need, by its full subpath:
+There are no barrel exports. Import each file by its subpath:
 
 ```ts
 import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
 ```
 
-The exports map points every kernel subpath at compiled output (`{ "types": "./dist/<path>.d.ts", "import":
+Only the subpaths listed in the `exports` map of `package.json` are public; everything else under `src/` (the module
+registry, the router factory, the theme and connectivity adapters, ...) is wired by `createWebCoreApp` or used
+internally. Each subpath resolves to compiled output (`{ "types": "./dist/<path>.d.ts", "import":
 "./dist/<path>.js" }`), and the `prepare` script builds `dist/`, so the package also installs straight from git
-(`github:sinemacula/web-core-ts#master`). Inside this repository the TypeScript, Vite and Vitest configs map the
-same specifiers to `src/`, so the playground and tests run with no build step. `vue`, `vue-router`, `vue-i18n` and
-`pinia` are peer dependencies; the framework-agnostic layer (http, query, session core, storage, config, ...) lives in `@sinemacula/foundation`.
+(`github:sinemacula/web-core-ts#master`). Inside this repository the TypeScript, Vite and Vitest configs map the same
+specifiers to `src/`, so the playground and tests run with no build step. The framework-agnostic layer (http, query,
+session core, storage, config, ...) lives in `@sinemacula/foundation`.
 
 ## Modules
 
 An application is composed of feature modules. A module is a plain object satisfying `ModuleDefinition`
-(`src/module/module.ts`); the application owns an explicit, ordered array of them and hands it to
-`createWebCoreApp` - no filesystem magic, no auto-imports.
+(`src/module/module.ts`); the application owns an explicit, ordered array of them and hands it to `createWebCoreApp`.
+There is no filesystem discovery.
 
 | Field      | Semantics                                                                                  |
 |------------|--------------------------------------------------------------------------------------------|
@@ -84,38 +82,37 @@ An application is composed of feature modules. A module is a plain object satisf
 | `boot`     | Optional post-router, pre-mount hook for runtime effects; may return a teardown            |
 | `fallback` | Optional marker: this module owns the application catch-all; the registry orders it last   |
 
-The field semantics in full: `locales` messages land under the `name` namespace (build a loader from an
-import map with `createLocaleLoader`). `guards` run in registry order, and instances may be created at
-module-definition time provided they defer all store and service access to `handle()`. A `stores` entry is
-`(pinia) => { $dispose() }` - a `defineStore` hook fits directly - instantiated after pinia and storage
-install and before i18n and the router. `boot` receives the full runtime context (app, router, pinia, i18n,
-http, storage, config, platform seams). `fallback` may be declared by at most one module, and keeping the
-catch-all last within that module's own `routes` array remains the module's responsibility.
+`locales` messages land under the `name` namespace (build a loader from an import map with `createLocaleLoader`).
+`guards` run in registry order, and instances may be created at module-definition time provided they defer all store
+and service access to `handle()`. A `stores` entry is `(pinia) => { $dispose() }` - a `defineStore` hook fits
+directly - instantiated after pinia and storage install and before i18n and the router. `boot` receives the full
+runtime context (app, router, pinia, i18n, http, storage, config, platform seams and the realtime connection, or
+null). `fallback` may be declared by at most one module, and keeping the catch-all last within that module's own
+`routes` array remains the module's responsibility.
 
-`createModuleRegistry` (`src/module/module-registry.ts`) validates the list and fixes the effective order:
-declaration order, with the (at most one) `fallback` module moved last. A duplicated name throws a
-`ModuleRegistryError` listing every duplicate; more than one fallback throws naming each of them. The preset
-calls it for you - applications only maintain the array.
+The registry validates the list and fixes the effective order: declaration order, with the (at most one) `fallback`
+module moved last. A duplicated name throws a `ModuleRegistryError` listing every duplicate; more than one fallback
+throws naming each of them. `createWebCoreApp` builds the registry itself - applications only maintain the array.
 
-The lifecycle then runs in registry order. `register` hooks execute first, after configuration, storage,
-notifications and observability are installed but before the HTTP client, stores, i18n and router exist,
-each receiving a `ModuleHttpRegistrar` whose contributions feed the HTTP client's construction:
-`addRequestInterceptor` (appended after preset-level interceptors, in registry order),
-`addResponseErrorHandler` (run after the preset's handler, in registry order), and `setUnauthorizedHandler` -
-a single slot registry-wide, one refresh authority per application; a second call throws naming both
-contributing modules. `stores` factories run next, and `boot` hooks last. Teardown is composed the other way:
-every teardown a `boot` returned disposes in LIFO order (a boot rejection tears down the already-booted
-modules and rethrows), followed by each store's `$dispose`, all folded into the application handle's
-`dispose()`.
+The lifecycle then runs in registry order. `register` hooks execute first, after configuration, storage, feature
+flags, notifications and observability are installed but before the HTTP client, stores, i18n and router exist, each
+receiving a `ModuleHttpRegistrar` whose contributions feed the HTTP client's construction: `addRequestInterceptor`
+(appended after preset-level interceptors, in registry order), `addResponseErrorHandler` (run after the preset's
+handler, in registry order), and `setUnauthorizedHandler` - a single slot registry-wide, one refresh authority per
+application; a second call throws naming both contributing modules. `stores` factories run next, and `boot` hooks
+last. Teardown runs the other way: every teardown a `boot` returned disposes in LIFO order (a boot rejection tears
+down the already-booted modules and rethrows), followed by each store's `$dispose` in reverse, all folded into the
+application handle's `dispose()`.
 
-`collectModuleRoutes`, `collectModuleGuards` and `createModuleMessageSource` (parallel, memoised per locale)
-flatten a registry's contributions; the preset threads them so applications rarely call them directly.
+`collectModuleRoutes` and `collectModuleGuards` (`src/module/module.ts`) flatten a registry's contributions, and the
+locale wiring loads module messages in parallel, memoised per locale; the preset threads all of them, so applications
+rarely call them directly.
 
 ### Splitting a module's translations
 
-A module's `locales` loader only has to resolve to a `LocaleMessages` (`Record<string, unknown>`) for each
-locale, so a large translation tree can be split across files with no kernel change: point the loader at a
-directory whose `index.ts` composes the parts, and `module.ts` stays untouched.
+A module's `locales` loader only has to resolve to a `LocaleMessages` (`Record<string, unknown>`) for each locale, so a
+large translation tree can be split across files with no kernel change: point the loader at a directory whose
+`index.ts` composes the parts, and `module.ts` stays untouched.
 
 ```ts
 // modules/users/locales/en-us/index.ts
@@ -125,37 +122,38 @@ import list from './list';
 export default { list, detail };
 ```
 
-Compose statically. The kernel loads every module's messages once at boot, so there is no per-view deferral
-seam - splitting organises source, it does not lazy-load. Three constraints hold: keep message keys camelCase
-as elsewhere; never name a part `module.ts`, `routes.ts` or `route-names.ts`, because the module-contract lint
-matches those basenames anywhere beneath `modules/<name>/` and would demand the module's canonical exports from
-your translation file; and reserve the directory's `index.ts` for the composition entry, giving each message
-group its own descriptively named file. Keep a single flat `<locale>.ts` per module as the default, and split
-only the locales that have grown large.
+Compose statically. The kernel loads every module's messages for a locale in one pass when that locale activates, so
+there is no per-view deferral seam - splitting organises source, it does not lazy-load. Keep message keys camelCase as
+elsewhere. Never name a part `module.ts`, `routes.ts` or `route-names.ts`: the module-contract lint matches those
+basenames anywhere beneath `modules/<name>/` and would demand the module's canonical exports from your translation
+file. Reserve the directory's `index.ts` for the composition entry and give each message group its own descriptively
+named file. Keep a single flat `<locale>.ts` per module as the default, and split only the locales that have grown
+large.
 
 ## Bootstrapping an application
 
-`createWebCoreApp` (`src/app/create-web-core-app.ts`) assembles a complete application from the kernel: it
-fetches the runtime environment document, freezes the configuration, installs every service singleton, runs
-the module lifecycle and wires i18n, routing, observability, chunk recovery, realtime and the release
-monitors - in a fixed phase order that makes the boot's implicit constraints structural (notifications and
-observability before the HTTP client, storage before stores, stores before i18n and the router).
+`createWebCoreApp` (`src/app/create-web-core-app.ts`) assembles a complete application from the kernel: it fetches the
+runtime environment document, freezes the configuration, installs every service singleton, runs the module lifecycle
+and wires the colour scheme, i18n, routing, observability, chunk recovery, realtime and the release monitors. The phase
+order is fixed, so the boot's ordering constraints are structural: notifications and observability before the HTTP
+client, storage before stores, stores before i18n and the router.
 
-The application's configuration definition must structurally satisfy `WebCoreConfig`
-(`src/app/web-core-config.ts`) - the slice the preset reads: `api.baseUrl`/`api.timeout`,
-`app.name`/`app.environment`/`app.version`, `featureFlags.flags` and
-`locales.default`/`locales.enabled`/`locales.supported`. Applications define richer trees around it.
+The application's configuration definition must structurally satisfy `FoundationConfig`
+(`@sinemacula/foundation/app/foundation-config`), the slice the preset reads: `api.baseUrl`/`api.timeout`,
+`app.name`/`app.environment`/`app.version`, `featureFlags.flags` and `locales.default`/`locales.enabled`/
+`locales.supported`. Applications define richer trees around it.
 
 ### Options
 
-Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an
-optional `pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
+Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an optional
+`pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
 
 | Group           | Configures                                                                                                 |
 |-----------------|------------------------------------------------------------------------------------------------------------|
 | `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree               |
 | `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build             |
 | `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`                               |
+| `colorScheme`   | `defaultPreference` (default `system`), `storageKey` (default `theme`), `themeColors` for `theme-color`    |
 | `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                               |
 | `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                 |
 | `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                     |
@@ -163,37 +161,34 @@ optional `pinia` instance (injectable for tests; defaults to a fresh one). Every
 | `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                 |
 | `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates` |
 
-The load-bearing defaults and behaviours:
+Defaults and behaviours worth knowing:
 
-- `config.createEnvironment` is caller-owned - the only place build-time variables may appear. It receives
-  the fetched runtime document; pair it with `createWebEnvironment` (`src/config/web-environment.ts`), which
-  chains the prefixed build-time variables behind the runtime document in development and, in production,
-  throws a `ConfigurationError` naming every missing `requiredKeys` entry. `config.runtimeUrl` (default
-  `/runtime-env.json`) is one URL for both the runtime-environment fetch and the update monitor's default
-  poll target.
-- `http.unexpectedErrorToastKey` arms the default response-error handler: it skips validation failures and
-  401s, raises the application's toast and captures the error with request context. Without it (and without
-  an `onResponseError` override) unexpected failures are captured only. The key is application copy - the
-  kernel ships no translation keys. Module register-phase contributions always run after the resolved
-  handler.
-- `i18n.localeStorageKey` defaults to `locale`; `duplicateNamespaceStrategy` defaults to `error` - a module
-  name shadowing a shared top-level translation key throws at activation, and `module-wins` restores the
-  shadowing merge.
-- Without `observability` factories, the local environment gets console adapters and every other environment
-  gets the null adapters; a factory receives the full frozen config so adapter selection is config-driven.
-- `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when
-  `toastKey` (an application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with
-  neither throws a `WebCoreAppError` at boot. `monitors.connectivity` defaults to on exactly when the update
-  monitor runs and pauses its polling while offline. `monitors.chunkRecovery` is on by default.
-- The `platform` seams thread to every subsystem and to module hooks (as `ResolvedPlatform`), which is how
-  tests drive the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed
-  clock, a hand-run `schedule` (delayed work, cancelled through the function it returns; default the global
-  timers) and an injected pinia.
+- `config.createEnvironment` is caller-owned - the only place build-time variables may appear. It receives the
+  fetched runtime document; pair it with `createWebEnvironment` (`src/config/web-environment.ts`), which chains the
+  runtime document ahead of the prefixed build-time variables (default prefix `VITE_`) in development and, in
+  production, throws a `ConfigurationError` naming every missing `requiredKeys` entry. `config.runtimeUrl` (default
+  `/runtime-env.json`) is one URL for both the runtime-environment fetch and the update monitor's default poll target.
+- `http.unexpectedErrorToastKey` arms the default response-error handler: it skips validation failures and 401s,
+  raises the application's toast and captures the error with request context. Without it (and without an
+  `onResponseError` override) unexpected failures are captured only. The key is application copy - the kernel ships
+  no translation keys. Module register-phase handlers always run after the resolved handler.
+- `i18n.localeStorageKey` defaults to `locale`; `duplicateNamespaceStrategy` defaults to `error` - a module name
+  shadowing a shared top-level translation key throws at activation, and `module-wins` restores the shadowing merge.
+- Without `observability` factories, the `local` environment gets console adapters and every other environment gets
+  the null adapters; a factory receives the full frozen config so adapter selection is config-driven.
+- `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an
+  application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with neither throws a
+  `FoundationBootError` at boot. `monitors.connectivity` defaults to on exactly when the update monitor runs and pauses
+  its polling while offline. `monitors.chunkRecovery` is on by default.
+- The `platform` seams thread to every subsystem and to module hooks (as `ResolvedPlatform`), which is how tests drive
+  the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed clock, a hand-run
+  `schedule` (delayed work, cancelled through the function it returns; defaults to the global timers) and an injected
+  pinia.
 
 ### Entry point
 
-The whole composition root is one call. The canonical example is the playground's entry
-(`playground/src/main.ts`), shown here with its imports de-aliased:
+The whole composition root is one call. The canonical example is the playground's entry (`playground/src/main.ts`),
+shown here with its imports de-aliased:
 
 ```ts
 import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
@@ -234,27 +229,27 @@ start().catch(() => {
 });
 ```
 
-`import.meta.env` appears only here, as input to the caller-supplied `createEnvironment` - no kernel file
-evaluates it. The two translation keys are application copy passed as options.
+`import.meta.env` appears only here, as input to the caller-supplied `createEnvironment` - no kernel file evaluates
+it. The two translation keys are application copy passed as options.
 
 ### start() and dispose()
 
 `createWebCoreApp` resolves once every phase has run; nothing is mounted yet. `start(selector?)` awaits
-`router.isReady()` and then mounts (default `#app`), so initialisation completes strictly before any
-component renders. The handle also exposes the assembled `app`, `router`, `pinia` and `i18n`, the frozen
-`config` tree, direct typed references to every installed service under `services`, and the started
-`monitors` - tests never need ambient access.
+`router.isReady()` and then mounts (default `#app`), so initialisation completes before any component renders. The
+handle also exposes the assembled `app`, `router`, `pinia` and `i18n`, the frozen `config` tree, typed references to
+every installed service under `services`, and the started `monitors`, so tests never need ambient access.
 
-`dispose()` idempotently tears down everything the boot installed, in reverse: monitors, realtime disconnect,
-chunk recovery, module boot teardowns, store disposals, then the page-tracking, global-error-handling and
-title-sync uninstalls. Service holders are left installed; `resetWebCoreServices()` is the separate test
-affordance.
+`dispose()` idempotently tears down everything the boot installed, in reverse: monitors, realtime disconnect, chunk
+recovery, module boot teardowns, store disposals, the page-tracking, global-error-handling and title-sync uninstalls,
+and finally the colour-scheme listener. Service holders are left installed; `resetWebCoreServices()` clears them
+between tests.
 
 ### Service accessors
 
-The preset installs every service into a kernel-standard holder (`src/app/services.ts`). Components, stores
-and module services read them through typed accessors; each throws until its `install*` counterpart has run,
-which the boot guarantees happens before mount:
+The preset installs every service into a holder exposed by `@sinemacula/web-core/app/services` (`src/app/services.ts`,
+which re-exports the foundation holders and adds the locale switcher). Components, stores and module services read
+them through typed accessors; each throws until its `install*` counterpart has run, which the boot guarantees happens
+before mount:
 
 | Accessor                   | Service                                                               |
 |----------------------------|-----------------------------------------------------------------------|
@@ -268,68 +263,77 @@ which the boot guarantees happens before mount:
 | `analytics()`              | The analytics tracker                                                 |
 | `logger()`                 | The logger                                                            |
 | `featureFlags()`           | The feature-flag adapter                                              |
+| `colorScheme()`            | The colour-scheme service                                             |
 | `localeSwitcher()`         | The locale switcher                                                   |
 | `realtime()`               | The realtime connection (installed only when the application opts in) |
 
-`appConfig<T>()` keeps configuration app-typed through its generic - the playground wraps it once
-(`config()` in `playground/src/services/config.ts`) and every other accessor is used as-is.
-`resetWebCoreServices()` clears every holder between tests.
+`appConfig<T>()` keeps configuration app-typed through its generic - the playground wraps it once (`config()` in
+`playground/src/services/config.ts`) and every other accessor is used as-is. `resetWebCoreServices()` clears every
+holder between tests.
 
 ### Session module
 
-`createSessionModule` (`src/session/create-session-module.ts`) returns a plain `ModuleDefinition` - session
-support is opt-in and self-installs through the module contract, with no preset special case. At register it
-installs the session context and contributes the bearer-token interceptor plus the single unauthorized
-handler (a `SessionRefreshCoordinator`, so the reactive 401 path, the proactive refresh timer and realtime
-reconnects can never race). At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor,
-refreshes and the boot hook all wait for that hydration, so the first navigation never sees a half-loaded
-session. At boot it wires the session-loss redirect (login route plus the sanitised current path under the
-`redirect` query key), cross-tab mirroring, identity fan-out to the reporting, analytics and feature-flag
-holders, proactive refresh ahead of expiry, and the realtime connection's session binding.
+`createSessionModule` (`src/session/create-session-module.ts`) returns a plain `ModuleDefinition`: session support is
+opt-in and installs itself through the module contract, with no preset special case. At register it installs the
+session context and contributes the bearer-token interceptor plus the single unauthorized handler (a
+`SessionRefreshCoordinator`, so the reactive 401 path, the proactive refresh timer and realtime reconnects never race).
+At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor, refreshes and
+the boot hook all wait for that hydration, so the first navigation never sees a half-loaded session. At boot it wires
+the session-loss redirect (login route plus the sanitised current path under the `redirect` query key), cross-tab
+mirroring, identity fan-out to the reporting, analytics and feature-flag holders, proactive refresh ahead of expiry,
+and the realtime connection's session binding.
 
-The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`,
-`interactionRequired` with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A
-refused or pending refresh clears the session itself; the module never clears it a second time.
+The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`, `interactionRequired`
+with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A refused or pending refresh clears
+the session itself; the module never clears it a second time.
 
-Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`), `api`
-(the foundation default gateway on the platform clock; required when the application declares its own user
-type), `storageKeys`, `routes`, `persistence`, `refreshSkewMs` (60 seconds), `deviceOs` (`WEB`),
-`generateUuid`, the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect`/`realtimeFollowsSession` toggles
+Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`), `api` (the
+foundation default gateway on the platform clock; required when the application declares its own user type),
+`storageKeys`, `routes`, `persistence`, `refreshSkewMs` (60 seconds), `deviceOs` (`WEB`), `generateUuid`
+(`crypto.randomUUID()`), the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect`/`realtimeFollowsSession` toggles
 (all true) and `identity` (per-channel mappings, or `false` to disable).
 
-The session persists as one revisioned snapshot in `localStorage`, written through `StrictWebStorage` (storage
-failures surface instead of being swallowed) under a `WebLocksSessionLock` shared by every tab. The module
-refuses to register when the Web Locks API is unavailable rather than falling back to an unshared lock; supply
-`persistence` to store the session elsewhere, and pair it with `crossTabSync: false` plus your own calls to the
-store's `hydrate()` when that store does not raise `storage` events. The storage keys are a public contract:
+The session persists as one revisioned snapshot in `localStorage`, written through `StrictWebStorage` (storage failures
+surface instead of being swallowed) under a `WebLocksSessionLock` shared by every tab. The module refuses to register
+when the Web Locks API is unavailable rather than falling back to an unshared lock; supply `persistence` to store the
+session elsewhere, and pair it with `crossTabSync: false` plus your own calls to the store's `hydrate()` when that store
+does not raise `storage` events. The storage keys are a public contract:
 
 | Key          | Default            |
 |--------------|--------------------|
 | `session`    | `auth.session`     |
 | `deviceUuid` | `auth.device_uuid` |
 
-Keys are matched raw against cross-tab `storage` events, so the storage adapter must persist un-namespaced;
-an application wanting a prefix sets it in the keys themselves so event keys still match.
+Keys are matched raw against cross-tab `storage` events, so the storage adapter must persist un-namespaced; an
+application wanting a prefix sets it in the keys themselves so event keys still match.
 
-With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when
-another session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens),
-retries with backoff a connect skipped while the token could not be refreshed, and disconnects when the session
-is lost, or at teardown when it opened the connection. A refresh on any path that is refused, returns to pending
-authentication or fails disconnects it and cancels pending retries, leaving the session as the refresh left
-it; it stays down until the session is replaced. Proactive refreshes and retries run on the platform
-`schedule`. Pass `sessionReconnectGuard()` from
-`src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
+With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when another
+session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens), retries with
+backoff a connect skipped while the token could not be refreshed, and disconnects when the session is lost, or at
+teardown when it opened the connection. A refresh on any path that is refused, returns to pending authentication or
+fails disconnects it and cancels pending retries, leaving the session as the refresh left it; it stays down until the
+session is replaced. Proactive refreshes and retries run on the platform `schedule`. Pass `sessionReconnectGuard()`
+from `src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
 token first and stops for good when the session ends.
 
-Route identity is one configurable source feeding the guards, the session-loss redirect and the redirect
-sanitiser's loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set together with `login`
-when renaming), `home` (`/`) and `forbidden` (`/forbidden` - the application's fallback module owns the
-page).
+Route identity is one configurable source feeding the guards, the session-loss redirect and the redirect sanitiser's
+loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set together with `login` when renaming),
+`home` (`/`) and `forbidden` (`/forbidden` - the application's fallback module owns the page).
 
-What stays application-side: the login route and view, the credential form, all locale copy, and the user
-field mapping when the wire shape diverges (`mapUser`). Applications guard routes with `authenticated()`,
-`guestOnly()` and `authorize()` from `src/session/middleware.ts`, check permissions with `can()`/`useCan()`
-from `src/session/authorization.ts`, and read session state through `useSessionStore()`.
+What stays application-side: the login route and view, the credential form, all locale copy, and the user field
+mapping when the wire shape diverges (`mapUser` on the foundation default gateway). Applications guard routes with
+`authenticated()`, `guestOnly()` and `authorize()` from `src/session/middleware.ts`, check permissions with
+`can()`/`useCan()` from `src/session/authorization.ts`, and read session state through `useSessionStore()`.
+
+## ESLint preset
+
+`@sinemacula/web-core/eslint` is a flat-config layer that enforces the feature-module contract, enabled alongside the
+shared `@sinemacula/coding-standards` presets. On TypeScript and Vue source (tests exempt) it forbids snake_case object-literal
+keys and keeps imports on other modules' public surfaces (`@/modules/<name>`) and on kernel subpaths rather than
+package barrels. Under `modules/` it also checks that a module's name matches its folder, that `module.ts`, `routes.ts`
+and `route-names.ts` export their canonical names, and that route names are namespaced and referenced through
+constants. `eslint`, `typescript-eslint`, `@typescript-eslint/utils` and `vue-eslint-parser` are optional peer
+dependencies, needed only by consumers of the preset.
 
 ## Design rules
 
@@ -339,45 +343,44 @@ from `src/session/authorization.ts`, and read session state through `useSessionS
 
 ## Recorded design decisions
 
-- **Service access is application-singleton, not provide/inject.** The bootstrap preset installs kernel
-  services into standard holders exposed as typed accessor singletons (`api()`, `toasts()`, ... in
-  `src/app/services.ts`). Kernel-level `InjectionKey`s were considered and rejected: the accessor pattern
-  keeps services usable outside component context (stores, middleware, plain modules), keeps the kernel
-  Vue-optional for its agnostic layers, and makes test substitution explicit (`resetWebCoreServices()`).
-  Holders are process-global by design - one application per page; SSR and multi-app scoping are out of
-  scope. Revisit only if a consumer genuinely needs per-subtree service scoping.
-- **Time is injected per class, not through a shared Clock port.** Each time-dependent unit accepts a
-  `clock`/timer override where tests need determinism. A unifying Clock abstraction adds indirection without a
-  consumer; introduce one only if cross-cutting time control (e.g. app-wide time travel) becomes a requirement.
-- **No success-side response interceptors yet.** The error side has a seam (`onResponseError`); response header
-  access and global response transforms wait for a concrete consumer (ETag caching, rate-limit surfacing) rather
-  than being designed speculatively.
+- **Service access is application-singleton, not provide/inject.** The preset installs services into holders exposed
+  as typed accessors (`api()`, `toasts()`, ... in `src/app/services.ts`). Kernel-level `InjectionKey`s were rejected:
+  accessors keep services usable outside component context (stores, middleware, plain modules) and make test
+  substitution explicit (`resetWebCoreServices()`). Holders are process-global by design - one application per page;
+  SSR and multi-app scoping are out of scope. Revisit only if a consumer needs per-subtree service scoping.
+- **Time is a function seam, not a Clock port.** The preset threads `platform.clock` and `platform.schedule`, and each
+  time-dependent unit accepts a clock or timer override where tests need determinism. Introduce a Clock abstraction
+  only if cross-cutting time control (e.g. app-wide time travel) becomes a requirement.
+- **No success-side response interceptors.** The error side has a seam (`onResponseError`); response header access
+  and global response transforms wait for a concrete consumer (ETag caching, rate-limit surfacing).
 
 ## Stack
 
 | Concern   | Choice                                                            |
 |-----------|-------------------------------------------------------------------|
 | Framework | Vue 3 (Composition API) - vue/vue-router/vue-i18n/pinia as peers  |
-| Language  | TypeScript, maximally strict                                      |
-| Build     | mkdist (kernel -> `dist/`) + Vite (playground/apps)               |
+| Language  | TypeScript (strict)                                               |
+| Build     | mkdist (kernel -> `dist/`) + Vite (playground)                    |
 | State     | Pinia - application module stores plus the kernel session store   |
 | Routing   | Vue Router + Laravel-style middleware pipeline                    |
-| i18n      | vue-i18n, lazily-loaded locales                                   |
+| i18n      | vue-i18n, locales loaded on activation                            |
 | Styling   | Design tokens (`--sm-*` custom properties) + scoped CSS           |
 | Tests     | Vitest (100% coverage enforced), Stryker mutation testing         |
-| Quality   | qlty + Biome (sinemacula/coding-standards), Knip, security scans  |
+| Quality   | qlty (Biome, ESLint, security scans), Knip                        |
 
 ## Repository layout
 
 ```text
 src/           The kernel package source - one directory per area, tests colocated
+eslint/        The module-contract ESLint preset, published as @sinemacula/web-core/eslint
 playground/    Reference application + dev harness (@sinemacula/web-core-playground)
 e2e/           Playwright suite driving the playground application
+scripts/       Package build and mutation-scope scripts
 ```
 
 The playground consumes the kernel as `"@sinemacula/web-core": "file:.."`, through the package's real export
-specifiers. Only exported subpaths are mapped to source, so its imports are exactly what an external consumer
-writes and the reference application doubles as a permanent integration test of the published surface.
+specifiers. Only exported subpaths are mapped to source, so its imports are exactly what an external consumer writes
+and the reference application doubles as an integration test of the published surface.
 
 For the application-side details - boot sequence, runtime environment mechanics, adding a feature module - see
 [playground/README.md](playground/README.md).
@@ -391,56 +394,60 @@ cp playground/.env.example playground/.env   # local development variables (VITE
 npm run dev
 ```
 
-| Script                  | Purpose                                        |
-|-------------------------|------------------------------------------------|
-| `npm run dev`           | Playground dev server (Vite)                   |
-| `npm run build`         | Playground production build                    |
-| `npm run build:dist`    | Compile the kernel package to `dist/`          |
-| `npm run preview`       | Preview the playground production build        |
-| `npm run typecheck`     | `vue-tsc` over kernel + workspaces             |
-| `npm run test`          | Unit tests (kernel + playground)               |
-| `npm run test:watch`    | Unit tests in watch mode                       |
-| `npm run test:coverage` | Unit tests with 100% thresholds                |
-| `npm run test:mutation` | Stryker mutation testing                       |
-| `npm run test:e2e`      | Playwright end-to-end suite                    |
-| `npm run test:e2e:ui`   | Playwright end-to-end suite in UI mode         |
-| `npm run check`         | qlty lint + security suite                     |
-| `npm run fmt`           | qlty auto-format                               |
-| `npm run smells`        | qlty duplication + complexity analysis         |
-| `npm run deadcode`      | Knip dead-code detection                       |
-| `npm run size`          | size-limit bundle budgets (playground build)   |
-| `npm run check:pkg`     | Pack + validate the published surface          |
+| Script                         | Purpose                                                  |
+|--------------------------------|----------------------------------------------------------|
+| `npm run dev`                  | Playground dev server (Vite)                             |
+| `npm run build`                | Playground production build                              |
+| `npm run build:dist`           | Compile the kernel package to `dist/`                    |
+| `npm run preview`              | Preview the playground production build                  |
+| `npm run typecheck`            | `vue-tsc` over the kernel, playground and e2e suite      |
+| `npm run test`                 | Unit tests (kernel, playground and ESLint preset)        |
+| `npm run test:watch`           | Unit tests in watch mode                                 |
+| `npm run test:coverage`        | Unit tests with 100% thresholds                          |
+| `npm run test:eslint`          | ESLint preset unit tests only                            |
+| `npm run test:mutation`        | Stryker mutation testing (kernel + playground)           |
+| `npm run test:mutation:eslint` | Stryker mutation testing (ESLint preset)                 |
+| `npm run test:e2e`             | Playwright end-to-end suite                              |
+| `npm run test:e2e:ui`          | Playwright end-to-end suite in UI mode                   |
+| `npm run check`                | qlty lint + security suite                               |
+| `npm run fmt`                  | qlty auto-format                                         |
+| `npm run smells`               | qlty duplication + complexity analysis                   |
+| `npm run lint:structure`       | The ESLint preset over `src`, `playground/src` and `e2e` |
+| `npm run deadcode`             | Knip dead-code detection                                 |
+| `npm run size`                 | size-limit bundle budgets (playground build)             |
+| `npm run check:pkg`            | Pack + validate the published surface                    |
 
 ## Quality gates
 
-- **Tests**: colocated `*.test.ts`, 100% line/branch/function/statement coverage enforced by `vitest` over
-  `src/**` and `playground/src/**`.
-- **Mutation**: Stryker over kernel + playground, 90% break threshold.
-- **Lint/format**: Biome via qlty, rules from `sinemacula/coding-standards`.
-- **Dead code**: Knip across all workspaces.
+- **Tests**: colocated tests, 100% line/branch/function/statement coverage enforced by Vitest over `src/**`,
+  `playground/src/**` and `eslint/**`.
+- **Mutation**: Stryker over kernel + playground with a 90% break threshold, scoped to changed files on pull requests
+  and run in full on a weekly schedule; the ESLint preset has its own mutation gate.
+- **Lint/format**: Biome and ESLint via qlty, rules from `sinemacula/coding-standards`.
+- **Structure**: the ESLint preset runs against this repository (`npm run lint:structure`).
+- **Dead code**: Knip across all workspaces, run outside qlty.
 - **Bundle size**: size-limit budgets on the playground build.
 - **Hooks**: `.qlty/hooks/` - format on pre-commit, check on pre-push.
 
 ## Releases
 
-The package is published to npm from CI - never by hand.
+The package is published to npm from CI, never by hand.
 
-- **Versioning**: release-please reads Conventional Commit history and maintains a standing Release PR that bumps
+- **Versioning**: release-please reads the Conventional Commit history and maintains a standing release PR that bumps
   `package.json` and `CHANGELOG.md`. Merging it tags the release and cuts a GitHub Release.
-- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which compiles `dist/` through the `prepare`
-  lifecycle and runs `npm publish --provenance` under npm trusted publishing (OIDC - no token).
-- **Local checks**: `npm run build:dist` compiles the package; `npm run check:pkg` packs it and validates the
-  published surface with publint and are-the-types-wrong.
+- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which checks the tag against `package.json`, compiles
+  `dist/` through the `prepare` lifecycle and runs `npm publish --provenance` under npm trusted publishing (OIDC, no
+  token).
+- **Local checks**: `npm run build:dist` compiles the package; `npm run check:pkg` packs it and validates the published
+  surface with publint and are-the-types-wrong.
 
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on branching, commits, code
-quality, and pull requests.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branching, commits, code quality and pull requests.
 
 ## Security
 
-If you discover a security vulnerability, please report it responsibly. See [SECURITY.md](SECURITY.md) for the
-disclosure policy and contact details.
+Report vulnerabilities privately. See [SECURITY.md](SECURITY.md) for the disclosure policy and contact details.
 
 ## License
 

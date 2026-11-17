@@ -39,8 +39,7 @@ function fakeReporter(): ErrorReporter {
 /** Navigate to `/broken`, swallowing the router's own rejection. */
 async function navigateToBroken(router: Router): Promise<void> {
     await router.push('/broken').catch(() => {
-        // The router's own promise rejects alongside the onError handler under
-        // test.
+        // The push rejects too; only the onError handler is under test.
     });
 }
 

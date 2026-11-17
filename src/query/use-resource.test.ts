@@ -11,9 +11,9 @@ import { effectScope, getCurrentScope, ref } from 'vue';
 import type { ResourceFetcher } from './use-resource';
 import { useResource } from './use-resource';
 
-// ---------------------------------------------------------------------------
-// Helper: a promise a test can resolve or reject on demand
-// ---------------------------------------------------------------------------
+/**
+ * A promise a test can resolve or reject on demand.
+ */
 interface Deferred<Value> {
     /** The promise the test settles on demand. */
     readonly promise: Promise<Value>;
@@ -25,7 +25,9 @@ interface Deferred<Value> {
     readonly reject: (reason: unknown) => void;
 }
 
-/** Creates a deferred promise so tests can control resolution timing. */
+/**
+ * Create a deferred promise so tests can control resolution timing.
+ */
 function createDeferred<Value>(): Deferred<Value> {
     let resolve!: (value: Value) => void;
     let reject!: (reason: unknown) => void;
@@ -38,9 +40,9 @@ function createDeferred<Value>(): Deferred<Value> {
     return { promise, resolve, reject };
 }
 
-// ---------------------------------------------------------------------------
-// Helper: a fetcher that records every call so a test can drive each run
-// ---------------------------------------------------------------------------
+/**
+ * One recorded fetcher call, so a test can drive each run.
+ */
 interface FetcherCall<Value> {
     /** The abort signal passed to the fetcher for this run. */
     readonly signal: AbortSignal;
@@ -49,7 +51,9 @@ interface FetcherCall<Value> {
     readonly deferred: Deferred<Value>;
 }
 
-/** Creates a `ResourceFetcher` that queues a controllable deferred per call. */
+/**
+ * Create a `ResourceFetcher` that queues a controllable deferred per call.
+ */
 function createFetcherQueue<Value>(): {
     /** The fetcher to hand to the composable. */
     readonly fetcher: ResourceFetcher<Value>;
@@ -59,7 +63,9 @@ function createFetcherQueue<Value>(): {
 } {
     const calls: FetcherCall<Value>[] = [];
 
-    /** Queue a fresh deferred for this run and hand back its promise. */
+    /**
+     * Queue a fresh deferred for this run and hand back its promise.
+     */
     const fetcher: ResourceFetcher<Value> = signal => {
         const deferred = createDeferred<Value>();
 
@@ -71,15 +77,14 @@ function createFetcherQueue<Value>(): {
     return { fetcher, calls };
 }
 
-/** Flushes both the microtask queue and Vue's scheduler queue. */
+/**
+ * Flush both the microtask queue and Vue's scheduler queue.
+ */
 async function flushAll(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 0));
 }
 
 describe('useResource', () => {
-    // -------------------------------------------------------------------------
-    // Initial fetch
-    // -------------------------------------------------------------------------
     describe('initial fetch', () => {
         it('fetches immediately on creation by default', () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -109,9 +114,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // immediate: false
-    // -------------------------------------------------------------------------
     describe('immediate: false', () => {
         it('does not fetch on creation', () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -130,9 +132,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Watch-triggered refetch
-    // -------------------------------------------------------------------------
     describe('watch-triggered refetch', () => {
         it('refetches when the watch source changes, keeping stale data while loading', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -174,9 +173,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Supersede: an older run resolving or rejecting late is discarded
-    // -------------------------------------------------------------------------
     describe('supersede', () => {
         it('a late-resolving superseded run does not overwrite data or flip isLoading', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -225,11 +221,8 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Abort swallowed: a rejection from the run's own aborted signal
-    // -------------------------------------------------------------------------
     describe('abort swallowed', () => {
-        it('leaves error null when the current run rejects because its own signal was aborted', async () => {
+        it('leaves error null when the run rejects after its own abort', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();
             const resource = useResource({ fetcher });
 
@@ -245,9 +238,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Error handling
-    // -------------------------------------------------------------------------
     describe('error handling', () => {
         it('captures a genuine rejection as error', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -301,9 +291,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // hasLoaded transitions
-    // -------------------------------------------------------------------------
     describe('hasLoaded', () => {
         it('is false before any run has resolved', () => {
             const { fetcher } = createFetcherQueue<number>();
@@ -338,9 +325,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // refetch
-    // -------------------------------------------------------------------------
     describe('refetch', () => {
         it('runs the fetcher again and awaits its own settlement', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -359,9 +343,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // stop
-    // -------------------------------------------------------------------------
     describe('stop', () => {
         it('aborts the in-flight run and stops further watch reactions', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();
@@ -386,9 +367,6 @@ describe('useResource', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Scope-dispose cleanup
-    // -------------------------------------------------------------------------
     describe('scope-dispose cleanup', () => {
         it('stops automatically when the enclosing effect scope is disposed', async () => {
             const { fetcher, calls } = createFetcherQueue<number>();

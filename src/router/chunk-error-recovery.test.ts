@@ -39,8 +39,7 @@ function fakeReporter(): ErrorReporter {
 /** Navigate to `/broken`, swallowing the router's own rejection. */
 async function navigateToBroken(router: Router): Promise<void> {
     await router.push('/broken').catch(() => {
-        // The router's own promise rejects alongside the onError handler under
-        // test.
+        // The push rejects too; only the onError handler is under test.
     });
 }
 
@@ -211,7 +210,7 @@ describe('installChunkErrorRecovery', () => {
         expect(storage.get('chunk-recovery./broken')).toBe('1000');
     });
 
-    it('reloads via a full document navigation to globalThis.location when no reload function is provided', async () => {
+    it('navigates globalThis.location when no reload function is provided', async () => {
         const location = { href: '' };
         vi.stubGlobal('location', location);
 
@@ -226,16 +225,12 @@ describe('installChunkErrorRecovery', () => {
 });
 
 describe('isChunkLoadError', () => {
-    it('matches a failed dynamic import message', () => {
-        expect(isChunkLoadError(new Error('Failed to fetch dynamically imported module: /assets/chunk.js'))).toBe(true);
-    });
-
-    it('matches a dynamic import loading error message', () => {
-        expect(isChunkLoadError(new Error('Error loading dynamically imported module'))).toBe(true);
-    });
-
-    it('matches a module script import failure message', () => {
-        expect(isChunkLoadError(new Error('Importing a module script failed'))).toBe(true);
+    it.each([
+        'Failed to fetch dynamically imported module: /assets/chunk.js',
+        'Error loading dynamically imported module',
+        'Importing a module script failed',
+    ])('matches "%s"', message => {
+        expect(isChunkLoadError(new Error(message))).toBe(true);
     });
 
     it('returns false for an unrelated error message', () => {
