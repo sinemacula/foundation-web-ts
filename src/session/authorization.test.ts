@@ -12,12 +12,7 @@ import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { can, useCan } from './authorization';
 import { installSessionContext, resetSessionContext } from './session-context';
 import { useSessionStore } from './session-store';
-import { createTestSessionContext } from './test-support/session-fixtures';
-
-/** An authenticated user record granted the given permissions. */
-function userWithPermissions(permissions: readonly string[]): SessionUser {
-    return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions };
-}
+import { createTestSessionContext, user } from './test-support/session-fixtures';
 
 /** The writable session user slot on the store state. */
 interface WritableSessionUser {
@@ -26,19 +21,14 @@ interface WritableSessionUser {
 }
 
 /** Write the session user directly onto the store state. */
-function setStoreUser(user: SessionUser | null): void {
-    (useSessionStore() as unknown as WritableSessionUser).user = user;
-}
-
-/** Install a test session context over fresh collaborators. */
-function installTestContext(): void {
-    installSessionContext(createTestSessionContext());
+function setStoreUser(signedIn: SessionUser | null): void {
+    (useSessionStore() as unknown as WritableSessionUser).user = signedIn;
 }
 
 describe('can', () => {
     beforeEach(() => {
         setActivePinia(createPinia());
-        installTestContext();
+        installSessionContext(createTestSessionContext());
     });
 
     afterEach(() => {
@@ -50,19 +40,19 @@ describe('can', () => {
     });
 
     it('returns true when the signed-in user holds the permission', () => {
-        setStoreUser(userWithPermissions(['users.view']));
+        setStoreUser(user({ permissions: ['users.view'] }));
 
         expect(can('users.view')).toBe(true);
     });
 
     it('returns false when the signed-in user lacks the permission', () => {
-        setStoreUser(userWithPermissions(['billing.view']));
+        setStoreUser(user({ permissions: ['billing.view'] }));
 
         expect(can('users.view')).toBe(false);
     });
 
     it('returns true when the permission matches a wildcard grant', () => {
-        setStoreUser(userWithPermissions(['users.*']));
+        setStoreUser(user({ permissions: ['users.*'] }));
 
         expect(can('users.edit.self')).toBe(true);
     });
@@ -71,7 +61,7 @@ describe('can', () => {
 describe('useCan', () => {
     beforeEach(() => {
         setActivePinia(createPinia());
-        installTestContext();
+        installSessionContext(createTestSessionContext());
     });
 
     afterEach(() => {
@@ -89,19 +79,19 @@ describe('useCan', () => {
 
         expect(checkPermission('users.view')).toBe(false);
 
-        setStoreUser(userWithPermissions(['users.view']));
+        setStoreUser(user({ permissions: ['users.view'] }));
 
         expect(checkPermission('users.view')).toBe(true);
     });
 
     it('reflects a permission being lost when the store user changes again', () => {
-        setStoreUser(userWithPermissions(['users.view']));
+        setStoreUser(user({ permissions: ['users.view'] }));
 
         const checkPermission = useCan();
 
         expect(checkPermission('users.view')).toBe(true);
 
-        setStoreUser(userWithPermissions([]));
+        setStoreUser(user({ permissions: [] }));
 
         expect(checkPermission('users.view')).toBe(false);
     });

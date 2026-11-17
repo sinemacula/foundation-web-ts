@@ -1,7 +1,5 @@
 /**
- * Unit tests for createSessionModule: the module shape, the register phase
- * (context, persistence, gateway, bearer interceptor and unauthorized handler),
- * the stores phase, and the gateway typing.
+ * Unit tests for createSessionModule's register and stores phases and typing.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -41,10 +39,6 @@ describe('createSessionModule', () => {
 
     /**
      * Register the module over the fake gateway.
-     *
-     * @param options - module options, merged over the fake gateway
-     * @param setup - harness seams
-     * @returns the harness
      */
     function harness(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): SessionHarness {
         return createSessionHarness(createSessionModule({ api: () => gateway, ...options }), setup);
@@ -52,9 +46,6 @@ describe('createSessionModule', () => {
 
     /**
      * Run the contributed interceptors over a bare request.
-     *
-     * @param target - the harness
-     * @returns the intercepted request
      */
     async function intercept(target: SessionHarness): Promise<HttpRequest> {
         let request = REQUEST;
@@ -67,10 +58,8 @@ describe('createSessionModule', () => {
     }
 
     /**
-     * Run the contributed unauthorized handler, as a 401 does.
-     *
-     * @param target - the harness
-     * @returns whether the request is retried
+     * Run the contributed unauthorized handler as a 401 does, resolving whether
+     * the request is retried.
      */
     function retries(target: SessionHarness): Promise<boolean> {
         const handler = target.contributions.onUnauthorized;
@@ -109,9 +98,7 @@ describe('createSessionModule', () => {
 
     describe('session context', () => {
         it('installs the default route identity, store id, skew and the platform clock', () => {
-            /** A fixed platform clock. */
-            const clock = (): number => 42;
-            const target = harness({}, { clock });
+            const target = harness({}, { clock: () => 42 });
 
             expect(sessionContext().routes).toStrictEqual({
                 login: { name: 'auth.login' },
@@ -173,7 +160,7 @@ describe('createSessionModule', () => {
             expect(target.win.navigator.locks?.names).toStrictEqual(['app.session:lock']);
         });
 
-        it('lets a failing storage write reject rather than report a lost write as saved', async () => {
+        it('rejects a sign-in whose storage write fails', async () => {
             const target = harness();
             const failure = new DOMException('quota', 'QuotaExceededError');
 
@@ -267,8 +254,6 @@ describe('createSessionModule', () => {
     describe('unauthorized handler', () => {
         /**
          * Register over a hydrated persisted session.
-         *
-         * @returns the harness
          */
         async function signedIn(): Promise<SessionHarness> {
             const target = harness();
@@ -353,7 +338,7 @@ describe('createSessionModule', () => {
             expect(gateway.refresh).toHaveBeenCalledTimes(1);
         });
 
-        it('waits for hydration before refreshing, so an empty store is never refreshed', async () => {
+        it('waits for hydration before refreshing', async () => {
             const storage = new MemoryStorage();
             const inner = new KeyValueSessionPersistence(storage);
             const gate = deferred<undefined>();
@@ -520,9 +505,6 @@ describe('createSessionModule', () => {
         it('rejects an identity mapping the gateway user does not satisfy', () => {
             /**
              * Map a user carrying a region onto that region.
-             *
-             * @param regionalUser - a user with a region
-             * @returns the region
              */
             const region = (regionalUser: RegionalUser): string => regionalUser.region;
 

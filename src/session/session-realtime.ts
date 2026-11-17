@@ -1,15 +1,6 @@
 /**
  * Realtime connection policy over the session.
  *
- * `sessionReconnectGuard` is the reconnect hook a realtime connection is built
- * with: it lets an attempt proceed only for a current session, refreshing an
- * expiring one through the single refresh authority first, and stops the
- * connection for good when the session is gone or cannot be refreshed. The
- * session module uses the same policy to connect the installed realtime
- * connection while a session is held, since a connection never runs the
- * reconnect hook before its first or a manual connect, and stops it whenever a
- * refresh on any path ends the session's renewal.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -43,16 +34,14 @@ const RETRY_BACKOFF = new ExponentialBackoff();
  * Build the reconnect hook keeping a realtime connection on the session.
  *
  * Each attempt awaits the session's hydration. Signed out, the connection is
- * disconnected. An access token expiring within the refresh skew on the
- * platform clock is refreshed first: a transient failure skips the attempt for
- * backoff to retry; a refusal, a return to pending authentication or a failure
- * disconnects; a refresh another session transition overtook re-evaluates the
- * session as it now stands, without refreshing again. An unknown expiry counts
- * as current.
+ * disconnected. An access token expiring within the refresh skew is refreshed
+ * first: a transient failure skips the attempt for backoff to retry; a refusal,
+ * a return to pending authentication or a failure disconnects; a refresh
+ * another transition overtook re-evaluates the session without refreshing
+ * again. An unknown expiry counts as current.
  *
- * @param connection - resolves the connection the hook guards, to disconnect
- * it; default the application's installed realtime connection
- * @returns the reconnect hook
+ * @param connection - resolves the connection to disconnect; defaults to the
+ * application's installed realtime connection
  */
 export function sessionReconnectGuard(connection: () => RealtimeConnection = realtime): BeforeReconnectHook {
     return async () => {
@@ -70,16 +59,13 @@ export function sessionReconnectGuard(connection: () => RealtimeConnection = rea
 
 /**
  * Connect the connection while the store holds a session and disconnect it when
- * the session ends, starting from the store's current state. Connecting applies
- * the reconnect guard's policy and only the latest transition acts. A session
- * replaced by another is reconnected on the new one; a skipped connect is
- * retried with backoff, and at once when a rotation renews the session. A
- * refresh on any path that is refused, returns to pending authentication or
- * fails disconnects the connection and abandons pending work, leaving the
- * session as the refresh left it; the connection stays down until the session
- * is replaced.
+ * the session ends, applying the reconnect guard's policy, since a connection
+ * never runs its reconnect hook on a first or manual connect. Only the latest
+ * transition acts. A replaced session reconnects on the new one; a skipped
+ * connect retries with backoff, and at once when a rotation renews the session.
+ * A refresh on any path that ends renewal disconnects and abandons pending
+ * work, and the connection stays down until the session is replaced.
  *
- * @param connection - the realtime connection to drive
  * @param store - the hydrated session store
  * @returns a teardown abandoning pending work and disconnecting a connection
  * this follower opened
@@ -138,10 +124,6 @@ class SessionFollower {
 
     /**
      * Follow the store with the connection.
-     *
-     * @param connection - the realtime connection to drive
-     * @param store - the hydrated session store
-     * @param schedule - schedules the retries of a skipped connect
      */
     constructor(connection: RealtimeConnection, store: SessionStore, schedule: ScheduleTask) {
         this.#connection = connection;
@@ -153,9 +135,6 @@ class SessionFollower {
      * React to a change of the access token or the session identity. A new
      * session starts over, dropping the stream of the one it replaced; a
      * rotation retries a skipped connect at once.
-     *
-     * @param identity - the session identity now held, or null
-     * @param previous - the session identity held before, or null
      */
     follow(identity: object | null, previous: object | null): void {
         if (identity !== previous) {
@@ -170,10 +149,8 @@ class SessionFollower {
     }
 
     /**
-     * Bring the connection in line with the session.
-     *
-     * @param retrying - whether this retries a skipped connect, continuing its
-     * backoff
+     * Bring the connection in line with the session; a retry of a skipped
+     * connect continues its backoff.
      */
     async reconcile(retrying = false): Promise<void> {
         this.#abandon();
@@ -262,9 +239,6 @@ class SessionFollower {
 /**
  * Judge what a connection attempt should do for the session, refreshing an
  * expiring session first.
- *
- * @param store - the hydrated session store
- * @returns the verdict
  */
 async function verdictFor(store: SessionStore): Promise<Verdict> {
     const standing = standingOf(store);
@@ -295,9 +269,6 @@ async function verdictFor(store: SessionStore): Promise<Verdict> {
 
 /**
  * Connect for a current session; stop for a signed-out one.
- *
- * @param standing - where the session stands, other than expiring
- * @returns the verdict
  */
 function proceed(standing: Exclude<Standing, 'expiring'>): Verdict {
     return standing === 'signedOut' ? 'stop' : 'connect';
@@ -305,9 +276,6 @@ function proceed(standing: Exclude<Standing, 'expiring'>): Verdict {
 
 /**
  * Whether a connection is connecting or open.
- *
- * @param connection - the realtime connection
- * @returns whether it is active
  */
 function isActive(connection: RealtimeConnection): boolean {
     return connection.state === 'connecting' || connection.state === 'open';
@@ -315,9 +283,6 @@ function isActive(connection: RealtimeConnection): boolean {
 
 /**
  * Judge where the session stands on the platform clock.
- *
- * @param store - the session store
- * @returns signed out, current, or expiring within the refresh skew
  */
 function standingOf(store: SessionStore): Standing {
     if (!store.isAuthenticated) {

@@ -1,10 +1,5 @@
 /**
- * Session module test harness.
- *
- * Registers the session module through the real registry path over a fake
- * window (in-memory localStorage, a serialising Web Locks manager, recorded
- * `storage` listeners) and assembles the stores and boot phases around it, with
- * recording observability holders and a recording router.
+ * Registers the session module through the real registry over a fake window.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -140,10 +135,7 @@ export interface HarnessSetup {
 const EmptyComponent = defineComponent({ render: () => null });
 
 /**
- * Build a window stand-in.
- *
- * @param withoutLocks - whether the Web Locks API is missing
- * @returns the window
+ * Build a window stand-in, optionally without the Web Locks API.
  */
 export function createFakeWindow(withoutLocks = false): FakeWindow {
     const listeners = new Set<(event: StorageEvent) => void>();
@@ -171,8 +163,6 @@ export function createFakeWindow(withoutLocks = false): FakeWindow {
 
 /**
  * Build an HTTP client stand-in that fails loudly if called.
- *
- * @returns the client
  */
 export function createHttpClientStub(): HttpClient {
     /** Reject an unexpected request. */
@@ -183,8 +173,6 @@ export function createHttpClientStub(): HttpClient {
 
 /**
  * Install recording observability holders and a stub HTTP client.
- *
- * @returns the recordings
  */
 export function installObservability(): Observability {
     const observability: Observability = {
@@ -229,10 +217,6 @@ export function installObservability(): Observability {
 
 /**
  * Register the module and assemble the stores and boot phases around it.
- *
- * @param module - the session module
- * @param setup - the seams to build over
- * @returns the harness
  */
 export function createSessionHarness(module: ModuleDefinition, setup: HarnessSetup = {}): SessionHarness {
     const observability = installObservability();

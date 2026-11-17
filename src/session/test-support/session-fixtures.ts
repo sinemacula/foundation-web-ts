@@ -1,10 +1,5 @@
 /**
- * Session test fixtures.
- *
- * Scriptable stand-ins shared by the session unit tests: a gateway whose every
- * method is a mock, an in-memory Web Storage area, a serialising lock manager,
- * a recording realtime connection, a scheduler run by hand, deferred promises,
- * and a session context over in-memory persistence.
+ * Scriptable stand-ins shared by the session unit tests.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -84,8 +79,6 @@ interface ScheduledTask {
 
 /**
  * Build a gateway that rejects every call until scripted.
- *
- * @returns the gateway
  */
 export function createFakeSessionApi(): FakeSessionApi {
     /** Reject a call no test scripted. */
@@ -101,9 +94,6 @@ export function createFakeSessionApi(): FakeSessionApi {
 
 /**
  * Build a token set.
- *
- * @param overrides - fields to override
- * @returns the tokens
  */
 export function tokens(overrides: Partial<SessionTokens> = {}): SessionTokens {
     return { accessToken: 'access', refreshToken: 'refresh', expiresAtEpochMs: null, ...overrides };
@@ -111,20 +101,14 @@ export function tokens(overrides: Partial<SessionTokens> = {}): SessionTokens {
 
 /**
  * Build a session user.
- *
- * @param overrides - fields to override
- * @returns the user
  */
 export function user(overrides: Partial<SessionUser> = {}): SessionUser {
     return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions: [], ...overrides };
 }
 
 /**
- * Write a session snapshot the way the persistence adapter does.
- *
- * @param storage - the key-value storage or Web Storage area to write to
- * @param snapshotTokens - the tokens, or null for a cleared snapshot
- * @param revision - the snapshot revision
+ * Write a session snapshot the way the persistence adapter does; null tokens
+ * write a cleared snapshot.
  */
 export function persistSnapshot(
     storage: KeyValueStorage | Storage,
@@ -142,8 +126,6 @@ export function persistSnapshot(
 
 /**
  * Build a promise settled from outside.
- *
- * @returns the deferred
  */
 export function deferred<T>(): Deferred<T> {
     const settlers: Partial<Omit<Deferred<T>, 'promise'>> = {};
@@ -156,8 +138,6 @@ export function deferred<T>(): Deferred<T> {
 
 /**
  * Build an in-memory Web Storage area.
- *
- * @returns the storage area
  */
 export function createWebStorage(): Storage {
     const entries = new Map<string, string>();
@@ -181,9 +161,8 @@ export function createWebStorage(): Storage {
 }
 
 /**
- * Build a lock manager granting each name's requests one at a time.
- *
- * @returns the lock manager, recording each requested name
+ * Build a lock manager granting each name's requests one at a time, recording
+ * each requested name.
  */
 export function createLockManager(): RecordingLockManager {
     const tails = new Map<string, Promise<unknown>>();
@@ -209,8 +188,6 @@ export function createLockManager(): RecordingLockManager {
 
 /**
  * Build a realtime connection recording every connect and disconnect.
- *
- * @returns the connection
  */
 export function createRecordingConnection(): RecordingConnection {
     const calls: string[] = [];
@@ -234,8 +211,6 @@ export function createRecordingConnection(): RecordingConnection {
 
 /**
  * Build a scheduling seam whose tasks run only when flushed.
- *
- * @returns the scheduler
  */
 export function createManualScheduler(): ManualScheduler {
     const tasks = new Set<ScheduledTask>();
@@ -266,9 +241,6 @@ export function createManualScheduler(): ManualScheduler {
 /**
  * Build a session context over in-memory persistence, hydrating the active
  * store on first readiness and refreshing through it.
- *
- * @param overrides - collaborators to override
- * @returns the context
  */
 export function createTestSessionContext(overrides: Partial<SessionContext> = {}): SessionContext {
     let hydration: Promise<void> | null = null;
