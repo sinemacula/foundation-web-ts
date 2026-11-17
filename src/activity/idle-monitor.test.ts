@@ -74,7 +74,7 @@ describe('IdleMonitor', () => {
         monitor.stop();
     });
 
-    it('resets the countdown when an activity event occurs', () => {
+    it.each(['pointerdown', 'keydown', 'wheel', 'touchstart'])('resets the countdown on a default %s event', type => {
         const fake = fakeWindow();
         const monitor = new IdleMonitor({ timeoutMs: 1_000, targetWindow: fake.window });
         const handler = vi.fn();
@@ -82,7 +82,7 @@ describe('IdleMonitor', () => {
         monitor.onIdle(handler);
         monitor.start();
         vi.advanceTimersByTime(600);
-        fake.emit('pointerdown');
+        fake.emit(type);
         vi.advanceTimersByTime(600);
 
         expect(handler).not.toHaveBeenCalled();
