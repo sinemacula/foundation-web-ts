@@ -9,6 +9,7 @@ import { installColorScheme } from '@sinemacula/web-core/app/services';
 import { Environment } from '@sinemacula/foundation/config/environment';
 import { ObjectEnvironmentSource } from '@sinemacula/foundation/config/object-environment-source';
 import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +22,7 @@ import { initialiseApi, resetApi } from '@/services/api';
 import { initialiseConfiguration, resetConfiguration } from '@/services/config';
 import { initialiseLocaleSwitcher, resetLocaleSwitcher } from '@/services/locale';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
+import { installTestSession, resetSessionContext } from '@/test-support/install-test-session';
 
 /** No-op locale switcher for DefaultLayout's locale switcher. */
 const stubLocaleSwitcher: LocaleSwitcher = {
@@ -154,6 +156,7 @@ describe('UsersView', () => {
         initialiseConfiguration(new Environment(new ObjectEnvironmentSource(wireEnv([['APP_NAME', 'TestApp']]))));
         initialiseLocaleSwitcher(stubLocaleSwitcher);
         installColorScheme(stubColorScheme);
+        installTestSession(new MemoryStorage());
         setActivePinia(createPinia());
     });
 
@@ -161,6 +164,7 @@ describe('UsersView', () => {
         resetApi();
         resetConfiguration();
         resetLocaleSwitcher();
+        resetSessionContext();
     });
 
     it('renders the heading', async () => {
