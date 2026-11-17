@@ -5,8 +5,19 @@
  * @copyright   2026 Sine Macula Limited
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import plugin from './plugin.js';
+
+const README = readFileSync('README.md', 'utf8');
+
+/** The anchor slug of every README heading. */
+const README_ANCHORS = [...README.matchAll(/^#{1,6} (.+)$/gm)].map(([, heading]) =>
+    heading
+        .toLowerCase()
+        .replace(/[^a-z0-9 _-]/g, '')
+        .replace(/ /g, '-'),
+);
 
 const RULES = [
     'module-export-names',
@@ -31,5 +42,10 @@ describe('plugin', () => {
 
         expect(rule.meta.messages).toBeDefined();
         expect(typeof rule.create).toBe('function');
+    });
+
+    it.each(RULES)('links %s to its README section', name => {
+        expect(plugin.rules[name].meta.docs.url).toBe(`https://github.com/sinemacula/web-core-ts#${name}`);
+        expect(README_ANCHORS).toContain(name);
     });
 });

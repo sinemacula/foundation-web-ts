@@ -5,9 +5,9 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defineComponent } from 'vue';
-import { createMemoryHistory, createRouter } from 'vue-router';
+import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 
 import { useRouteQueryState } from './use-route-query-state';
 
@@ -24,6 +24,63 @@ function makeRouter(initialQuery: Record<string, string> = {}) {
     const url = qs.length > 0 ? `/?${qs}` : '/';
 
     return { router, url };
+}
+
+/**
+ * Build a memory router with a list page and another page.
+ */
+function makeTwoPageRouter(): Router {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            { path: '/', component: EmptyComponent },
+            { path: '/other', component: EmptyComponent },
+        ],
+    });
+}
+
+/** A navigation guard that holds navigations until released. */
+interface NavigationGate {
+    /** Settles once a navigation reaches the guard. */
+    readonly entered: Promise<void>;
+
+    /**
+     * Let held navigations continue.
+     */
+    release(): void;
+
+    /**
+     * Remove the guard so later navigations pass straight through.
+     */
+    remove(): void;
+}
+
+/**
+ * Hold every navigation on `router` in a guard until the gate is released.
+ */
+function holdNavigations(router: Router): NavigationGate {
+    /**
+     * Signal that a navigation reached the guard.
+     */
+    let enter: () => void = () => undefined;
+
+    /**
+     * Let held navigations continue.
+     */
+    let release: () => void = () => undefined;
+    const entered = new Promise<void>(resolve => {
+        enter = resolve;
+    });
+    const open = new Promise<void>(resolve => {
+        release = resolve;
+    });
+    const remove = router.beforeEach(() => {
+        enter();
+
+        return open;
+    });
+
+    return { entered, release, remove };
 }
 
 describe('useRouteQueryState', () => {
@@ -78,6 +135,33 @@ describe('useRouteQueryState', () => {
             const state = useRouteQueryState(router, { defaults: { tag: 'all' } });
 
             expect(state.values.value['tag']).toBe('all');
+        });
+
+        it('keeps multi-character values intact', async () => {
+            const { router, url } = makeRouter({ sort: 'created_at', page: '12' });
+            await router.push(url);
+
+            const state = useRouteQueryState(router, { defaults: { page: '1', sort: 'name' } });
+
+            expect(state.values.value).toStrictEqual({ page: '12', sort: 'created_at' });
+        });
+
+        it('falls back to the default for a bare key without a value', async () => {
+            const { router } = makeRouter();
+            await router.push('/?page');
+
+            const state = useRouteQueryState(router, { defaults: { page: '1' } });
+
+            expect(state.values.value).toStrictEqual({ page: '1' });
+        });
+
+        it('falls back to the default for an empty array', async () => {
+            const { router } = makeRouter();
+            await router.push({ path: '/', query: { tag: [] } });
+
+            const state = useRouteQueryState(router, { defaults: { tag: 'all' } });
+
+            expect(state.values.value).toStrictEqual({ tag: 'all' });
         });
 
         it('reacts to route changes', async () => {
@@ -175,8 +259,15 @@ describe('useRouteQueryState', () => {
             await router.push(url);
 
             const state = useRouteQueryState(router, { defaults: { page: '1' } });
+            let navigations = 0;
+
+            router.afterEach(() => {
+                navigations++;
+            });
 
             await state.set({ unknown: 'value' });
+
+            expect(navigations).toBe(0);
 
             expect(router.currentRoute.value.query['unknown']).toBeUndefined();
             expect(router.currentRoute.value.query['page']).toBe('1');
@@ -193,6 +284,195 @@ describe('useRouteQueryState', () => {
             expect(router.currentRoute.value.query['page']).toBe('2');
             expect(router.currentRoute.value.query['sort']).toBe('date');
             expect(router.currentRoute.value.query['dir']).toBe('desc');
+        });
+    });
+
+    describe('concurrent set', () => {
+        it('commits patches set in the same tick together', async () => {
+            const { router } = makeRouter();
+            await router.push('/?a=1');
+
+            const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
+            let navigations = 0;
+
+            router.afterEach((_to, _from, failure) => {
+                if (failure === undefined) {
+                    navigations++;
+                }
+            });
+
+            const search = state.set({ search: 'ada' });
+            const page = state.set({ page: '2' });
+
+            await Promise.all([search, page]);
+
+            expect(router.currentRoute.value.query).toStrictEqual({ a: '1', search: 'ada', page: '2' });
+            expect(navigations).toBe(1);
+        });
+
+        it('lets a later patch in the same tick override an earlier one', async () => {
+            const { router } = makeRouter();
+            await router.push('/?page=3');
+
+            const state = useRouteQueryState(router, { defaults: { page: '1' } });
+
+            void state.set({ page: '4' });
+            await state.set({ page: null });
+
+            expect(router.currentRoute.value.query).toStrictEqual({});
+        });
+
+        it('merges patches from separate instances on one router', async () => {
+            const { router } = makeRouter();
+            await router.push('/');
+
+            const filters = useRouteQueryState(router, { defaults: { search: '' } });
+            const tabs = useRouteQueryState(router, { defaults: { tab: 'all' } });
+
+            void filters.set({ search: 'ada', tab: 'ignored' });
+            await tabs.set({ tab: 'archived' });
+
+            expect(router.currentRoute.value.query).toStrictEqual({ search: 'ada', tab: 'archived' });
+        });
+
+        it('applies a patch set while a navigation is pending on top of it', async () => {
+            const { router } = makeRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
+            const gate = holdNavigations(router);
+            const search = state.set({ search: 'ada' });
+
+            await gate.entered;
+
+            const page = state.set({ page: '2' });
+
+            gate.remove();
+            gate.release();
+            await Promise.all([search, page]);
+
+            expect(router.currentRoute.value.query).toStrictEqual({ search: 'ada', page: '2' });
+        });
+
+        it('drops a queued patch once the route has moved to another page', async () => {
+            const router = makeTwoPageRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
+            const gate = holdNavigations(router);
+            const search = state.set({ search: 'ada' });
+
+            await gate.entered;
+
+            const page = state.set({ page: '2' });
+
+            gate.remove();
+            await router.push('/other?tab=all');
+            gate.release();
+            await Promise.all([search, page]);
+
+            expect(router.currentRoute.value.fullPath).toBe('/other?tab=all');
+        });
+
+        it('keeps earlier keys when a superseded update settles before the next set', async () => {
+            const { router } = makeRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { search: '', page: '1', sort: 'name' } });
+            const releases: Array<() => void> = [];
+            const removeGuard = router.beforeEach(
+                () =>
+                    new Promise<void>(resolve => {
+                        releases.push(resolve);
+                    }),
+            );
+
+            const search = state.set({ search: 'ada' });
+            const page = state.set({ page: '2' });
+
+            await search;
+            await vi.waitFor(() => expect(releases).toHaveLength(1));
+
+            const sort = state.set({ sort: 'date' });
+
+            removeGuard();
+            releases[0]?.();
+            await Promise.all([page, sort]);
+
+            expect(router.currentRoute.value.query).toStrictEqual({ search: 'ada', page: '2', sort: 'date' });
+        });
+
+        it('lets a navigation away issued in the same tick win', async () => {
+            const router = makeTwoPageRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { page: '1' } });
+            const page = state.set({ page: '2' });
+
+            await router.push('/other');
+            await page;
+
+            expect(router.currentRoute.value.fullPath).toBe('/other');
+        });
+
+        it('applies a patch set on the new page while an old-page update is held', async () => {
+            const router = makeTwoPageRouter();
+            await router.push('/');
+
+            const listState = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
+            const gate = holdNavigations(router);
+            const search = listState.set({ search: 'ada' });
+
+            await gate.entered;
+
+            const page = listState.set({ page: '2' });
+
+            gate.remove();
+            await router.push('/other');
+
+            const otherState = useRouteQueryState(router, { defaults: { tab: 'all' } });
+
+            await otherState.set({ tab: 'new' });
+            gate.release();
+            await Promise.all([search, page]);
+
+            expect(router.currentRoute.value.fullPath).toBe('/other?tab=new');
+        });
+
+        it('drops a patch a guard cancels and still applies the next one', async () => {
+            const { router } = makeRouter();
+            await router.push('/?page=1');
+
+            const state = useRouteQueryState(router, { defaults: { page: '1', sort: 'name' } });
+            const removeGuard = router.beforeEach(to => to.query['page'] !== '9');
+
+            await expect(state.set({ page: '9' })).resolves.toBeUndefined();
+            expect(router.currentRoute.value.query).toStrictEqual({ page: '1' });
+
+            removeGuard();
+            await state.set({ sort: 'date' });
+
+            expect(router.currentRoute.value.query).toStrictEqual({ page: '1', sort: 'date' });
+        });
+
+        it('rejects the batch a guard throws on without blocking the next one', async () => {
+            const { router } = makeRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { page: '1' } });
+            const failure = new Error('guard failed');
+            const removeGuard = router.beforeEach(() => {
+                throw failure;
+            });
+
+            const failed = state.set({ page: '2' });
+
+            await expect(failed).rejects.toBe(failure);
+
+            removeGuard();
+            await state.set({ page: '3' });
+
+            expect(router.currentRoute.value.query).toStrictEqual({ page: '3' });
         });
     });
 });

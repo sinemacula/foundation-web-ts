@@ -7,7 +7,7 @@
 
 import type { ComputedRef } from 'vue';
 import { computed } from 'vue';
-import type { LocationQuery, Router } from 'vue-router';
+import type { LocationQuery, RouteLocationNormalizedLoaded, Router } from 'vue-router';
 
 /**
  * Options accepted by {@link useRouteQueryState}.
@@ -33,8 +33,71 @@ export interface RouteQueryState {
     /**
      * Merge a patch of managed keys into the URL query, null clearing a key;
      * unmanaged keys in the patch are ignored and other parameters preserved.
+     * Patches set before the route commits, from any instance on the router,
+     * accumulate, so a later call carries every earlier key; a patch with no
+     * managed keys does not navigate.
      */
     set(patch: Readonly<Record<string, string | null>>): Promise<void>;
+}
+
+/**
+ * Query patches set on one router since its current route committed.
+ */
+interface PendingQuery {
+    /** The committed route the accumulated patch applies to. */
+    readonly base: RouteLocationNormalizedLoaded;
+
+    /** Every patch set since `base` committed, later keys winning. */
+    readonly patch: Record<string, string | null>;
+
+    /** Identifies the latest `set` merged into `patch`. */
+    latest: object;
+}
+
+/** The accumulated query patch per router. */
+const pendingQueries = new WeakMap<Router, PendingQuery>();
+
+/**
+ * Merge `patch` into the router's accumulated patch and replace the query with
+ * every key set since the current route committed; the accumulation is dropped
+ * once its latest navigation settles, whatever the outcome.
+ */
+function replaceQuery(router: Router, patch: Readonly<Record<string, string | null>>): Promise<void> {
+    const base = router.currentRoute.value;
+    const existing = pendingQueries.get(router);
+    const token = {};
+    const pending = existing?.base === base ? existing : { base, patch: {}, latest: token };
+
+    pending.latest = token;
+
+    pendingQueries.set(router, pending);
+    Object.assign(pending.patch, patch);
+
+    return router
+        .replace({ query: applyPatch(base.query, pending.patch) })
+        .finally(() => {
+            if (pendingQueries.get(router) === pending && pending.latest === token) {
+                pendingQueries.delete(router);
+            }
+        })
+        .then(() => undefined);
+}
+
+/**
+ * Apply a patch to a query, null removing a key.
+ */
+function applyPatch(query: LocationQuery, patch: Readonly<Record<string, string | null>>): LocationQuery {
+    const next: LocationQuery = { ...query };
+
+    for (const [key, value] of Object.entries(patch)) {
+        if (value === null) {
+            delete next[key];
+        } else {
+            next[key] = value;
+        }
+    }
+
+    return next;
 }
 
 /**
@@ -79,26 +142,14 @@ export function useRouteQueryState(router: Router, options: RouteQueryStateOptio
     }
 
     /**
-     * Merge a patch into the URL query; null removes a key and keys outside
-     * `defaults` are ignored.
+     * Merge the managed keys of a patch into the router's query.
      */
     async function set(patch: Readonly<Record<string, string | null>>): Promise<void> {
-        const current = router.currentRoute.value.query;
-        const next: LocationQuery = { ...current };
+        const managed = Object.entries(patch).filter(([key]) => Object.hasOwn(defaults, key));
 
-        for (const [key, value] of Object.entries(patch)) {
-            if (!(key in defaults)) {
-                continue;
-            }
-
-            if (value === null) {
-                delete next[key];
-            } else {
-                next[key] = value;
-            }
+        if (managed.length > 0) {
+            await replaceQuery(router, Object.fromEntries(managed));
         }
-
-        await router.replace({ query: next });
     }
 
     return { values, get, set };

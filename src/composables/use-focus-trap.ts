@@ -7,67 +7,151 @@
 
 import type { Ref } from 'vue';
 
-const FOCUSABLE_SELECTOR =
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const EDITABLE_SELECTOR = '[contenteditable]:not([contenteditable="false"])';
+
+// Editable content inside an editable host shares the host's single tab stop.
+const SKIPPED_SELECTOR = `[tabindex^="-"], :disabled, ${EDITABLE_SELECTOR} ${EDITABLE_SELECTOR}:not([tabindex])`;
+
+const FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'button',
+    'input:not([type="hidden"])',
+    'select',
+    'textarea',
+    'iframe',
+    'audio[controls]',
+    'video[controls]',
+    'details > summary:first-of-type',
+    EDITABLE_SELECTOR,
+    '[tabindex]',
+].join(', ');
 
 /**
  * Controls returned by {@link useFocusTrap}.
  */
 export interface FocusTrapControls {
     /**
-     * Focus the container's first focusable descendant and wrap Tab / Shift+Tab
-     * at its boundaries; no-op when it holds nothing focusable.
+     * Focus the container's first tabbable descendant, or the container itself
+     * when it has none, and keep Tab / Shift+Tab inside it. Calling it again
+     * while active re-targets the trap to the current container and keeps the
+     * original element to restore focus to.
      */
     activate(): void;
 
     /**
-     * Stop trapping and restore focus to the element active before `activate`,
-     * if it is still attached to the document.
+     * Stop trapping and restore focus to the element active before the first
+     * `activate`, if it is still attached to the document and no trap activated
+     * later is still open.
      */
     deactivate(): void;
 }
 
 /**
- * Collect every focusable descendant of `container` in DOM order.
+ * The live state of one activated trap.
  */
-function getFocusable(container: HTMLElement): HTMLElement[] {
-    return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+interface ActiveTrap {
+    /** The container focus is kept inside. */
+    readonly element: HTMLElement;
+
+    /** The document-level keydown listener keeping Tab inside `element`. */
+    readonly listener: (event: KeyboardEvent) => void;
+
+    /** Whether the trap added `tabindex="-1"` to make `element` focusable. */
+    addedTabIndex: boolean;
+}
+
+/** Active traps in activation order; only the latest one still in the document handles Tab. */
+const trapStack: ActiveTrap[] = [];
+
+/**
+ * Collect every descendant of `container` that sequential Tab navigation can
+ * reach, in DOM order; positive tabindex ordering, radio groups and shadow
+ * roots are not modelled.
+ */
+function getTabbable(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        el =>
+            !el.matches(SKIPPED_SELECTOR) &&
+            el.closest('[hidden], [inert]') === null &&
+            el.checkVisibility({ visibilityProperty: true }),
+    );
 }
 
 /**
- * Wrap Shift+Tab on the first focusable element to the last, and Tab on the
- * last to the first.
+ * Focus the trap's container, first making it focusable with a temporary
+ * `tabindex="-1"` when it has no tabindex of its own.
  */
-function handleTrapKeydown(event: KeyboardEvent, container: HTMLElement): void {
-    const focusable = getFocusable(container);
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
+function focusContainer(trap: ActiveTrap): void {
+    if (!trap.element.hasAttribute('tabindex')) {
+        trap.element.setAttribute('tabindex', '-1');
+        trap.addedTabIndex = true;
+    }
 
-    if (first === undefined || last === undefined) {
+    trap.element.focus();
+}
+
+/**
+ * Wrap Shift+Tab on the first tabbable element to the last and Tab on the last
+ * to the first; from anywhere else outside the tabbable set, including the
+ * container itself or the body after the focused control was removed, move to
+ * the first or last, or to the container when nothing is tabbable, so focus
+ * never leaves.
+ */
+function handleTrapKeydown(event: KeyboardEvent, trap: ActiveTrap): void {
+    const tabbable = getTabbable(trap.element);
+    const target = event.shiftKey ? tabbable.at(-1) : tabbable[0];
+    const boundary = event.shiftKey ? tabbable[0] : tabbable.at(-1);
+
+    if (target === undefined) {
+        event.preventDefault();
+        focusContainer(trap);
+
         return;
     }
 
-    if (event.shiftKey) {
-        if (document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-        }
-    } else if (document.activeElement === last) {
+    const active = document.activeElement as HTMLElement;
+
+    if (active === boundary || !tabbable.includes(active)) {
         event.preventDefault();
-        first.focus();
+        target.focus();
     }
 }
 
 /**
- * Create a focus trap the host activates when the container shows and
- * deactivates when it hides.
+ * Detach a trap's keydown listener, undo its container tabindex and remove it
+ * from the trap stack.
+ */
+function releaseTrap(trap: ActiveTrap): void {
+    trap.element.ownerDocument.removeEventListener('keydown', trap.listener);
+
+    if (trap.addedTabIndex) {
+        trap.element.removeAttribute('tabindex');
+    }
+
+    trapStack.splice(trapStack.indexOf(trap), 1);
+}
+
+/**
+ * Create a focus trap the host activates once the container has rendered and
+ * deactivates when it hides; when traps nest, only the latest one handles Tab.
  */
 export function useFocusTrap(container: Ref<HTMLElement | null>): FocusTrapControls {
     let previouslyFocused: HTMLElement | null = null;
-    let keydownHandler: ((event: KeyboardEvent) => void) | null = null;
+    let trap: ActiveTrap | null = null;
 
     /**
-     * Remember the active element, focus the first target and intercept Tab.
+     * Release the current trap, if any.
+     */
+    function release(): void {
+        if (trap !== null) {
+            releaseTrap(trap);
+            trap = null;
+        }
+    }
+
+    /**
+     * Remember the active element on first activation, focus the first target
+     * and intercept Tab.
      */
     function activate(): void {
         const el = container.value;
@@ -76,40 +160,45 @@ export function useFocusTrap(container: Ref<HTMLElement | null>): FocusTrapContr
             return;
         }
 
-        const focusable = getFocusable(el);
-        const firstFocusable = focusable[0];
-
-        if (firstFocusable === undefined) {
-            return;
-        }
-
-        if (document.activeElement instanceof HTMLElement) {
+        if (trap === null && document.activeElement instanceof HTMLElement) {
             previouslyFocused = document.activeElement;
         }
-        firstFocusable.focus();
 
-        keydownHandler = (event: KeyboardEvent): void => {
-            if (event.key === 'Tab') {
-                handleTrapKeydown(event, el);
-            }
+        release();
+
+        const active: ActiveTrap = {
+            element: el,
+            listener: (event: KeyboardEvent): void => {
+                if (event.key === 'Tab' && trapStack.findLast(entry => entry.element.isConnected) === active) {
+                    handleTrapKeydown(event, active);
+                }
+            },
+            addedTabIndex: false,
         };
 
-        el.addEventListener('keydown', keydownHandler);
+        el.ownerDocument.addEventListener('keydown', active.listener);
+        trapStack.push(active);
+        trap = active;
+
+        const firstTabbable = getTabbable(el)[0];
+
+        if (firstTabbable === undefined) {
+            focusContainer(active);
+        } else {
+            firstTabbable.focus();
+        }
     }
 
     /**
-     * Stop intercepting Tab and restore focus to the pre-activation element.
+     * Stop intercepting Tab and, unless a trap activated later is still open,
+     * restore focus to the pre-activation element.
      */
     function deactivate(): void {
-        const el = container.value;
+        const isTop = trap === trapStack.at(-1);
 
-        if (el !== null && keydownHandler !== null) {
-            el.removeEventListener('keydown', keydownHandler);
-        }
+        release();
 
-        keydownHandler = null;
-
-        if (previouslyFocused?.isConnected) {
+        if (isTop && previouslyFocused?.isConnected) {
             previouslyFocused.focus();
         }
 

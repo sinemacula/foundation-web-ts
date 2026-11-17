@@ -7,7 +7,7 @@
 
 // biome-ignore-all lint/style/useNamingConvention: ESLint AST visitor keys
 
-import { createRule, moduleFolder, unwrapExpression } from './lib.js';
+import { contractFile, createRule, moduleFolder, objectLiteral, projectPath, staticString } from './lib.js';
 
 /** Escape a string for literal use inside a regular expression. */
 function escapeRegExp(value) {
@@ -15,24 +15,19 @@ function escapeRegExp(value) {
 }
 
 /**
- * Every string or single-quasi template value in an object, recursively.
+ * Every static string value in an object, walking nested groups.
  */
 function routeNameValues(objectExpression) {
     const values = [];
 
     for (const property of objectExpression.properties) {
-        if (property.type !== 'Property') {
-            continue;
-        }
+        const text = staticString(property.value);
+        const group = objectLiteral(property.value);
 
-        const value = property.value;
-
-        if (value.type === 'Literal' && typeof value.value === 'string') {
-            values.push({ node: value, text: value.value });
-        } else if (value.type === 'TemplateLiteral' && value.expressions.length === 0) {
-            values.push({ node: value, text: value.quasis[0].value.cooked });
-        } else if (value.type === 'ObjectExpression') {
-            values.push(...routeNameValues(value));
+        if (text !== null) {
+            values.push({ node: property.value, text });
+        } else if (group !== null) {
+            values.push(...routeNameValues(group));
         }
     }
 
@@ -55,15 +50,10 @@ export default createRule({
     defaultOptions: [],
     // Stryker restore all
     create(context) {
-        const filename = context.filename.replace(/\\/g, '/');
-
-        if (!/(?:^|\/)route-names\.ts$/.test(filename)) {
-            return {};
-        }
-
+        const filename = projectPath(context);
         const folder = moduleFolder(filename);
 
-        if (folder === null) {
+        if (contractFile(filename)?.kind !== 'route-names' || folder === null) {
             return {};
         }
 
@@ -73,13 +63,13 @@ export default createRule({
 
         return {
             VariableDeclarator(node) {
-                if (node.id?.type !== 'Identifier' || !/_ROUTE_NAMES$/.test(node.id.name)) {
+                if (node.id.type !== 'Identifier' || !/_ROUTE_NAMES$/.test(node.id.name)) {
                     return;
                 }
 
-                const object = unwrapExpression(node.init);
+                const object = objectLiteral(node.init);
 
-                if (object?.type !== 'ObjectExpression') {
+                if (object === null) {
                     return;
                 }
 
