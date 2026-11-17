@@ -9,6 +9,7 @@ import { watch } from 'vue';
 import type { Router } from 'vue-router';
 
 import { sanitiseRedirectTarget } from '@sinemacula/foundation/session/redirect';
+import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { analytics, featureFlags, reporting } from '../app/services';
 import type { ModuleBootContext, ModuleTeardown } from '../module/module';
@@ -19,6 +20,9 @@ import { sessionContext } from './session-context';
 import { followSession } from './session-realtime';
 import type { SessionStore } from './session-store';
 import { useSessionStore } from './session-store';
+
+/** Reports a hydration's failure, resolving whether it succeeded. */
+export type HydrationReporter = (hydration: Promise<void>) => Promise<boolean>;
 
 /** The resolved boot-phase toggles and inputs. */
 export interface SessionLifecycleOptions {
@@ -42,6 +46,33 @@ export interface SessionLifecycleOptions {
 
     /** The caller's identity mapping, or false to disable the fan-out. */
     readonly identity: false | SessionIdentityMapping<SessionUser>;
+
+    /** Reports a failed hydration, resolving whether it succeeded. */
+    readonly reportHydration: HydrationReporter;
+
+    /** Draws a uniform sample in [0, 1) placing this tab's proactive refresh. */
+    readonly random: () => number;
+}
+
+/** The identity values last fanned out to each channel. */
+interface AppliedIdentity {
+    /** The reporter identity. */
+    readonly reporting: ReturnType<Required<SessionIdentityMapping<SessionUser>>['reporting']>;
+
+    /** The analytics identity. */
+    readonly analytics: string;
+
+    /** The feature-flag evaluation context. */
+    readonly featureFlags: Readonly<Record<string, string>>;
+}
+
+/** Fans the session identity out to the reporting, analytics and feature-flag holders. */
+interface IdentityFanOut {
+    /** Fan the given user's identity out. */
+    readonly apply: (user: SessionUser) => void;
+
+    /** Clear every channel, if an identity was fanned out. */
+    readonly clear: () => void;
 }
 
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
@@ -60,31 +91,53 @@ export async function bootSessionLifecycle(
 
     await session.ready();
 
+    const area = options.crossTabSync
+        ? accessLocalStorage(
+              context.platform.targetWindow,
+              'Cross-tab session sync observes the window localStorage, which is inaccessible; set crossTabSync ' +
+                  'to false and hydrate the session store on your persistence change notifications.',
+          )
+        : null;
     const store = useSessionStore(context.pinia);
+    const fanOut = options.identity === false ? null : createIdentityFanOut(resolveIdentityMapping(options.identity));
     const teardowns: ModuleTeardown[] = [];
+
+    /**
+     * Load the held session's user; a session whose user cannot be loaded no
+     * longer vouches for the identity fanned out.
+     */
+    const loadUser = async (): Promise<void> => {
+        const identity = store.sessionIdentity();
+
+        await store.rehydrateUser();
+
+        if (identity !== null && store.user === null && store.sessionIdentity() === identity) {
+            fanOut?.clear();
+        }
+    };
 
     if (options.sessionLossRedirect) {
         teardowns.push(wireSessionLossRedirect(context.router, store, options.routes));
     }
 
-    if (options.crossTabSync) {
-        teardowns.push(wireCrossTabSync(context.platform.targetWindow, store, options.sessionKey));
-        await store.hydrate().catch(report);
+    if (area !== null) {
+        teardowns.push(wireCrossTabSync(context.platform.targetWindow, area, store, options, loadUser));
+        await options.reportHydration(store.hydrate());
     }
 
-    if (options.identity !== false) {
-        teardowns.push(wireIdentityFanOut(store, resolveIdentityMapping(options.identity)));
+    if (fanOut !== null) {
+        teardowns.push(wireIdentityFanOut(store, fanOut));
     }
 
     if (options.proactiveRefresh) {
-        teardowns.push(wireProactiveRefresh(session, store));
+        teardowns.push(wireProactiveRefresh(session, store, options.random));
     }
 
     if (options.realtimeFollowsSession && context.realtime !== null) {
         teardowns.push(followSession(context.realtime, store));
     }
 
-    void store.rehydrateUser();
+    void loadUser();
 
     return () => {
         for (const teardown of teardowns.reverse()) {
@@ -108,26 +161,36 @@ function wireSessionLossRedirect(router: Router, store: SessionStore, routes: Se
 }
 
 /**
- * Re-hydrate whenever another tab changes the session key in the target
- * window's localStorage, or clears it, then load the adopted session's user.
+ * Resolve the window's localStorage, whose getter throws where storage is
+ * blocked.
+ *
+ * @throws {@link SessionError} carrying the given guidance when inaccessible
  */
-function wireCrossTabSync(target: Window, store: SessionStore, sessionKey: string): ModuleTeardown {
-    const area = target.localStorage;
+export function accessLocalStorage(target: Window, guidance: string): Storage {
+    try {
+        return target.localStorage;
+    } catch (error) {
+        throw new SessionError(guidance, { cause: error });
+    }
+}
 
+/**
+ * Re-hydrate whenever another tab changes the session key in the given
+ * localStorage area, or clears it, then load the adopted session's user.
+ */
+function wireCrossTabSync(
+    target: Window,
+    area: Storage,
+    store: SessionStore,
+    options: SessionLifecycleOptions,
+    loadUser: () => Promise<void>,
+): ModuleTeardown {
     let disposed = false;
 
     /** Adopt the persisted session, then load its user unless disposed. */
     const synchronise = async (): Promise<void> => {
-        try {
-            await store.hydrate();
-        } catch (error) {
-            report(error);
-
-            return;
-        }
-
-        if (!disposed) {
-            void store.rehydrateUser();
+        if ((await options.reportHydration(store.hydrate())) && !disposed) {
+            void loadUser();
         }
     };
 
@@ -135,7 +198,7 @@ function wireCrossTabSync(target: Window, store: SessionStore, sessionKey: strin
      * Synchronise on a change to the session key, or a clear, of the area.
      */
     const onStorage = (event: StorageEvent): void => {
-        if (event.storageArea === area && (event.key === sessionKey || event.key === null)) {
+        if (event.storageArea === area && (event.key === options.sessionKey || event.key === null)) {
             void synchronise();
         }
     };
@@ -149,30 +212,33 @@ function wireCrossTabSync(target: Window, store: SessionStore, sessionKey: strin
 }
 
 /**
- * Fan the identity of the current user out, then again whenever it changes.
+ * Fan the identity of the current user out, then again whenever it changes,
+ * clearing it on sign-out. A held session whose user is still loading changes
+ * nothing, so a session adopted from another tab keeps the identity until its
+ * user is known.
  */
-function wireIdentityFanOut(
-    store: SessionStore,
-    mapping: Required<SessionIdentityMapping<SessionUser>>,
-): ModuleTeardown {
+function wireIdentityFanOut(store: SessionStore, fanOut: IdentityFanOut): ModuleTeardown {
     if (store.user !== null) {
-        applyIdentity(mapping, store.user);
+        fanOut.apply(store.user);
     }
 
-    return watch(
-        () => store.user,
-        user => {
-            applyIdentity(mapping, user);
-        },
-    );
+    return watch([() => store.user, () => store.isAuthenticated], ([user, authenticated]) => {
+        if (user !== null) {
+            fanOut.apply(user);
+        } else if (!authenticated) {
+            fanOut.clear();
+        }
+    });
 }
 
 /**
  * Keep a single refresh armed ahead of the session expiry, through the refresh
- * authority so it never races a 401 refresh. A transient failure is left to the
- * 401 path and a refusal clears the session, which the loss watcher redirects.
+ * authority so it never races a 401 refresh. Each tab fires at its own random
+ * point in the earlier half of the skew window, so the first rotation reaches
+ * the other tabs before they refresh. A transient failure is left to the 401
+ * path and a refusal clears the session, which the loss watcher redirects.
  */
-function wireProactiveRefresh(session: SessionContext, store: SessionStore): ModuleTeardown {
+function wireProactiveRefresh(session: SessionContext, store: SessionStore, random: () => number): ModuleTeardown {
     /**
      * Cancel the armed refresh, if any.
      */
@@ -189,7 +255,8 @@ function wireProactiveRefresh(session: SessionContext, store: SessionStore): Mod
             return;
         }
 
-        const delay = Math.max(0, expiresAtEpochMs - session.clock() - session.refreshSkewMs);
+        const spread = Math.floor((random() * session.refreshSkewMs) / 2);
+        const delay = Math.max(0, expiresAtEpochMs - session.clock() - session.refreshSkewMs + spread);
 
         cancel =
             delay > MAX_TIMEOUT_DELAY_MS
@@ -251,26 +318,62 @@ function defaultReportedIdentity(
 }
 
 /**
- * Fan the session identity out to the reporting, analytics and feature-flag
- * holders, clearing all three together on sign-out.
+ * Build the identity fan-out. A user touches only the channels whose mapped
+ * value changed, a different analytics identity resets the previous one first,
+ * and clearing clears all three channels together.
  */
-function applyIdentity(mapping: Required<SessionIdentityMapping<SessionUser>>, user: SessionUser | null): void {
-    if (user === null) {
-        reporting().setUser(null);
-        analytics().reset();
-        featureFlags().setContext({});
+function createIdentityFanOut(mapping: Required<SessionIdentityMapping<SessionUser>>): IdentityFanOut {
+    let applied: AppliedIdentity | null = null;
 
-        return;
-    }
+    return {
+        apply: user => {
+            const next: AppliedIdentity = {
+                reporting: mapping.reporting(user),
+                analytics: mapping.analytics(user),
+                featureFlags: mapping.featureFlags(user),
+            };
 
-    reporting().setUser(mapping.reporting(user));
-    analytics().identify(mapping.analytics(user));
-    featureFlags().setContext(mapping.featureFlags(user));
+            if (applied !== null && applied.analytics !== next.analytics) {
+                analytics().reset();
+            }
+
+            if (!hasSameEntries(applied?.reporting, next.reporting)) {
+                reporting().setUser(next.reporting);
+            }
+
+            if (applied?.analytics !== next.analytics) {
+                analytics().identify(next.analytics);
+            }
+
+            if (!hasSameEntries(applied?.featureFlags, next.featureFlags)) {
+                featureFlags().setContext(next.featureFlags);
+            }
+
+            applied = next;
+        },
+        clear: () => {
+            if (applied === null) {
+                return;
+            }
+
+            applied = null;
+            reporting().setUser(null);
+            analytics().reset();
+            featureFlags().setContext({});
+        },
+    };
 }
 
 /**
- * Report a session failure the lifecycle contains.
+ * Whether a flat record, if any, holds exactly the entries of another.
  */
-function report(error: unknown): void {
-    reporting().captureError(error);
+function hasSameEntries(
+    left: Readonly<Record<string, unknown>> | undefined,
+    right: Readonly<Record<string, unknown>>,
+): boolean {
+    return (
+        left !== undefined &&
+        Object.keys(left).length === Object.keys(right).length &&
+        Object.entries(right).every(([key, value]) => left[key] === value)
+    );
 }
