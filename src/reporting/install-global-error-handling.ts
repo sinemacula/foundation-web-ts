@@ -27,19 +27,66 @@ export interface GlobalErrorHandlingOptions {
     readonly targetWindow?: Window;
 }
 
+type VueErrorHandler = NonNullable<App['config']['errorHandler']>;
+
+/**
+ * The handler an installation replaced and whether it is still installed.
+ */
+interface Installation {
+    /** The Vue error handler in place before this installation. */
+    readonly previous: VueErrorHandler | undefined;
+
+    /** Whether this installation has not been torn down yet. */
+    active: boolean;
+}
+
+/** Every handler installed by {@link installGlobalErrorHandling}, mapped to its installation. */
+const installations = new WeakMap<VueErrorHandler, Installation>();
+
+/**
+ * Follow `handler` back past torn-down installations to the nearest live one.
+ */
+function nearestLive(handler: VueErrorHandler | undefined): VueErrorHandler | undefined {
+    let installation = handler === undefined ? undefined : installations.get(handler);
+
+    while (installation !== undefined && !installation.active) {
+        handler = installation.previous;
+        installation = handler === undefined ? undefined : installations.get(handler);
+    }
+
+    return handler;
+}
+
 /**
  * Forward Vue component errors, window errors and unhandled rejections to
  * `reporter`.
  *
- * @returns a teardown that restores the previous Vue error handler and removes
- * the window listeners; repeat calls are no-ops
+ * @returns a teardown that removes the window listeners and, while its handler
+ * is still the app's, restores the nearest handler that is still installed, so
+ * installations can be torn down in any order; repeat calls are no-ops
  */
 export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions): () => void {
     const { app, reporter, trail } = options;
     const target = options.targetWindow ?? globalThis.window;
-    const previousErrorHandler = app.config.errorHandler;
+    const installation: Installation = { previous: app.config.errorHandler, active: true };
 
-    app.config.errorHandler = (err, _instance, info) => {
+    /**
+     * Report a Vue error, or once torn down hand it to the nearest live handler,
+     * rethrowing for Vue's default logging when there is none.
+     */
+    const errorHandler: VueErrorHandler = (err, instance, info) => {
+        if (!installation.active) {
+            const live = nearestLive(installation.previous);
+
+            if (live === undefined) {
+                throw err;
+            }
+
+            live(err, instance, info);
+
+            return;
+        }
+
         const context: Record<string, unknown> = { source: 'vue', info };
 
         if (trail !== undefined) {
@@ -48,6 +95,9 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
 
         reporter.captureError(err, context);
     };
+
+    installations.set(errorHandler, installation);
+    app.config.errorHandler = errorHandler;
 
     /**
      * Forward a synchronous window error to the reporter with breadcrumbs.
@@ -78,20 +128,22 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
     target.addEventListener('error', onError);
     target.addEventListener('unhandledrejection', onUnhandledRejection);
 
-    let installed = true;
-
     return () => {
-        if (!installed) {
+        if (!installation.active) {
             return;
         }
 
-        installed = false;
+        installation.active = false;
 
-        // The handler is an optional property, so an absent one is deleted.
-        if (previousErrorHandler === undefined) {
-            delete app.config.errorHandler;
-        } else {
-            app.config.errorHandler = previousErrorHandler;
+        if (app.config.errorHandler === errorHandler) {
+            const restored = nearestLive(installation.previous);
+
+            // The handler is an optional property, so an absent one is deleted.
+            if (restored === undefined) {
+                delete app.config.errorHandler;
+            } else {
+                app.config.errorHandler = restored;
+            }
         }
 
         target.removeEventListener('error', onError);
