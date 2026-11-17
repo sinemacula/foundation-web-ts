@@ -175,6 +175,7 @@ describe('useLoginForm', () => {
                     method: 'POST',
                     path: 'auth/sign-in',
                     body: { email: 'alice@example.com', password: 'correct-password', platform: 'WEB' },
+                    options: { retryOnUnauthorized: false },
                 },
                 { method: 'GET', path: 'users/self', body: undefined },
             ]);

@@ -12,6 +12,10 @@ const messages: LocaleMessages = {
         title: 'Tableau de bord',
         welcome: 'Bon retour. Ceci est le point de départ de la console Sine Macula.',
     },
+    signOut: {
+        title: 'Se déconnecter ?',
+        message: 'Vous devrez vous reconnecter pour continuer.',
+    },
 };
 
 export default messages;

@@ -1,5 +1,5 @@
 <!--
-    Dashboard home screen with sign-out.
+    Dashboard home screen with a confirmed sign-out.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited
@@ -13,12 +13,23 @@ import { useRouter } from 'vue-router';
 
 import DefaultLayout from '@/layouts/default-layout.vue';
 import { AUTH_ROUTE_NAMES, useAuthStore } from '@/modules/auth';
+import { confirmDialogs } from '@/services/confirm';
 
 const { t } = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
 
 const handleSignOut = async (): Promise<void> => {
+    const confirmed = await confirmDialogs().confirm({
+        title: 'dashboard.signOut.title',
+        message: 'dashboard.signOut.message',
+        confirmLabel: 'common.actions.signOut',
+    });
+
+    if (!confirmed) {
+        return;
+    }
+
     await auth.logout();
     await router.push({ name: AUTH_ROUTE_NAMES.login });
 };
