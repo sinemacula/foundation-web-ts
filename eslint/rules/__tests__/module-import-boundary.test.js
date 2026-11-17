@@ -57,6 +57,10 @@ ruleTester.run('module-import-boundary', rule, {
         { filename: 'src/modules/auth/views/login.ts', code: "import { x } from '../composables/use-login-form';" },
         { filename: 'src/modules/auth/routes.ts', code: "import { x } from '../../shared/format';" },
         { filename: 'src/modules/auth/routes.ts', code: "import { modules } from '../index';" },
+        {
+            filename: 'src/modules/admin/modules/auth/routes.ts',
+            code: "import { x } from '@/modules/admin/modules/auth/composables/use-thing';",
+        },
         // A package path through a `modules` folder is not a module tree.
         { filename: 'src/app.ts', code: "import 'some-package/modules/forms/input';" },
         // An explicit index entry is the public surface too.
@@ -138,11 +142,16 @@ ruleTester.run('module-import-boundary', rule, {
             code: "import { x } from '@/modules/auth/module-helpers';",
             errors: [{ messageId: 'crossModule', data: { module: 'auth' } }],
         },
-        // A nested module tree is its own module.
+        // A nested module tree is its own module, even under a reused name.
         {
             filename: 'src/modules/admin/views/panel.ts',
             code: "import { x } from '@/modules/admin/modules/users/composables/use-thing';",
             errors: [{ messageId: 'crossModule', data: { module: 'users' } }],
+        },
+        {
+            filename: 'src/modules/auth/routes.ts',
+            code: "import { x } from '@/modules/admin/modules/auth/composables/use-thing';",
+            errors: [{ messageId: 'crossModule', data: { module: 'auth' } }],
         },
         // Type-only imports cross the same boundaries.
         {
