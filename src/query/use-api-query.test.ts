@@ -47,7 +47,7 @@ describe('useApiQuery', () => {
     });
 
     describe('apply', () => {
-        it('replaces the held query with the result of the mutate callback', () => {
+        it('replaces the query with the result of mutate', () => {
             const { query, apply } = useApiQuery();
 
             apply(q => q.where('name', 'Alice'));
@@ -64,7 +64,7 @@ describe('useApiQuery', () => {
             expect(parameters.value['limit']).toBe(20);
         });
 
-        it('receives the current query as the argument to the mutate callback', () => {
+        it('passes the current query to mutate', () => {
             const { query, apply } = useApiQuery({
                 initial: q => q.where('status', 'active'),
             });
@@ -127,7 +127,7 @@ describe('useApiQuery', () => {
             expect(parameters.value['limit']).toBe(10);
         });
 
-        it('uses the same initial ApiQuery instance on every reset (referential identity)', () => {
+        it('restores the same initial instance on reset', () => {
             const { query, apply, reset } = useApiQuery({
                 initial: q => q.where('x', 1),
             });
@@ -142,7 +142,7 @@ describe('useApiQuery', () => {
     });
 
     describe('reactivity', () => {
-        it('query ComputedRef updates when apply is called', () => {
+        it('updates query on apply', () => {
             const { query, apply } = useApiQuery();
 
             const before = query.value;
@@ -152,7 +152,7 @@ describe('useApiQuery', () => {
             expect(query.value).not.toBe(before);
         });
 
-        it('parameters ComputedRef updates when the query changes', () => {
+        it('updates parameters when the query changes', () => {
             const { parameters, apply } = useApiQuery();
 
             expect(parameters.value['page']).toBeUndefined();
@@ -162,7 +162,7 @@ describe('useApiQuery', () => {
             expect(parameters.value['page']).toBe(3);
         });
 
-        it('returns a fresh ApiQuery instance from apply - not mutated original', () => {
+        it('leaves the query passed to mutate unchanged', () => {
             const { apply } = useApiQuery();
             let capturedInput: ApiQuery | undefined;
 

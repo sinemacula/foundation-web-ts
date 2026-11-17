@@ -8,16 +8,11 @@
 /**
  * Write `text` to the system clipboard.
  *
- * The Clipboard API is unavailable in some contexts (older browsers, insecure
- * origins) and `writeText` can reject even where it is available (permission
- * denied). Both cases resolve to `false` rather than throwing, so callers can
- * toast a success or failure message without a try/catch.
+ * Never throws: resolves false when the Clipboard API is unavailable (older
+ * browsers, insecure origins) or `writeText` rejects (permission denied).
  *
- * @param text - the text to copy
- * @param targetNavigator - the navigator to copy through; defaults to
- * `globalThis.navigator`
- * @returns true once the text has been written, false when the write was
- * unavailable or failed
+ * @param targetNavigator - defaults to `globalThis.navigator`
+ * @returns true once the text has been written
  */
 export async function copyToClipboard(
     text: string,

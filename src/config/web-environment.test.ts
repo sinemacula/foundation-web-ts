@@ -11,25 +11,15 @@ import { Environment } from '@sinemacula/foundation/config/environment';
 import { ConfigurationError, createWebEnvironment } from './web-environment';
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping non-camelCase environment keys out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a string record from entries, keeping non-camelCase keys out of object
+ * literals where the naming rules would flag them.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
 }
 
 /**
- * Run a function expected to throw and return the thrown value.
- *
- * @param fn - the function under test
- * @returns the thrown value, or undefined when nothing was thrown
+ * Run a function expected to throw and return the thrown value, or undefined.
  */
 function capture(fn: () => void): unknown {
     try {

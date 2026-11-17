@@ -9,9 +9,12 @@ import { describe, expect, it } from 'vitest';
 
 import { filter } from '@sinemacula/foundation/query/list-filter';
 import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
+import type { ListQuery } from './use-list-query';
 import { useListQuery } from './use-list-query';
 
-/** Parse the `filters` parameter back to an object. */
+/**
+ * Parse the `filters` parameter back to an object.
+ */
 function parsedFilters(params: Record<string, unknown>): unknown {
     if (params['filters'] === undefined) {
         return {};
@@ -20,14 +23,13 @@ function parsedFilters(params: Record<string, unknown>): unknown {
     return JSON.parse(String(params['filters']));
 }
 
-/** Build a wire object, keeping $-prefixed keys out of object literals. */
+/**
+ * Build a wire object, keeping $-prefixed keys out of object literals.
+ */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
 }
 
-// ---------------------------------------------------------------------------
-// Shared definition used across most tests
-// ---------------------------------------------------------------------------
 const sharedDefinition = defineListQuery({
     filters: {
         status: filter.equals('status'),
@@ -47,10 +49,9 @@ const sharedDefinition = defineListQuery({
     pageSize: 10,
 });
 
+type SharedListQuery = ListQuery<NonNullable<(typeof sharedDefinition)['filters']>>;
+
 describe('useListQuery', () => {
-    // -------------------------------------------------------------------------
-    // Initial state
-    // -------------------------------------------------------------------------
     describe('initial state', () => {
         it('starts on page 1', () => {
             const { page } = useListQuery(sharedDefinition);
@@ -107,9 +108,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Compile order: base applied first
-    // -------------------------------------------------------------------------
     describe('base', () => {
         it('applies the base function first', () => {
             const definition = defineListQuery({
@@ -137,9 +135,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // filter.equals via setFilter
-    // -------------------------------------------------------------------------
     describe('setFilter - equals', () => {
         it('applies the filter to the compiled query', () => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);
@@ -183,9 +178,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Dot-path filter (relation nesting)
-    // -------------------------------------------------------------------------
     describe('setFilter - dot-path relation nesting', () => {
         it('nests posts.author.name correctly', () => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);
@@ -196,9 +188,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // filter.boolean - false is a real value
-    // -------------------------------------------------------------------------
     describe('setFilter - boolean false', () => {
         it('emits false as a real equality filter, not a clear', () => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);
@@ -217,91 +206,29 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // filter.present - true/false
-    // -------------------------------------------------------------------------
-    describe('setFilter - present', () => {
-        it('emits $notNull when present is true', () => {
+    describe('setFilter - operators', () => {
+        it.each<[string, (setFilter: SharedListQuery['setFilter']) => void, Record<string, unknown>]>([
+            ['present true as $notNull', set => set('hasEmail', true), wire([['email', wire([['$notNull', true]])]])],
+            ['present false as $null', set => set('hasEmail', false), wire([['email', wire([['$null', true]])]])],
+            ['anyOf as $in', set => set('ids', [1, 2, 3]), wire([['id', wire([['$in', [1, 2, 3]]])]])],
+            ['between as $between', set => set('ageRange', [18, 65]), wire([['age', wire([['$between', [18, 65]]])]])],
+            ['atLeast as $ge', set => set('minAge', 18), wire([['age', wire([['$ge', 18]])]])],
+            ['atMost as $le', set => set('maxAge', 65), wire([['age', wire([['$le', 65]])]])],
+            ['contains a scalar', set => set('tags', 'news'), wire([['tags', wire([['$contains', 'news']])]])],
+            [
+                'contains an array',
+                set => set('tags', ['news', 'sport']),
+                wire([['tags', wire([['$contains', ['news', 'sport']]])]]),
+            ],
+        ])('applies %s', (_label, apply, expected) => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);
 
-            setFilter('hasEmail', true);
+            apply(setFilter);
 
-            expect(parsedFilters(parameters.value)).toEqual(wire([['email', wire([['$notNull', true]])]]));
-        });
-
-        it('emits $null when present is false', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('hasEmail', false);
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['email', wire([['$null', true]])]]));
-        });
-    });
-
-    // -------------------------------------------------------------------------
-    // filter.anyOf, between, atLeast, atMost, contains
-    // -------------------------------------------------------------------------
-    describe('setFilter - anyOf', () => {
-        it('applies a $in filter', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('ids', [1, 2, 3]);
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['id', wire([['$in', [1, 2, 3]]])]]));
+            expect(parsedFilters(parameters.value)).toEqual(expected);
         });
     });
 
-    describe('setFilter - between', () => {
-        it('applies a $between filter', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('ageRange', [18, 65]);
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['age', wire([['$between', [18, 65]]])]]));
-        });
-    });
-
-    describe('setFilter - atLeast', () => {
-        it('applies a $ge filter', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('minAge', 18);
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['age', wire([['$ge', 18]])]]));
-        });
-    });
-
-    describe('setFilter - atMost', () => {
-        it('applies a $le filter', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('maxAge', 65);
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['age', wire([['$le', 65]])]]));
-        });
-    });
-
-    describe('setFilter - contains', () => {
-        it('applies a $contains filter with a scalar', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('tags', 'news');
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['tags', wire([['$contains', 'news']])]]));
-        });
-
-        it('applies a $contains filter with an array', () => {
-            const { parameters, setFilter } = useListQuery(sharedDefinition);
-
-            setFilter('tags', ['news', 'sport']);
-
-            expect(parsedFilters(parameters.value)).toEqual(wire([['tags', wire([['$contains', ['news', 'sport']]])]]));
-        });
-    });
-
-    // -------------------------------------------------------------------------
-    // setFilter with null clears the filter
-    // -------------------------------------------------------------------------
     describe('setFilter - null clears', () => {
         it('setFilter(name, null) clears the filter', () => {
             const { parameters, filterValues, setFilter } = useListQuery(sharedDefinition);
@@ -324,9 +251,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // clearFilter
-    // -------------------------------------------------------------------------
     describe('clearFilter', () => {
         it('removes the named filter', () => {
             const { parameters, setFilter, clearFilter } = useListQuery(sharedDefinition);
@@ -353,14 +277,10 @@ describe('useListQuery', () => {
             goTo(3);
             clearFilter('status');
 
-            // Page is unchanged because the filter was not active
             expect(page.value).toBe(3);
         });
     });
 
-    // -------------------------------------------------------------------------
-    // clearFilters
-    // -------------------------------------------------------------------------
     describe('clearFilters', () => {
         it('removes all active filters', () => {
             const { parameters, filterValues, setFilter, clearFilters } = useListQuery(sharedDefinition);
@@ -393,9 +313,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // search
-    // -------------------------------------------------------------------------
     describe('search', () => {
         it('compiles the search term into the query', () => {
             const { parameters, search } = useListQuery(sharedDefinition);
@@ -440,9 +357,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // sortBy - defaultSort emission
-    // -------------------------------------------------------------------------
     describe('sortBy - defaultSort', () => {
         it('emits defaultSort when no explicit sort has been set', () => {
             const { parameters } = useListQuery(sharedDefinition);
@@ -458,9 +372,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // sortBy - explicit sort
-    // -------------------------------------------------------------------------
     describe('sortBy - explicit sort', () => {
         it('sets an explicit ascending sort', () => {
             const { parameters, sortBy } = useListQuery(sharedDefinition);
@@ -504,9 +415,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // sortBy - toggle behaviour
-    // -------------------------------------------------------------------------
     describe('sortBy - toggle', () => {
         it('defaults to asc on first call without explicit direction', () => {
             const { sort, sortBy } = useListQuery(sharedDefinition);
@@ -554,9 +462,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // sortBy - throws on non-sortable column
-    // -------------------------------------------------------------------------
     describe('sortBy - non-sortable column', () => {
         it('throws an Error naming the rejected column and the allowed list', () => {
             const { sortBy } = useListQuery(sharedDefinition);
@@ -575,9 +480,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Pagination: next / previous / goTo
-    // -------------------------------------------------------------------------
     describe('next', () => {
         it('advances to the next page', () => {
             const { page, next } = useListQuery(sharedDefinition);
@@ -643,9 +545,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Page reset on filter / search / sort changes
-    // -------------------------------------------------------------------------
     describe('page reset behaviour', () => {
         it('resets to 1 when a filter changes', () => {
             const { page, setFilter, goTo } = useListQuery(sharedDefinition);
@@ -689,9 +588,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // refine
-    // -------------------------------------------------------------------------
     describe('refine', () => {
         it('appends a persistent advanced refinement after standard steps', () => {
             const { parameters, refine } = useListQuery(sharedDefinition);
@@ -724,17 +620,12 @@ describe('useListQuery', () => {
             const definition = defineListQuery({});
             const { parameters, refine } = useListQuery(definition);
 
-            // Verify the refinement can still mutate query that already has
-            // limit/page
             refine(q => q.fieldsFor('users', ['id']));
 
             expect(parameters.value['fields[users]']).toBe('id');
         });
     });
 
-    // -------------------------------------------------------------------------
-    // reset
-    // -------------------------------------------------------------------------
     describe('reset', () => {
         it('clears all active filters', () => {
             const { filterValues, setFilter, reset } = useListQuery(sharedDefinition);
@@ -787,13 +678,12 @@ describe('useListQuery', () => {
             sortBy('age', 'desc');
             reset();
 
-            // After reset, defaultSort ('name' asc) is in effect again
             expect(parameters.value['order']).toBe('name');
         });
 
         it('restores no filters, no search, no order when definition has no defaults', () => {
             const definition = defineListQuery({});
-            const { parameters, setFilter: _setFilter, search, sortBy, reset } = useListQuery(definition);
+            const { parameters, search, sortBy, reset } = useListQuery(definition);
 
             search('test');
             sortBy('anyCol');
@@ -804,9 +694,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Compile order validation
-    // -------------------------------------------------------------------------
     describe('compile order', () => {
         it('applies filters before search', () => {
             const { parameters, setFilter, search } = useListQuery(sharedDefinition);
@@ -836,9 +723,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Reactivity: parameters update after each mutation
-    // -------------------------------------------------------------------------
     describe('reactivity', () => {
         it('parameters.value changes after setFilter', () => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);
@@ -895,9 +779,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Custom filter
-    // -------------------------------------------------------------------------
     describe('custom filter', () => {
         it('applies via the escape hatch', () => {
             const definition = defineListQuery({
@@ -913,9 +794,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // pageSize default 25
-    // -------------------------------------------------------------------------
     describe('pageSize defaults', () => {
         it('defaults to 25 when pageSize is not specified', () => {
             const definition = defineListQuery({ filters: { status: filter.equals('status') } });
@@ -932,9 +810,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // defineListQuery freeze
-    // -------------------------------------------------------------------------
     describe('defineListQuery freeze', () => {
         it('returns a frozen object', () => {
             const def = defineListQuery({ pageSize: 20 });
@@ -956,14 +831,8 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Defensive guard branches
-    // -------------------------------------------------------------------------
     describe('defensive guard branches', () => {
-        it('is a no-op when setFilter is called with a key not in the definition filters record', () => {
-            // Exercises the filterDef === undefined branch in setFilter. Cast
-            // through unknown to simulate a runtime mismatch (e.g. a stale
-            // filter key after a hot-reload definition change).
+        it('ignores setFilter for a key missing from the definition', () => {
             const definition = defineListQuery({
                 filters: { status: filter.equals('status') },
             });
@@ -975,8 +844,7 @@ describe('useListQuery', () => {
             expect(parameters.value['filters']).toBeUndefined();
         });
 
-        it('does not emit a search filter when search term is set but definition has no search', () => {
-            // Exercises the searchFilter === undefined branch.
+        it('ignores the search term when the definition has no search filter', () => {
             const definition = defineListQuery({
                 filters: { status: filter.equals('status') },
             });
@@ -988,9 +856,6 @@ describe('useListQuery', () => {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // Filter insertion order
-    // -------------------------------------------------------------------------
     describe('filter insertion order', () => {
         it('applies filters in the order they were set', () => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);

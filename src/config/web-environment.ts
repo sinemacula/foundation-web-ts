@@ -1,15 +1,6 @@
 /**
  * Composition helper for the standard web application environment.
  *
- * Builds an {@link Environment} from the fetched runtime document without the
- * kernel ever evaluating `import.meta.env` - the caller passes the build-time
- * record and dev flag from its own build context. In development the runtime
- * document is chained ahead of the prefixed build-time variables, so a deployed
- * value always beats a local default. In production the runtime document stands
- * alone and every required key must be present and non-empty, because missing
- * keys indicate a broken deployment and the application must fail loudly rather
- * than silently boot against incorrect defaults.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -27,8 +18,6 @@ const DEFAULT_BUILD_TIME_PREFIX = 'VITE_';
 export class ConfigurationError extends Error {
     /**
      * Construct a configuration error describing the missing keys.
-     *
-     * @param message - description of the missing keys
      */
     constructor(message: string) {
         super(message);
@@ -40,10 +29,10 @@ export class ConfigurationError extends Error {
  * Inputs for {@link createWebEnvironment}.
  */
 export interface WebEnvironmentOptions {
-    /** The fetched runtime document. Standalone callers may pass `fetchRuntimeEnvironment`'s result. */
+    /** The fetched runtime document, e.g. the result of `fetchRuntimeEnvironment`. */
     readonly runtime: Readonly<Record<string, string>>;
 
-    /** Whether the application runs in a development build. The caller passes `import.meta.env.DEV`, resolved in the application's build context. */
+    /** Whether this is a development build; pass `import.meta.env.DEV` so the kernel never evaluates `import.meta.env` itself. */
     readonly dev: boolean;
 
     /** The build-time variable record (`import.meta.env`), chained after the runtime document in development only. */
@@ -52,15 +41,17 @@ export interface WebEnvironmentOptions {
     /** The prefix carried by build-time variable keys. Defaults to `VITE_`. */
     readonly buildTimePrefix?: string;
 
-    /** Keys that must be present and non-empty in the runtime document for a production deployment to be considered valid. Ignored in development. */
+    /** Keys the runtime document must define as non-empty in production. Ignored in development. */
     readonly requiredKeys?: readonly string[];
 }
 
 /**
  * Build the application environment from the runtime document.
  *
- * @param options - the runtime document, dev flag, and production gate
- * @returns the composed environment
+ * In development the runtime document is chained ahead of the prefixed
+ * build-time variables, so a deployed value beats a local default. In
+ * production the runtime document stands alone.
+ *
  * @throws {ConfigurationError} in production when required runtime keys are
  * missing or empty
  */
@@ -85,10 +76,7 @@ export function createWebEnvironment(options: WebEnvironmentOptions): Environmen
 /**
  * Assert that every required key is present and non-empty.
  *
- * @param runtime - the resolved runtime environment values
- * @param requiredKeys - the keys the deployment must define
- * @throws {ConfigurationError} when one or more required keys are missing or
- * empty
+ * @throws {ConfigurationError} when any required key is missing or empty
  */
 function assertRequiredKeys(runtime: Readonly<Record<string, string>>, requiredKeys: readonly string[]): void {
     const missing = requiredKeys.filter(key => {

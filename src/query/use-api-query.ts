@@ -1,11 +1,6 @@
 /**
  * Reactive composable wrapping an `ApiQuery` instance.
  *
- * `useApiQuery` is the UI seam between filter/sort components and the query
- * layer. Components call `apply` to derive a new query state; the `parameters`
- * computed ref re-evaluates automatically and can be fed directly into a data-
- * fetching composable or watcher.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -20,7 +15,7 @@ import { ApiQuery } from '@sinemacula/foundation/query/api-query';
  * Options accepted by {@link useApiQuery}.
  */
 export interface UseApiQueryOptions {
-    /** An optional builder that seeds the initial query state. */
+    /** Builder that seeds the initial query state. */
     readonly initial?: (query: ApiQuery) => ApiQuery;
 }
 
@@ -35,23 +30,18 @@ export interface ApiQueryState {
     readonly parameters: ComputedRef<QueryParameters>;
 
     /**
-     * Replace the held query by applying `mutate` to it.
-     *
-     * @param mutate - receives the current query and returns the new query
+     * Replace the held query with the result of applying `mutate` to it.
      */
     apply(mutate: (query: ApiQuery) => ApiQuery): void;
 
     /**
-     * Reset the query back to the initial state.
+     * Restore the seed query captured at creation.
      */
     reset(): void;
 }
 
 /**
  * Create reactive query state for a single API endpoint.
- *
- * @param options - optional seed builder for the initial query
- * @returns the reactive query state and control methods
  */
 export function useApiQuery(options?: UseApiQueryOptions): ApiQueryState {
     const initial = options?.initial ? options.initial(ApiQuery.create()) : ApiQuery.create();
@@ -62,14 +52,14 @@ export function useApiQuery(options?: UseApiQueryOptions): ApiQueryState {
 
     /**
      * Replace the current query with the result of applying `mutate` to it.
-     *
-     * @param mutate - transforms the current query into the next one
      */
     function apply(mutate: (query: ApiQuery) => ApiQuery): void {
         current.value = mutate(current.value);
     }
 
-    /** Restore the query to the seed state captured at creation. */
+    /**
+     * Restore the seed query captured at creation.
+     */
     function reset(): void {
         current.value = initial;
     }
