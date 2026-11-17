@@ -106,7 +106,7 @@ function mountUsersView(): MountedUsersView {
 }
 
 /**
- * Build an env record from pairs so SCREAMING_SNAKE_CASE keys avoid literal keys.
+ * Build an env record from pairs, keeping its snake-case keys out of literals.
  */
 function wireEnv(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);

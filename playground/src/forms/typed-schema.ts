@@ -40,8 +40,7 @@ export function zodToTypedSchema<T extends z.ZodObject<z.ZodRawShape>>(
 
                 if (!seen.has(dotPath)) {
                     seen.add(dotPath);
-                    // exactOptionalPropertyTypes forbids `path: undefined`,
-                    // so root issues omit the key.
+                    // Root issues omit `path` rather than set it undefined.
                     const entry: TypedSchemaError = dotPath
                         ? { path: dotPath, errors: [issue.message] }
                         : { errors: [issue.message] };
