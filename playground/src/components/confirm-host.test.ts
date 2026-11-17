@@ -228,6 +228,30 @@ describe('ConfirmHost', () => {
         host.unmount();
     });
 
+    it('ignores a click on an answered dialog once the next request surfaces', async () => {
+        const host = mountHost();
+        const first = service.confirm(REQUEST);
+        const second = service.confirm({ ...REQUEST, confirmLabel: 'confirm.again' });
+
+        await settle();
+
+        const staleConfirm = actions()[1];
+
+        staleConfirm?.click();
+        staleConfirm?.click();
+        await settle();
+        staleConfirm?.click();
+
+        await expect(first).resolves.toBe(true);
+        expect(service.active.value?.confirmLabel).toBe('confirm.again');
+        expect(actions().map(button => button.disabled)).toEqual([false, false]);
+
+        service.settle(false);
+        await expect(second).resolves.toBe(false);
+
+        host.unmount();
+    });
+
     it('engages on a confirmation already active when it mounts', async () => {
         void service.confirm(REQUEST);
 

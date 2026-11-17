@@ -10,7 +10,7 @@
 import SmButton from '@/components/ui/sm-button.vue';
 import SmCard from '@/components/ui/sm-card.vue';
 import { useI18n } from 'vue-i18n';
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useFocusTrap } from '@sinemacula/web-core/composables/use-focus-trap';
 import { confirmDialogs } from '@/services/confirm';
@@ -18,58 +18,79 @@ import { confirmDialogs } from '@/services/confirm';
 const { t } = useI18n();
 const service = confirmDialogs();
 
-const dialogRef = ref<HTMLElement | null>(null);
-// Holds the element the trap was engaged on until release, as the v-if drops dialogRef first.
+// A list so each rendered dialog closes over its own request rather than whichever is active on click.
+const requests = computed(() => (service.active.value === null ? [] : [service.active.value]));
+const dialogRefs = ref<HTMLElement[]>([]);
+// Holds the element the trap was engaged on until release, as unmounting empties dialogRefs first.
 const trapTarget = ref<HTMLElement | null>(null);
 const trap = useFocusTrap(trapTarget);
+
+/** The id of the request already answered from this host, if any. */
+const answeredId = ref<string | null>(null);
 
 /**
  * Re-engage the focus trap on the rendered dialog for the active request.
  */
 function syncTrap(): void {
     trap.deactivate();
-    trapTarget.value = dialogRef.value;
+    trapTarget.value = dialogRefs.value[0] ?? null;
 
     if (service.active.value !== null) {
         trap.activate();
     }
 }
 
+/**
+ * Answer the request with the given id once; a stale or repeated answer is ignored.
+ */
+function answer(id: string, outcome: boolean): void {
+    if (answeredId.value === id || service.active.value?.id !== id) {
+        return;
+    }
+
+    answeredId.value = id;
+    service.settle(outcome);
+}
+
+/**
+ * Answer the request "no" when Escape is pressed inside its dialog.
+ */
+function onKeydown(event: KeyboardEvent, id: string): void {
+    if (event.key === 'Escape') {
+        answer(id, false);
+    }
+}
+
 watch(() => service.active.value, syncTrap, { flush: 'post' });
 onMounted(syncTrap);
 onBeforeUnmount(trap.deactivate);
-
-function onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-        service.settle(false);
-    }
-}
 </script>
 
 <template>
     <div
-        v-if="service.active.value !== null"
-        ref="dialogRef"
+        v-for="request in requests"
+        :key="request.id"
+        ref="dialogRefs"
         class="confirm-host"
         role="alertdialog"
         aria-modal="true"
-        :aria-labelledby="`confirm-title-${service.active.value.id}`"
-        :aria-describedby="`confirm-message-${service.active.value.id}`"
-        @keydown="onKeydown"
+        :aria-labelledby="`confirm-title-${request.id}`"
+        :aria-describedby="`confirm-message-${request.id}`"
+        @keydown="onKeydown($event, request.id)"
     >
         <SmCard class="confirm-host__panel">
-            <h2 :id="`confirm-title-${service.active.value.id}`" class="confirm-host__title">
-                {{ t(service.active.value.title) }}
+            <h2 :id="`confirm-title-${request.id}`" class="confirm-host__title">
+                {{ t(request.title) }}
             </h2>
-            <p :id="`confirm-message-${service.active.value.id}`" class="confirm-host__message">
-                {{ t(service.active.value.message) }}
+            <p :id="`confirm-message-${request.id}`" class="confirm-host__message">
+                {{ t(request.message) }}
             </p>
             <div class="confirm-host__actions">
-                <SmButton variant="ghost" @click="service.settle(false)">
-                    {{ t(service.active.value.cancelLabel ?? 'common.actions.cancel') }}
+                <SmButton variant="ghost" :disabled="answeredId === request.id" @click="answer(request.id, false)">
+                    {{ t(request.cancelLabel ?? 'common.actions.cancel') }}
                 </SmButton>
-                <SmButton @click="service.settle(true)">
-                    {{ t(service.active.value.confirmLabel ?? 'common.actions.confirm') }}
+                <SmButton :disabled="answeredId === request.id" @click="answer(request.id, true)">
+                    {{ t(request.confirmLabel ?? 'common.actions.confirm') }}
                 </SmButton>
             </div>
         </SmCard>
