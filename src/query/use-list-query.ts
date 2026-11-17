@@ -131,7 +131,7 @@ export function useListQuery<Filters extends Record<string, ListFilter<never>>>(
     const state: ListQueryState = { activeFilters, activeSearch, activeSort, currentPage, refinements };
 
     const query = computed<ApiQuery>(previous => {
-        const compiled = compileQuery(definition, state);
+        const compiled = compileQuery(definition, state, currentCriteria(state));
 
         return previous?.toQueryString() === compiled.toQueryString() ? previous : compiled;
     });
@@ -218,14 +218,15 @@ type NavigationMutations<Filters extends Record<string, ListFilter<never>>> = Pi
 >;
 
 /**
- * Compile an {@link ApiQuery} from the current list-query state, in the order
- * documented on {@link useListQuery}.
+ * Compile an {@link ApiQuery} from the given criteria and the current page and
+ * refinements, in the order documented on {@link useListQuery}.
  */
 function compileQuery<Filters extends Record<string, ListFilter<never>>>(
     definition: ListQueryDefinition<Filters>,
     state: ListQueryState,
+    criteria: ListCriteria,
 ): ApiQuery {
-    let q = compileCriteria(definition, currentCriteria(state))
+    let q = compileCriteria(definition, criteria)
         .limit(definition.pageSize ?? DEFAULT_PAGE_SIZE)
         .page(state.currentPage.value);
 
@@ -278,7 +279,7 @@ function currentCriteria(state: ListQueryState): ListCriteria {
 
 /**
  * Commit a criteria change, resetting the page to 1 only when it changes the
- * compiled criteria; a change whose filters throw is not committed.
+ * compiled query; a change whose filters throw is not committed.
  */
 function changeCriteria<Filters extends Record<string, ListFilter<never>>>(
     definition: ListQueryDefinition<Filters>,
@@ -288,7 +289,8 @@ function changeCriteria<Filters extends Record<string, ListFilter<never>>>(
     const current = currentCriteria(state);
     const next: ListCriteria = { ...current, ...change };
     const changed =
-        compileCriteria(definition, next).toQueryString() !== compileCriteria(definition, current).toQueryString();
+        compileQuery(definition, state, next).toQueryString() !==
+        compileQuery(definition, state, current).toQueryString();
 
     state.activeFilters.value = next.filters;
     state.activeSearch.value = next.search;

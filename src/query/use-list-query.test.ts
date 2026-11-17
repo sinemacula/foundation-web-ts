@@ -649,6 +649,16 @@ describe('useListQuery', () => {
             expect(page.value).toBe(1);
         });
 
+        it('keeps the page when a refinement overrides the change', () => {
+            const { page, refine, search, goTo } = useListQuery(sharedDefinition);
+
+            refine(q => q.search('fixed'));
+            goTo(3);
+            search('ignored');
+
+            expect(page.value).toBe(3);
+        });
+
         it('does not reset on next/previous/goTo', () => {
             const { page, setFilter, next, previous, goTo } = useListQuery(sharedDefinition);
 
