@@ -21,7 +21,8 @@ const FULL_SCOPE_TRIGGERS = [
 
 const TEST_FILE = /\.test\.ts$/u;
 const TEST_SUPPORT = '/test-support/';
-const FULL_SCOPE_PACKAGE = /(?:^|\/)node_modules\/(?:@sinemacula\/foundation|@stryker-mutator\/[^/]+)$/u;
+const FULL_SCOPE_PACKAGE =
+    /(?:^|\/)node_modules\/(?:@sinemacula\/foundation|@stryker-mutator\/[^/]+|vitest|@vitest\/[^/]+)$/u;
 
 /**
  * A failure that leaves the scope unknown, so nothing may be printed.
@@ -42,9 +43,9 @@ export function isMutable(path, mutate) {
 }
 
 /**
- * Serialise the installed Foundation and mutation-engine entries of a parsed
- * lockfile, so two lockfiles compare equal exactly when they install both
- * identically.
+ * Serialise the installed Foundation, test runner and mutation engine entries
+ * of a parsed lockfile, so two lockfiles compare equal exactly when they
+ * install them identically.
  */
 export function fullScopeFingerprint(lockfile) {
     const packages = lockfile?.packages ?? {};
@@ -142,8 +143,8 @@ function readMutatePatterns() {
 }
 
 /**
- * Whether the installed Foundation or mutation engine differs between
- * `mergeBase` and HEAD.
+ * Whether the installed Foundation, test runner or mutation engine differs
+ * between `mergeBase` and HEAD.
  */
 function packagesChangedSince(mergeBase) {
     /**
