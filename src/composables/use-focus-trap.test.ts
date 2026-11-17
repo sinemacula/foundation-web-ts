@@ -406,6 +406,26 @@ describe('useFocusTrap', () => {
         });
     });
 
+    describe('native tab stops beyond form controls', () => {
+        it.each([
+            ['an editable region', '<div id="middle" contenteditable="true">Notes</div>'],
+            ['a details summary', '<details><summary id="middle">More</summary></details>'],
+            ['media controls', '<video id="middle" controls></video>'],
+        ])('lets Tab move on natively from %s', (_label, middle) => {
+            container = buildContainer(`<button id="first">First</button>${middle}<button id="last">Last</button>`);
+
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            (container.querySelector<HTMLElement>('#middle') as HTMLElement).focus();
+
+            expect(pressKey('Tab').defaultPrevented).toBe(false);
+            expect(pressKey('Tab', true).defaultPrevented).toBe(false);
+
+            trap.deactivate();
+        });
+    });
+
     describe('repeated activation', () => {
         it('returns focus to the original trigger and leaves no listener behind', () => {
             const trigger = buildContainer('<button id="trigger">Trigger</button>');

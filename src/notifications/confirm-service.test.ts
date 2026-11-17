@@ -209,9 +209,17 @@ describe('ConfirmService', () => {
             expect(service.active.value).toBeNull();
         });
 
+        it('is a no-op with nothing pending', () => {
+            const service = new ConfirmService();
+
+            expect(() => service.cancelAll()).not.toThrow();
+            expect(service.active.value).toBeNull();
+        });
+
         it('leaves the service ready for new requests', async () => {
             const service = new ConfirmService();
 
+            void service.confirm({ title: 'cancelled', message: 'msg' });
             service.cancelAll();
 
             const outcome = service.confirm({ title: 'later', message: 'msg' });
