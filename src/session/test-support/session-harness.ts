@@ -17,7 +17,7 @@ import type { HttpClient } from '@sinemacula/foundation/http/http-client';
 import type { ModuleHttpContributions } from '@sinemacula/foundation/http/module-http-contributions';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { installAnalytics, installApi, installFeatureFlags, installReporting } from '../../app/services';
+import { installAnalytics, installApi, installFeatureFlags, installLogger, installReporting } from '../../app/services';
 import { createApplicationI18n } from '../../i18n/application-i18n';
 import type { ModuleDefinition, ModuleTeardown, ResolvedPlatform, ScheduleTask } from '../../module/module';
 import { scheduleOnTimers } from '../../module/module';
@@ -76,6 +76,9 @@ export interface Observability {
 
     /** Every feature-flag evaluation context. */
     readonly flagContexts: unknown[];
+
+    /** Every logged warning message. */
+    readonly warnings: string[];
 }
 
 /** Everything a test needs around the registered module. */
@@ -199,9 +202,18 @@ export function installObservability(): Observability {
         resets: [],
         analyticsCalls: [],
         flagContexts: [],
+        warnings: [],
     };
 
     installApi(createHttpClientStub());
+    installLogger({
+        debug: () => undefined,
+        info: () => undefined,
+        warn: message => {
+            observability.warnings.push(message);
+        },
+        error: () => undefined,
+    });
     installReporting({
         captureError: error => {
             observability.errors.push(error);

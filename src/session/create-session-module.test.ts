@@ -194,18 +194,69 @@ describe('createSessionModule', () => {
             expect(() => harness({}, { withoutLocks: true })).toThrowError(SessionError);
         });
 
-        it('refuses to register over a blocked localStorage, naming the persistence option', () => {
-            let refusal: unknown;
+        it.each([
+            ['with', false],
+            ['without', true],
+        ])(
+            'keeps the session in memory for the page over a blocked localStorage %s Web Locks',
+            async (_label, withoutLocks) => {
+                const target = harness({}, { storageBlocked: true, withoutLocks });
 
-            try {
-                harness({}, { storageBlocked: true });
-            } catch (error) {
-                refusal = error;
-            }
+                gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+                gateway.currentUser.mockResolvedValueOnce(user());
+                await target.store().login({ email: 'a', password: 'b' });
+                await target.store().hydrate();
 
-            expect(refusal).toBeInstanceOf(SessionError);
-            expect(refusal).toHaveProperty('message', expect.stringContaining('persistence option'));
-            expect(refusal).toHaveProperty('cause.name', 'SecurityError');
+                expect(target.store().accessToken).toBe('access');
+                expect(target.win.navigator.locks?.names ?? []).toStrictEqual([]);
+                expect(target.observability.warnings).toStrictEqual([
+                    'Site storage is blocked, so the session is kept in memory: it ends on reload and is not shared with other tabs.',
+                ]);
+                expect(target.observability.errors).toStrictEqual([]);
+            },
+        );
+
+        it('warns of nothing when localStorage is reachable', () => {
+            const target = harness();
+
+            expect(target.observability.warnings).toStrictEqual([]);
+        });
+
+        it('surfaces a write failure of the given persistence over a blocked localStorage', async () => {
+            const failure = new Error('secure store unavailable');
+            const inner = new KeyValueSessionPersistence(new MemoryStorage());
+            const target = harness(
+                {
+                    persistence: () => ({
+                        load: () => inner.load(),
+                        saveIf: () => Promise.reject(failure),
+                        clearIf: revision => inner.clearIf(revision),
+                    }),
+                    crossTabSync: false,
+                },
+                { storageBlocked: true },
+            );
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+
+            await expect(target.store().login({ email: 'a', password: 'b' })).rejects.toBe(failure);
+            expect(target.store().isAuthenticated).toBe(false);
+            expect(target.observability.warnings).toStrictEqual([]);
+        });
+
+        it('surfaces a failure of the given persistence rather than falling back', () => {
+            const failure = new Error('secure store unavailable');
+
+            expect(() =>
+                harness(
+                    {
+                        persistence: () => {
+                            throw failure;
+                        },
+                    },
+                    { storageBlocked: true },
+                ),
+            ).toThrowError(failure);
         });
 
         it('uses the given persistence instead, built over the platform', async () => {

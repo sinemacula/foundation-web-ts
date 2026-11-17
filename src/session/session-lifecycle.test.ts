@@ -430,6 +430,15 @@ describe('session lifecycle', () => {
             expect(refusal).toHaveProperty('cause.name', 'SecurityError');
         });
 
+        it('boots without listening when blocked storage keeps the default session in memory', async () => {
+            const target = harness({}, { storageBlocked: true });
+
+            await expect(target.boot()).resolves.toBeTypeOf('function');
+
+            expect(target.win.listenerCount()).toBe(0);
+            expect(target.observability.errors).toStrictEqual([]);
+        });
+
         it('boots over a blocked localStorage when disabled', async () => {
             const target = harness(
                 { crossTabSync: false, persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) },

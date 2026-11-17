@@ -310,7 +310,10 @@ The session persists as one revisioned snapshot in `localStorage`, written throu
 surface instead of being swallowed) under a `WebLocksSessionLock` shared by every tab. The module refuses to register
 when the Web Locks API is unavailable rather than falling back to an unshared lock; supply `persistence` to store the
 session elsewhere, and pair it with `crossTabSync: false` plus your own calls to the store's `hydrate()` when that store
-does not raise `storage` events. The storage keys are a public contract:
+does not raise `storage` events. Where the browser blocks site storage (reading `localStorage` throws), the default
+keeps the session in memory instead: sign-in works until the page reloads, no Web Lock is taken, cross-tab sync is
+skipped whatever `crossTabSync` says, and one warning goes to the logger. A `persistence` you supply is never replaced;
+its failures surface. The storage keys are a public contract:
 
 | Key          | Default            |
 |--------------|--------------------|
