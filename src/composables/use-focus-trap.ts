@@ -9,6 +9,9 @@ import type { Ref } from 'vue';
 
 const EDITABLE_SELECTOR = '[contenteditable]:not([contenteditable="false"])';
 
+// Editable content inside an editable host shares the host's single tab stop.
+const SKIPPED_SELECTOR = `[tabindex^="-"], :disabled, ${EDITABLE_SELECTOR} ${EDITABLE_SELECTOR}:not([tabindex])`;
+
 const FOCUSABLE_SELECTOR = [
     'a[href]',
     'button',
@@ -61,14 +64,6 @@ interface ActiveTrap {
 const trapStack: ActiveTrap[] = [];
 
 /**
- * Whether `el` is editable content inside an editable host without a tabindex
- * of its own, which the host's single tab stop already covers.
- */
-function isNestedEditable(el: HTMLElement): boolean {
-    return el.matches(`${EDITABLE_SELECTOR} ${EDITABLE_SELECTOR}:not([tabindex])`);
-}
-
-/**
  * Collect every descendant of `container` that sequential Tab navigation can
  * reach, in DOM order; positive tabindex ordering, radio groups and shadow
  * roots are not modelled.
@@ -76,9 +71,7 @@ function isNestedEditable(el: HTMLElement): boolean {
 function getTabbable(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
         el =>
-            !el.matches('[tabindex^="-"]') &&
-            !el.matches(':disabled') &&
-            !isNestedEditable(el) &&
+            !el.matches(SKIPPED_SELECTOR) &&
             el.closest('[hidden], [inert]') === null &&
             el.checkVisibility({ visibilityProperty: true }),
     );
