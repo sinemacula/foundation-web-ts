@@ -136,6 +136,21 @@ describe('application boot', () => {
         expect(app.config.api.baseUrl).toBe('http://localhost:8000');
     });
 
+    it('boots on the browser platform when no seams are given', async () => {
+        const fetchFn = vi.fn(async () => json(runtimeDocument()));
+
+        vi.stubGlobal('fetch', fetchFn);
+
+        try {
+            booted = await createPlaygroundApp({ dev: true, buildTimeEnv: {} });
+        } finally {
+            vi.unstubAllGlobals();
+        }
+
+        expect(booted.config.app.name).toBe('TestApp');
+        expect(fetchFn).toHaveBeenCalled();
+    });
+
     it('falls back to build-time env in development', async () => {
         const runtime = runtimeDocument();
 
