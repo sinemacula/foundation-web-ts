@@ -6,6 +6,7 @@
  */
 
 import { BrowserConnectivityMonitor } from '../connectivity/browser-connectivity-monitor';
+import { TeardownStack } from '../module/teardown-stack';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { ToastService } from '../notifications/toast-service';
 import { UpdateMonitor } from '../updates/update-monitor';
@@ -86,7 +87,7 @@ export interface WiredMonitors {
     /** The running connectivity monitor, or null when disabled. */
     readonly connectivity: ConnectivityMonitor | null;
 
-    /** Stops both monitors and detaches their handlers, silencing any update check still in flight. */
+    /** Stops both monitors and detaches their handlers, silencing any update check still in flight; every step runs even when one throws. */
     readonly teardown: () => void;
 }
 
@@ -118,14 +119,22 @@ export function wireMonitors<T extends MonitorWiringSettings>(options: WireMonit
         updateMonitor?.start();
     }
 
+    const teardowns = new TeardownStack();
+
+    for (const subscribed of [updates, connectivity]) {
+        if (subscribed !== null) {
+            teardowns.push(() => {
+                subscribed.monitor.stop();
+            });
+            teardowns.push(subscribed.unsubscribe);
+        }
+    }
+
     return {
         updates: updateMonitor,
         connectivity: connectivityMonitor,
         teardown: () => {
-            connectivity?.unsubscribe();
-            connectivityMonitor?.stop();
-            updates?.unsubscribe();
-            updateMonitor?.stop();
+            teardowns.dispose();
         },
     };
 }

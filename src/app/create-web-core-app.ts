@@ -10,6 +10,7 @@ import { createPinia } from 'pinia';
 import type { App, Component } from 'vue';
 import { createApp } from 'vue';
 import type { Router, RouterHistory } from 'vue-router';
+import { createWebHistory } from 'vue-router';
 
 import type { AnalyticsTracker } from '@sinemacula/foundation/analytics/analytics-tracker';
 import { installPageTracking } from '@sinemacula/foundation/analytics/install-page-tracking';
@@ -618,17 +619,20 @@ async function wireAppIntegration<T extends FoundationConfig>(
 
     recordPhase('router');
 
+    const history = options.platform?.history ?? createWebHistory();
+
+    teardowns.push(() => {
+        history.destroy();
+    });
+
     const { router, titleSyncTeardown } = wireRouter({
         modules: registry.modules,
         i18n,
         appName: settings.app.name,
-        ...(options.platform?.history === undefined ? {} : { history: options.platform.history }),
+        history,
         targetDocument: platform.targetDocument,
     });
 
-    teardowns.push(() => {
-        router.options.history.destroy();
-    });
     teardowns.push(titleSyncTeardown);
 
     app.use(router);
@@ -756,7 +760,6 @@ function assembleApp<T extends FoundationConfig>(
     const disposal = new AbortController();
 
     let started = false;
-    let disposed = false;
 
     return {
         app,
@@ -767,7 +770,7 @@ function assembleApp<T extends FoundationConfig>(
         services: buildServices(foundation, moduleLayer, integration),
         monitors: { updates: monitors.updates, connectivity: monitors.connectivity },
         async start(selector: string | Element = DEFAULT_MOUNT_SELECTOR): Promise<void> {
-            if (disposed) {
+            if (disposal.signal.aborted) {
                 throw new Error(DISPOSED_MESSAGE);
             }
 
@@ -779,7 +782,7 @@ function assembleApp<T extends FoundationConfig>(
 
             await Promise.race([router.isReady(), whenAborted(disposal.signal)]);
 
-            if (disposed) {
+            if (disposal.signal.aborted) {
                 throw new Error(DISPOSED_MESSAGE);
             }
 
@@ -792,11 +795,10 @@ function assembleApp<T extends FoundationConfig>(
             });
         },
         dispose(): void {
-            if (disposed) {
+            if (disposal.signal.aborted) {
                 return;
             }
 
-            disposed = true;
             disposal.abort();
             teardowns.dispose();
         },

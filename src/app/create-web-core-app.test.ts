@@ -1597,6 +1597,35 @@ describe('createWebCoreApp', () => {
             expectWindowReleased(seams.targetWindow);
         });
 
+        it('releases the default browser history when the routes cannot be compiled', async () => {
+            const adds = vi.spyOn(window, 'addEventListener');
+            const removes = vi.spyOn(window, 'removeEventListener');
+            const seams = makeSeams();
+
+            try {
+                await expect(
+                    bootApp({
+                        modules: [homeModule({ routes: [{ path: '/:id(\\d+', component: EmptyComponent }] })],
+                        platform: {
+                            fetchFn: seams.fetchFn,
+                            storage: seams.storage,
+                            targetWindow: seams.targetWindow,
+                            targetDocument: seams.targetDocument,
+                            localeCandidates: seams.localeCandidates,
+                        },
+                    }),
+                ).rejects.toThrow();
+
+                expect(adds.mock.calls.map(([type]) => type)).toContain('popstate');
+                expect(removes.mock.calls.map(([type]) => type).sort()).toEqual(
+                    adds.mock.calls.map(([type]) => type).sort(),
+                );
+            } finally {
+                adds.mockRestore();
+                removes.mockRestore();
+            }
+        });
+
         it('keeps the boot error when the reporter itself throws', async () => {
             const reporter = new NullErrorReporter();
 

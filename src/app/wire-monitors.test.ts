@@ -7,6 +7,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import { ToastService } from '../notifications/toast-service';
 import type { UpdateMonitor } from '../updates/update-monitor';
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
@@ -424,6 +425,31 @@ describe('wireMonitors connectivity', () => {
             expect(fetchFn).not.toHaveBeenCalled();
 
             connectivity?.stop();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('still stops update polling when stopping connectivity throws', async () => {
+        vi.useFakeTimers();
+
+        try {
+            const failure = new Error('stop failed');
+            const { options, fetchFn } = makeHarness({
+                updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
+            });
+
+            const { connectivity, teardown } = wireMonitors(options);
+
+            vi.spyOn(connectivity as ConnectivityMonitor, 'stop').mockImplementation(() => {
+                throw failure;
+            });
+
+            expect(teardown).toThrow(failure);
+
+            await vi.advanceTimersByTimeAsync(5_000);
+
+            expect(fetchFn).not.toHaveBeenCalled();
         } finally {
             vi.useRealTimers();
         }
