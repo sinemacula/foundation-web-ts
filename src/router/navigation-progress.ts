@@ -24,8 +24,8 @@ export interface NavigationProgress {
 }
 
 /**
- * Track whether `router` has a navigation in flight, ignoring the settling of
- * a tracked navigation that a newer one superseded; inside an active effect
+ * Track whether `router` has a navigation in flight, ignoring the settling of a
+ * tracked navigation that a newer one superseded; inside an active effect
  * scope, `stop()` also runs when the scope is disposed.
  */
 export function createNavigationProgress(router: Router): NavigationProgress {
