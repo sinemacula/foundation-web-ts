@@ -1,414 +1,104 @@
 /**
- * Unit tests for createSessionModule.
+ * Unit tests for createSessionModule: the module shape, the register phase
+ * (context, persistence, gateway, bearer interceptor and unauthorized handler),
+ * the stores phase, and the gateway typing.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { Pinia } from 'pinia';
-import { createPinia, setActivePinia } from 'pinia';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, defineComponent, nextTick } from 'vue';
-import type { RouteLocationRaw, Router } from 'vue-router';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
-import type { AnalyticsTracker } from '../analytics/analytics-tracker';
-import {
-    installAnalytics,
-    installApi,
-    installFeatureFlags,
-    installReporting,
-    resetWebCoreServices,
-} from '../app/services';
-import { ConfigRepository } from '../config/config-repository';
-import { Environment } from '../config/environment';
-import type { FeatureFlags, FlagEvaluationContext, FlagValue } from '../feature-flags/feature-flags';
-import type { HttpClient, HttpRequest } from '../http/http-client';
-import { createApplicationI18n } from '../i18n/application-i18n';
-import type { ModuleBootContext, ModuleDefinition, ModuleTeardown, ResolvedPlatform } from '../module/module';
-import type { ModuleHttpContributions } from '../module/module-registry';
-import { registerModules } from '../module/module-registry';
-import type { ErrorReporter, ReportedUser } from '../reporting/error-reporter';
-import { MemoryStorage } from '../storage/memory-storage';
+import type { HttpClient, HttpRequest } from '@sinemacula/foundation/http/http-client';
+import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
+import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import type { SessionApi } from '@sinemacula/foundation/session/session-api';
+import { SessionError } from '@sinemacula/foundation/session/session-error';
+import type { RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
+import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
+import type { SessionUser } from '@sinemacula/foundation/session/session-user';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import { installApi, resetWebCoreServices } from '../app/services';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
-import type { SessionApi, SessionDevice } from './session-api';
 import { resetSessionContext, sessionContext } from './session-context';
-import type { SessionStore } from './session-store';
-import { useSessionStore } from './session-store';
-import type { SessionTokens } from './session-tokens';
-import type { SessionUser } from './session-user';
+import type { FakeSessionApi } from './test-support/session-fixtures';
+import {
+    createFakeSessionApi,
+    deferred,
+    persistSnapshot,
+    SESSION_KEY,
+    tokens,
+    user,
+} from './test-support/session-fixtures';
+import type { HarnessSetup, SessionHarness } from './test-support/session-harness';
+import { createHttpClientStub, createSessionHarness } from './test-support/session-harness';
 
-const EmptyComponent = defineComponent({ render: () => null });
-
-const NOW = 1_700_000_000_000;
-const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
-
-const ACCESS_TOKEN_KEY = 'auth.access_token';
-const REFRESH_TOKEN_KEY = 'auth.refresh_token';
-const EXPIRES_AT_KEY = 'auth.expires_at';
-const DEVICE_UUID_KEY = 'auth.device_uuid';
-
-/**
- * An in-memory {@link SessionApi} fake that records every call and replays
- * queued outcomes in order.
- */
-class FakeSessionApi implements SessionApi {
-    readonly calls: string[] = [];
-    readonly loginCalls: Array<{ credentials: unknown; device: SessionDevice }> = [];
-    readonly refreshCalls: string[] = [];
-
-    readonly #sessions: Array<SessionTokens | Error> = [];
-    readonly #users: Array<SessionUser | Error> = [];
-
-    /**
-     * Queue an outcome for the next login or refresh call.
-     *
-     * @param outcome - the tokens to resolve with, or the error to reject with
-     */
-    queueSession(outcome: SessionTokens | Error): void {
-        this.#sessions.push(outcome);
-    }
-
-    /**
-     * Queue an outcome for the next currentUser call.
-     *
-     * @param outcome - the user to resolve with, or the error to reject with
-     */
-    queueUser(outcome: SessionUser | Error): void {
-        this.#users.push(outcome);
-    }
-
-    login(credentials: unknown, device: SessionDevice): Promise<SessionTokens> {
-        this.calls.push('login');
-        this.loginCalls.push({ credentials, device });
-
-        return take(this.#sessions);
-    }
-
-    refresh(refreshToken: string): Promise<SessionTokens> {
-        this.calls.push('refresh');
-        this.refreshCalls.push(refreshToken);
-
-        return take(this.#sessions);
-    }
-
-    logout(): Promise<void> {
-        this.calls.push('logout');
-
-        return Promise.resolve();
-    }
-
-    currentUser(): Promise<SessionUser> {
-        this.calls.push('currentUser');
-
-        return take(this.#users);
-    }
-}
-
-/**
- * Consume the next queued outcome.
- *
- * @param queue - the outcome queue
- * @returns a promise resolving or rejecting with the next outcome
- */
-function take<T>(queue: Array<T | Error>): Promise<T> {
-    const outcome = queue.shift();
-
-    if (outcome === undefined) {
-        return Promise.reject(new Error('No queued outcome.'));
-    }
-
-    return outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome);
-}
-
-/** A valid token bundle as returned by the gateway. */
-function tokens(overrides: Partial<SessionTokens> = {}): SessionTokens {
-    return {
-        accessToken: 'new-token',
-        refreshToken: 'new-refresh-token',
-        expiresAtEpochMs: null,
-        ...overrides,
-    };
-}
-
-/** A mapped user record as returned by the gateway. */
-function user(overrides: Partial<SessionUser> = {}): SessionUser {
-    return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions: [], ...overrides };
-}
-
-type StorageListener = (event: StorageEvent) => void;
-
-/** A minimal fake window recording `storage` listeners for direct dispatch. */
-interface FakeWindow {
-    addEventListener(type: string, listener: EventListenerOrEventListenerObject): void;
-    removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void;
-    listenerCount(): number;
-    dispatchStorage(init: { key: string | null; newValue: string | null }): void;
-}
-
-/** Build the fake window. */
-function makeWindow(): FakeWindow {
-    const listeners = new Set<StorageListener>();
-
-    return {
-        addEventListener: (_type: string, listener: EventListenerOrEventListenerObject): void => {
-            listeners.add(listener as StorageListener);
-        },
-        removeEventListener: (_type: string, listener: EventListenerOrEventListenerObject): void => {
-            listeners.delete(listener as StorageListener);
-        },
-        listenerCount: (): number => listeners.size,
-        dispatchStorage: (init: { key: string | null; newValue: string | null }): void => {
-            const event = { key: init.key, newValue: init.newValue } as StorageEvent;
-
-            for (const listener of listeners) {
-                listener(event);
-            }
-        },
-    };
-}
-
-/** Build an HTTP client stand-in that fails loudly if any method is invoked. */
-function createHttpClientStub(): HttpClient {
-    const fail = (): Promise<never> => Promise.reject(new Error('The stub HTTP client must not be called.'));
-
-    return { get: fail, post: fail, put: fail, patch: fail, delete: fail, download: fail };
-}
-
-/** A recorded call made against {@link FakeHttpClient}. */
-interface RecordedHttpCall {
-    readonly method: string;
-    readonly path: string;
-}
-
-/**
- * An in-memory {@link HttpClient} fake recording calls and replaying queued
- * payloads.
- */
-class FakeHttpClient implements HttpClient {
-    readonly calls: RecordedHttpCall[] = [];
-    readonly #queue: unknown[] = [];
-
-    /**
-     * Queue a response payload for the next call.
-     *
-     * @param value - the payload the next call resolves with
-     */
-    queueResponse(value: unknown): void {
-        this.#queue.push(value);
-    }
-
-    get<T>(path: string): Promise<T> {
-        return this.#consume('GET', path);
-    }
-
-    post<T>(path: string): Promise<T> {
-        return this.#consume('POST', path);
-    }
-
-    put<T>(path: string): Promise<T> {
-        return this.#consume('PUT', path);
-    }
-
-    patch<T>(path: string): Promise<T> {
-        return this.#consume('PATCH', path);
-    }
-
-    delete<T>(path: string): Promise<T> {
-        return this.#consume('DELETE', path);
-    }
-
-    download(path: string): Promise<Blob> {
-        return this.#consume('DOWNLOAD', path);
-    }
-
-    #consume<T>(method: string, path: string): Promise<T> {
-        this.calls.push({ method, path });
-
-        return Promise.resolve(this.#queue.shift() as T);
-    }
-}
-
-/** A recording {@link ErrorReporter} capturing identity changes. */
-class RecordingReporter implements ErrorReporter {
-    readonly users: Array<ReportedUser | null> = [];
-
-    captureError(): void {
-        // Identity tests only observe setUser.
-    }
-
-    captureMessage(): void {
-        // Identity tests only observe setUser.
-    }
-
-    setUser(reported: ReportedUser | null): void {
-        this.users.push(reported);
-    }
-}
-
-/** A recording {@link AnalyticsTracker} capturing identify and reset calls. */
-class RecordingAnalytics implements AnalyticsTracker {
-    readonly identified: string[] = [];
-    resets = 0;
-
-    track(): void {
-        // Identity tests only observe identify and reset.
-    }
-
-    page(): void {
-        // Identity tests only observe identify and reset.
-    }
-
-    identify(id: string): void {
-        this.identified.push(id);
-    }
-
-    reset(): void {
-        this.resets += 1;
-    }
-}
-
-/** A recording {@link FeatureFlags} capturing evaluation contexts. */
-class RecordingFeatureFlags implements FeatureFlags {
-    readonly contexts: FlagEvaluationContext[] = [];
-
-    isEnabled(): boolean {
-        return false;
-    }
-
-    variant<Value extends FlagValue>(_key: string, fallback: Value): Value {
-        return fallback;
-    }
-
-    setContext(context: FlagEvaluationContext): void {
-        this.contexts.push(context);
-    }
-
-    onChange(): () => void {
-        return () => undefined;
-    }
-}
-
-/** Everything a test needs after registering the module. */
-interface Harness {
-    readonly module: ModuleDefinition;
-    readonly storage: MemoryStorage;
-    readonly pinia: Pinia;
-    readonly win: FakeWindow;
-    readonly contributions: ModuleHttpContributions;
-    readonly bootContext: ModuleBootContext;
-    readonly pushes: RouteLocationRaw[];
-}
+const REQUEST: HttpRequest = { method: 'GET', url: '/x', headers: {}, body: undefined };
 
 describe('createSessionModule', () => {
-    let now: number;
-    let fake: FakeSessionApi;
-    let reporter: RecordingReporter;
-    let tracker: RecordingAnalytics;
-    let flags: RecordingFeatureFlags;
+    let gateway: FakeSessionApi;
 
     /**
-     * Register the module through the real registry path and assemble the boot
-     * context around it.
+     * Register the module over the fake gateway.
      *
-     * @param options - session module options; a fake API is injected unless
-     * the test supplies its own or opts into the shipped default
-     * @param setup - harness seams: the routed path, a push rejection, and the
-     * default-gateway opt-in
+     * @param options - module options, merged over the fake gateway
+     * @param setup - harness seams
      * @returns the harness
      */
-    function createHarness(
-        options: SessionModuleOptions = {},
-        setup: { fullPath?: string; pushRejection?: Error; defaultApi?: boolean } = {},
-    ): Harness {
-        const module = createSessionModule(setup.defaultApi === true ? options : { api: () => fake, ...options });
-        const storage = new MemoryStorage();
-        const pinia = createPinia();
-
-        setActivePinia(pinia);
-
-        const win = makeWindow();
-        const platform: ResolvedPlatform = {
-            fetchFn: () => Promise.resolve(new Response()),
-            targetWindow: win as unknown as Window,
-            targetDocument: document,
-            clock: () => now,
-        };
-        const contributions = registerModules([module], {
-            config: new ConfigRepository({}),
-            environment: new Environment({ get: () => undefined }),
-            storage,
-            pinia,
-            platform,
-        });
-        const pushes: RouteLocationRaw[] = [];
-        const router = {
-            currentRoute: { value: { fullPath: setup.fullPath ?? '/dashboard' } },
-            push: (to: RouteLocationRaw): Promise<void> => {
-                pushes.push(to);
-
-                return setup.pushRejection === undefined ? Promise.resolve() : Promise.reject(setup.pushRejection);
-            },
-        } as unknown as Router;
-        const bootContext: ModuleBootContext = {
-            app: createApp(EmptyComponent),
-            router,
-            pinia,
-            i18n: createApplicationI18n('en-GB'),
-            http: createHttpClientStub(),
-            storage,
-            config: new ConfigRepository({}),
-            platform,
-        };
-
-        return { module, storage, pinia, win, contributions, bootContext, pushes };
+    function harness(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): SessionHarness {
+        return createSessionHarness(createSessionModule({ api: () => gateway, ...options }), setup);
     }
 
     /**
-     * Boot the module, asserting a teardown is always returned.
+     * Run the contributed interceptors over a bare request.
      *
-     * @param harness - the registered harness
-     * @returns the module teardown
+     * @param target - the harness
+     * @returns the intercepted request
      */
-    async function boot(harness: Harness): Promise<ModuleTeardown> {
-        const teardown = await harness.module.boot?.(harness.bootContext);
+    async function intercept(target: SessionHarness): Promise<HttpRequest> {
+        let request = REQUEST;
 
-        if (teardown === undefined) {
-            throw new Error('The session module must return a boot teardown.');
+        for (const interceptor of target.contributions.requestInterceptors) {
+            request = await interceptor(request);
         }
 
-        return teardown;
+        return request;
+    }
+
+    /**
+     * Run the contributed unauthorized handler, as a 401 does.
+     *
+     * @param target - the harness
+     * @returns whether the request is retried
+     */
+    function retries(target: SessionHarness): Promise<boolean> {
+        const handler = target.contributions.onUnauthorized;
+
+        if (handler === null) {
+            throw new Error('The session module must claim the unauthorized handler.');
+        }
+
+        return handler();
     }
 
     beforeEach(() => {
-        vi.useFakeTimers();
-        now = NOW;
-        fake = new FakeSessionApi();
-        reporter = new RecordingReporter();
-        tracker = new RecordingAnalytics();
-        flags = new RecordingFeatureFlags();
-        installApi(createHttpClientStub());
-        installReporting(reporter);
-        installAnalytics(tracker);
-        installFeatureFlags(flags);
+        gateway = createFakeSessionApi();
     });
 
     afterEach(() => {
-        vi.useRealTimers();
         resetWebCoreServices();
         resetSessionContext();
     });
 
     describe('module shape', () => {
-        it('returns a module named session with no routes, locales or fallback', () => {
+        it('is named session, with no routes, locales or fallback and one store', () => {
             const module = createSessionModule();
 
             expect(module.name).toBe('session');
             expect(module.routes).toStrictEqual([]);
             expect(module.locales).toBeUndefined();
             expect(module.fallback).toBeUndefined();
-            expect(typeof module.register).toBe('function');
-            expect(typeof module.boot).toBe('function');
             expect(module.stores).toHaveLength(1);
         });
 
@@ -417,31 +107,11 @@ describe('createSessionModule', () => {
         });
     });
 
-    describe('register phase', () => {
-        it('installs the session context with the default storage keys', () => {
-            createHarness();
-
-            expect(sessionContext().storageKeys).toStrictEqual({
-                accessToken: 'auth.access_token',
-                refreshToken: 'auth.refresh_token',
-                expiresAt: 'auth.expires_at',
-                deviceUuid: 'auth.device_uuid',
-            });
-        });
-
-        it('merges storage-key overrides over the defaults', () => {
-            createHarness({ storageKeys: { accessToken: 'session.token' } });
-
-            expect(sessionContext().storageKeys).toStrictEqual({
-                accessToken: 'session.token',
-                refreshToken: 'auth.refresh_token',
-                expiresAt: 'auth.expires_at',
-                deviceUuid: 'auth.device_uuid',
-            });
-        });
-
-        it('installs the session context with the default route identity', () => {
-            createHarness();
+    describe('session context', () => {
+        it('installs the default route identity, store id, skew and the platform clock', () => {
+            /** A fixed platform clock. */
+            const clock = (): number => 42;
+            const target = harness({}, { clock });
 
             expect(sessionContext().routes).toStrictEqual({
                 login: { name: 'auth.login' },
@@ -449,10 +119,17 @@ describe('createSessionModule', () => {
                 home: '/',
                 forbidden: '/forbidden',
             });
+            expect(sessionContext().storeId).toBe('auth');
+            expect(sessionContext().refreshSkewMs).toBe(60_000);
+            expect(sessionContext().clock).toBe(target.platform.clock);
         });
 
-        it('merges route overrides over the defaults', () => {
-            createHarness({ routes: { login: { name: 'sign-in' }, loginPath: '/sign-in' } });
+        it('merges route overrides and honours a custom store id and skew', () => {
+            const target = harness({
+                routes: { login: { name: 'sign-in' }, loginPath: '/sign-in' },
+                storeId: 'session-custom',
+                refreshSkewMs: 5_000,
+            });
 
             expect(sessionContext().routes).toStrictEqual({
                 login: { name: 'sign-in' },
@@ -460,940 +137,412 @@ describe('createSessionModule', () => {
                 home: '/',
                 forbidden: '/forbidden',
             });
+            expect(sessionContext().refreshSkewMs).toBe(5_000);
+            expect((target.store() as unknown as Record<'$id', string>).$id).toBe('session-custom');
+        });
+    });
+
+    describe('persistence', () => {
+        it('persists the snapshot in the window localStorage under a Web Locks lock named after the key', async () => {
+            const target = harness();
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null')).toStrictEqual({
+                revision: 1,
+                tokens: tokens(),
+            });
+            expect(target.win.navigator.locks?.names).toContain('auth.session:lock');
         });
 
-        it('registers the session store under the default auth id', () => {
-            const harness = createHarness();
+        it('follows an overridden session key for the snapshot and the lock', async () => {
+            const target = harness({ storageKeys: { session: 'app.session' } });
 
-            expect(sessionContext().storeId).toBe('auth');
-            expect((useSessionStore(harness.pinia) as unknown as Record<'$id', string>).$id).toBe('auth');
+            target.win.localStorage.setItem('app.session', JSON.stringify({ revision: 3, tokens: tokens() }));
+
+            await sessionContext().ready();
+
+            expect(target.store().accessToken).toBe('access');
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
+
+            await target.store().clearLocal();
+
+            expect(target.win.navigator.locks?.names).toStrictEqual(['app.session:lock']);
         });
 
-        it('registers the session store under a custom id', () => {
-            const harness = createHarness({ storeId: 'session-custom' });
+        it('lets a failing storage write reject rather than report a lost write as saved', async () => {
+            const target = harness();
+            const failure = new DOMException('quota', 'QuotaExceededError');
 
-            expect((useSessionStore(harness.pinia) as unknown as Record<'$id', string>).$id).toBe('session-custom');
+            vi.spyOn(target.win.localStorage, 'setItem').mockImplementation(() => {
+                throw failure;
+            });
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+
+            await expect(target.store().login({ email: 'a', password: 'b' })).rejects.toBe(failure);
+            expect(target.store().isAuthenticated).toBe(false);
         });
 
-        it('hydrates a legacy persisted expiry through the wire-timestamp parser', () => {
-            const harness = createHarness();
-
-            harness.storage.set(EXPIRES_AT_KEY, '2026-06-30 12:00:00');
-
-            expect(useSessionStore(harness.pinia).expiresAtEpochMs).toBe(1_782_820_800_000);
+        it('refuses to register without Web Locks unless a persistence is given', () => {
+            expect(() => harness({}, { withoutLocks: true })).toThrowError(SessionError);
         });
 
-        it('hydrates an unparseable legacy expiry as null', () => {
-            const harness = createHarness();
+        it('uses the given persistence instead, built over the platform', async () => {
+            const storage = new MemoryStorage();
+            const factory = vi.fn(() => new KeyValueSessionPersistence(storage));
+            const target = harness({ persistence: factory }, { withoutLocks: true });
 
-            harness.storage.set(EXPIRES_AT_KEY, 'not-a-timestamp');
+            persistSnapshot(storage, tokens({ accessToken: 'custom' }));
+            await sessionContext().ready();
 
-            expect(useSessionStore(harness.pinia).expiresAtEpochMs).toBeNull();
+            expect(factory).toHaveBeenCalledWith(target.platform);
+            expect(target.store().accessToken).toBe('custom');
+            expect(target.win.localStorage.length).toBe(0);
+        });
+    });
+
+    describe('readiness', () => {
+        it('hydrates once, however often readiness is awaited', async () => {
+            const target = harness();
+            const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
+
+            persistSnapshot(target.win.localStorage, tokens());
+            await Promise.all([sessionContext().ready(), sessionContext().ready()]);
+
+            expect(load).toHaveBeenCalledTimes(1);
+            expect(target.store().isAuthenticated).toBe(true);
         });
 
-        it('contributes exactly one request interceptor and no response-error handlers', () => {
-            const harness = createHarness();
+        it('reports a hydration failure and settles signed out', async () => {
+            const target = harness();
 
-            expect(harness.contributions.requestInterceptors).toHaveLength(1);
-            expect(harness.contributions.responseErrorHandlers).toHaveLength(0);
-            expect(harness.contributions.onUnauthorized).not.toBeNull();
+            target.win.localStorage.setItem(SESSION_KEY, 'not json');
+
+            await expect(sessionContext().ready()).resolves.toBeUndefined();
+            expect(target.observability.errors).toHaveLength(1);
+            expect(target.observability.errors[0]).toBeInstanceOf(SessionError);
+            expect(target.store().isAuthenticated).toBe(false);
         });
 
-        it('attaches the store access token through the bearer interceptor', async () => {
-            const harness = createHarness();
+        it('starts hydrating at the stores phase', async () => {
+            const target = harness();
 
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok-123');
+            persistSnapshot(target.win.localStorage, tokens());
+            target.stores();
 
-            const request: HttpRequest = { method: 'GET', url: '/x', headers: {}, body: undefined };
-            const intercepted = await harness.contributions.requestInterceptors[0]?.(request);
+            await vi.waitFor(() => {
+                expect(target.store().isAuthenticated).toBe(true);
+            });
+        });
+    });
 
-            expect(intercepted?.headers).toStrictEqual({ authorization: 'Bearer tok-123' });
+    describe('bearer interceptor', () => {
+        it('contributes one request interceptor, the unauthorized handler and no response-error handler', () => {
+            const target = harness();
+
+            expect(target.contributions.requestInterceptors).toHaveLength(1);
+            expect(target.contributions.responseErrorHandlers).toHaveLength(0);
+            expect(target.contributions.onUnauthorized).not.toBeNull();
         });
 
-        it('leaves requests untouched through the bearer interceptor when signed out', async () => {
-            const harness = createHarness();
-            const request: HttpRequest = { method: 'GET', url: '/x', headers: {}, body: undefined };
+        it('attaches the hydrated access token, waiting for hydration', async () => {
+            const target = harness();
 
-            const intercepted = await harness.contributions.requestInterceptors[0]?.(request);
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'tok-123' }));
 
-            expect(intercepted).toBe(request);
+            await expect(intercept(target)).resolves.toStrictEqual({
+                ...REQUEST,
+                headers: { authorization: 'Bearer tok-123' },
+            });
         });
 
-        it('refreshes the session through the contributed unauthorized handler', async () => {
-            const harness = createHarness();
+        it('leaves the request untouched when signed out', async () => {
+            await expect(intercept(harness())).resolves.toBe(REQUEST);
+        });
+    });
 
-            harness.storage.set(REFRESH_TOKEN_KEY, 'old-refresh');
+    describe('unauthorized handler', () => {
+        /**
+         * Register over a hydrated persisted session.
+         *
+         * @returns the harness
+         */
+        async function signedIn(): Promise<SessionHarness> {
+            const target = harness();
 
-            const store = useSessionStore(harness.pinia);
+            persistSnapshot(target.win.localStorage, tokens());
+            await sessionContext().ready();
 
-            fake.queueSession(tokens({ accessToken: 'fresh-token' }));
+            return target;
+        }
 
-            const retried = await harness.contributions.onUnauthorized?.();
+        it('retries the request once the session is refreshed', async () => {
+            const target = await signedIn();
 
-            expect(retried).toBe(true);
-            expect(fake.refreshCalls).toStrictEqual(['old-refresh']);
-            expect(store.accessToken).toBe('fresh-token');
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'fresh' }) });
+
+            await expect(retries(target)).resolves.toBe(true);
+            expect(gateway.refresh).toHaveBeenCalledWith('refresh');
+            expect(target.store().accessToken).toBe('fresh');
         });
 
-        it('single-flights concurrent unauthorized refreshes through the coordinator', async () => {
-            const harness = createHarness();
+        it.each<[string, RefreshResult]>([
+            ['retryable', { kind: 'retryable', error: new NetworkError('offline') }],
+            ['rejected', { kind: 'rejected', error: new HttpError(401, 'refused') }],
+            ['interactionRequired', { kind: 'interactionRequired', pending: { credential: 'p', requires: ['mfa'] } }],
+            ['failed', { kind: 'failed', error: new HttpError(422, 'malformed') }],
+        ])('does not retry a %s refresh', async (_kind, result) => {
+            const target = await signedIn();
 
-            harness.storage.set(REFRESH_TOKEN_KEY, 'old-refresh');
-            useSessionStore(harness.pinia);
-            fake.queueSession(tokens());
+            gateway.refresh.mockResolvedValueOnce(result);
 
-            const [first, second] = await Promise.all([
-                harness.contributions.onUnauthorized?.(),
-                harness.contributions.onUnauthorized?.(),
-            ]);
+            await expect(retries(target)).resolves.toBe(false);
+        });
 
-            expect(first).toBe(true);
-            expect(second).toBe(true);
-            expect(fake.refreshCalls).toStrictEqual(['old-refresh']);
+        it('does not retry a refresh another transition overtook', async () => {
+            const target = await signedIn();
+            const pending = deferred<RefreshResult>();
+
+            gateway.refresh.mockReturnValueOnce(pending.promise);
+
+            const retried = retries(target);
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalled();
+            });
+            await target.store().clearLocal();
+            pending.resolve({ kind: 'refreshed', tokens: tokens({ accessToken: 'discarded' }) });
+
+            await expect(retried).resolves.toBe(false);
+            expect(target.store().accessToken).toBeNull();
+        });
+
+        it('leaves clearing a refused session to the core, clearing it once', async () => {
+            const target = await signedIn();
+            const clearIf = vi.spyOn(KeyValueSessionPersistence.prototype, 'clearIf');
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
+
+            await retries(target);
+
+            expect(clearIf).toHaveBeenCalledTimes(1);
+            expect(target.store().isAuthenticated).toBe(false);
+        });
+
+        it('reports a failed refresh once and keeps the session', async () => {
+            const target = await signedIn();
+            const error = new HttpError(422, 'malformed');
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error });
+
+            await retries(target);
+
+            expect(target.observability.errors).toStrictEqual([error]);
+            expect(target.store().accessToken).toBe('access');
+        });
+
+        it('single-flights concurrent refreshes', async () => {
+            const target = await signedIn();
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
+
+            await expect(Promise.all([retries(target), retries(target)])).resolves.toStrictEqual([true, true]);
+            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+        });
+
+        it('waits for hydration before refreshing, so an empty store is never refreshed', async () => {
+            const storage = new MemoryStorage();
+            const inner = new KeyValueSessionPersistence(storage);
+            const gate = deferred<undefined>();
+            const persistence: SessionPersistence = {
+                load: async () => {
+                    await gate.promise;
+
+                    return inner.load();
+                },
+                saveIf: (revision, saved) => inner.saveIf(revision, saved),
+                clearIf: revision => inner.clearIf(revision),
+            };
+            const target = harness({ persistence: () => persistence });
+
+            persistSnapshot(storage, tokens({ refreshToken: 'persisted-refresh' }));
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
+            target.stores();
+
+            const retried = retries(target);
+
+            await Promise.resolve();
+            expect(gateway.refresh).not.toHaveBeenCalled();
+
+            gate.resolve(undefined);
+
+            await expect(retried).resolves.toBe(true);
+            expect(gateway.refresh).toHaveBeenCalledWith('persisted-refresh');
+        });
+
+        it('keeps a rotated pair it could not persist, reports the failure and sends the rotated token', async () => {
+            const target = await signedIn();
+            const failure = new DOMException('quota', 'QuotaExceededError');
+
+            vi.spyOn(target.win.localStorage, 'setItem').mockImplementationOnce(() => {
+                throw failure;
+            });
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'rotated' }) });
+
+            await expect(retries(target)).resolves.toBe(false);
+            expect(target.observability.errors).toStrictEqual([failure]);
+            await expect(intercept(target)).resolves.toHaveProperty('headers', { authorization: 'Bearer rotated' });
         });
     });
 
     describe('session API gateway', () => {
-        it('resolves the API lazily over the HTTP holder on first access', () => {
+        it('builds the default gateway lazily over the installed HTTP client, once', () => {
+            createSessionHarness(createSessionModule());
             resetWebCoreServices();
 
-            const harness = createHarness({}, { defaultApi: true });
-
-            expect(harness.contributions.requestInterceptors).toHaveLength(1);
             expect(() => sessionContext().api).toThrowError('http client accessed before initialisation');
-        });
 
-        it('builds the default gateway over the installed HTTP client', async () => {
-            createHarness({}, { defaultApi: true });
-
-            const http = new FakeHttpClient();
-
-            installApi(http);
-            http.queueResponse(undefined);
-
-            await sessionContext().api.logout();
-
-            expect(http.calls).toStrictEqual([{ method: 'DELETE', path: 'auth' }]);
-        });
-
-        it('memoises the gateway across accesses', () => {
-            createHarness({}, { defaultApi: true });
-            installApi(new FakeHttpClient());
+            installApi(createHttpClientStub());
 
             expect(sessionContext().api).toBe(sessionContext().api);
         });
 
-        it('passes the installed HTTP client to a custom API factory', () => {
-            let received: HttpClient | null = null;
-            const factory = (http: HttpClient): SessionApi => {
-                received = http;
-
-                return fake;
+        it('computes the default gateway expiry on the platform clock', async () => {
+            const target = createSessionHarness(createSessionModule(), { clock: () => 1_000 });
+            const http: HttpClient = {
+                ...createHttpClientStub(),
+                post: <T>() =>
+                    Promise.resolve({ access_token: 'a', refresh_token: 'r', expires_in: 60 } as unknown as T),
+                get: <T>() => Promise.resolve({ id: 7 } as unknown as T),
             };
 
-            createHarness({ api: factory });
+            installApi(http);
 
-            const installed = new FakeHttpClient();
+            await expect(target.store().login({ email: 'a', password: 'b' })).resolves.toStrictEqual({
+                kind: 'authenticated',
+            });
+            expect(target.store().expiresAtEpochMs).toBe(61_000);
+        });
+
+        it('passes the installed HTTP client to a custom gateway factory', () => {
+            const factory = vi.fn((_http: HttpClient) => gateway);
+
+            createSessionHarness(createSessionModule({ api: factory }));
+
+            const installed = createHttpClientStub();
 
             installApi(installed);
 
-            expect(sessionContext().api).toBe(fake);
-            expect(received).toBe(installed);
-        });
-    });
-
-    describe('stores phase', () => {
-        it('instantiates the session store hydrated from storage', () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'persisted-token');
-
-            const store = harness.module.stores?.[0]?.(harness.pinia) as SessionStore;
-
-            expect(store.accessToken).toBe('persisted-token');
-            expect(typeof store.$dispose).toBe('function');
-        });
-    });
-
-    describe('cross-tab sync', () => {
-        it('clears the session locally when the access-token key is removed in another tab', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.win.dispatchStorage({ key: ACCESS_TOKEN_KEY, newValue: null });
-
-            expect(store.accessToken).toBeNull();
-        });
-
-        it('clears the session locally on a full storage clear (key null, newValue null)', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.win.dispatchStorage({ key: null, newValue: null });
-
-            expect(store.accessToken).toBeNull();
-        });
-
-        it('hydrates from storage and rehydrates the user when a token appears in another tab', async () => {
-            const harness = createHarness();
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'new-tab-token');
-            harness.storage.set(REFRESH_TOKEN_KEY, 'new-tab-refresh');
-            fake.queueUser(user());
-
-            harness.win.dispatchStorage({ key: ACCESS_TOKEN_KEY, newValue: 'new-tab-token' });
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(store.accessToken).toBe('new-tab-token');
-            expect(store.refreshToken).toBe('new-tab-refresh');
-            expect(store.user?.email).toBe('alice@example.com');
-        });
-
-        it('ignores storage events for unrelated keys', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.win.dispatchStorage({ key: 'some.other.key', newValue: null });
-
-            expect(store.accessToken).toBe('tok');
-        });
-
-        it('listens on the overridden access-token key', async () => {
-            const harness = createHarness({ storageKeys: { accessToken: 'session.token' } });
-
-            harness.storage.set('session.token', 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.win.dispatchStorage({ key: ACCESS_TOKEN_KEY, newValue: null });
-            expect(store.accessToken).toBe('tok');
-
-            harness.win.dispatchStorage({ key: 'session.token', newValue: null });
-            expect(store.accessToken).toBeNull();
-        });
-
-        it('swallows a rehydrateUser failure triggered by a cross-tab storage event', async () => {
-            const harness = createHarness();
-            const store = useSessionStore(harness.pinia);
-            const rehydrateMock = vi.fn((): Promise<void> => Promise.reject(new Error('rehydrate failed')));
-
-            store.rehydrateUser = rehydrateMock;
-
-            await boot(harness);
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'new-tab-token');
-            harness.win.dispatchStorage({ key: ACCESS_TOKEN_KEY, newValue: 'new-tab-token' });
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(rehydrateMock).toHaveBeenCalledTimes(1);
-        });
-
-        it('does not react to storage events after teardown', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-            const teardown = await boot(harness);
-
-            teardown();
-            harness.win.dispatchStorage({ key: ACCESS_TOKEN_KEY, newValue: null });
-
-            expect(store.accessToken).toBe('tok');
-            expect(harness.win.listenerCount()).toBe(0);
-        });
-
-        it('installs no storage listener when crossTabSync is disabled', async () => {
-            const harness = createHarness({ crossTabSync: false });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            expect(harness.win.listenerCount()).toBe(0);
-
-            harness.win.dispatchStorage({ key: ACCESS_TOKEN_KEY, newValue: null });
-            expect(store.accessToken).toBe('tok');
-        });
-    });
-
-    describe('proactive refresh', () => {
-        it('schedules a refresh ahead of the hydrated expiry by the skew amount', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 5_000));
-            fake.queueUser(user());
-            fake.queueSession(tokens());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(3_999);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(fake.refreshCalls).toStrictEqual(['refresh-token']);
-        });
-
-        it('schedules a refresh when the expiry changes after boot', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            fake.queueSession(tokens());
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 5_000));
-            store.hydrateFromStorage();
-
-            await vi.advanceTimersByTimeAsync(3_999);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(fake.refreshCalls).toStrictEqual(['refresh-token']);
-        });
-
-        it('clamps the delay to zero when the expiry has already passed', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW - 10_000));
-            fake.queueSession(tokens());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(fake.refreshCalls).toStrictEqual(['refresh-token']);
-        });
-
-        it('uses the default 60-second skew when refreshSkewMs is not provided', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 60_000 + 1_000));
-            fake.queueSession(tokens());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(999);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(fake.refreshCalls).toStrictEqual(['refresh-token']);
-        });
-
-        it('re-evaluates instead of firing when the delay exceeds the timer range', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 4_000_000_000_000));
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(MAX_TIMEOUT_DELAY_MS);
-
-            expect(fake.refreshCalls).toStrictEqual([]);
-        });
-
-        it('fires after re-arming once the horizon brings the delay into range', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + MAX_TIMEOUT_DELAY_MS + 2_000));
-            fake.queueSession(tokens());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(MAX_TIMEOUT_DELAY_MS - 1);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            now = NOW + MAX_TIMEOUT_DELAY_MS;
-            await vi.advanceTimersByTimeAsync(1);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            await vi.advanceTimersByTimeAsync(999);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(fake.refreshCalls).toStrictEqual(['refresh-token']);
-        });
-
-        it('does not schedule a refresh when no expiry is known', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(1_000_000);
-
-            expect(fake.refreshCalls).toStrictEqual([]);
-        });
-
-        it('cancels the pending timer when the expiry is cleared', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 5_000));
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.storage.remove(EXPIRES_AT_KEY);
-            store.hydrateFromStorage();
-
-            await vi.advanceTimersByTimeAsync(10_000);
-
-            expect(fake.refreshCalls).toStrictEqual([]);
-        });
-
-        it('reschedules when the expiry changes, cancelling the previous timer', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 5_000));
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            fake.queueSession(tokens());
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 20_000));
-            store.hydrateFromStorage();
-
-            await vi.advanceTimersByTimeAsync(4_000);
-            expect(fake.refreshCalls).toStrictEqual([]);
-
-            await vi.advanceTimersByTimeAsync(15_000);
-            expect(fake.refreshCalls).toStrictEqual(['refresh-token']);
-        });
-
-        it('does not fire a scheduled refresh after teardown', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 5_000));
-
-            useSessionStore(harness.pinia);
-
-            const teardown = await boot(harness);
-
-            teardown();
-
-            await vi.advanceTimersByTimeAsync(10_000);
-
-            expect(fake.refreshCalls).toStrictEqual([]);
-        });
-
-        it('does not react to expiry changes after teardown', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-
-            const store = useSessionStore(harness.pinia);
-            const teardown = await boot(harness);
-
-            teardown();
-
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 2_000));
-            store.hydrateFromStorage();
-
-            await vi.advanceTimersByTimeAsync(10_000);
-
-            expect(fake.refreshCalls).toStrictEqual([]);
-        });
-
-        it('swallows a failed proactive refresh', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-            const store = useSessionStore(harness.pinia);
-            const refreshMock = vi.fn((): Promise<boolean> => Promise.reject(new Error('refresh failed')));
-
-            store.refresh = refreshMock;
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW + 1_000));
-            store.hydrateFromStorage();
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(refreshMock).toHaveBeenCalledTimes(1);
-        });
-
-        it('routes the proactive refresh through the shared coordinator', async () => {
-            const harness = createHarness({ refreshSkewMs: 1_000 });
-
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW));
-
-            const store = useSessionStore(harness.pinia);
-
-            let resolveRefresh!: (value: boolean) => void;
-            const refreshMock = vi.fn(
-                () =>
-                    new Promise<boolean>(resolve => {
-                        resolveRefresh = resolve;
-                    }),
-            );
-
-            store.refresh = refreshMock;
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            const joined = harness.contributions.onUnauthorized?.();
-
-            resolveRefresh(true);
-
-            await expect(joined).resolves.toBe(true);
-            expect(refreshMock).toHaveBeenCalledTimes(1);
-        });
-
-        it('schedules nothing when proactiveRefresh is disabled', async () => {
-            const harness = createHarness({ proactiveRefresh: false });
-
-            harness.storage.set(REFRESH_TOKEN_KEY, 'refresh-token');
-            harness.storage.set(EXPIRES_AT_KEY, String(NOW - 10_000));
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-
-            await vi.advanceTimersByTimeAsync(1_000_000);
-
-            expect(fake.refreshCalls).toStrictEqual([]);
-        });
-    });
-
-    describe('boot rehydration', () => {
-        it('rehydrates the user at boot when already authenticated', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(store.user?.email).toBe('alice@example.com');
-        });
-
-        it('does not rehydrate the user at boot when unauthenticated', async () => {
-            const harness = createHarness();
-            const store = useSessionStore(harness.pinia);
-            const rehydrateMock = vi.fn();
-
-            store.rehydrateUser = rehydrateMock;
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(rehydrateMock).not.toHaveBeenCalled();
-        });
-
-        it('swallows a rehydrateUser failure triggered by boot rehydration', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-            const rehydrateMock = vi.fn((): Promise<void> => Promise.reject(new Error('boot rehydrate failed')));
-
-            store.rehydrateUser = rehydrateMock;
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(rehydrateMock).toHaveBeenCalledTimes(1);
-        });
-    });
-
-    describe('session-loss redirect', () => {
-        it('pushes the login route carrying the sanitised current path when the session is lost', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(harness.pushes).toStrictEqual([{ name: 'auth.login', query: { redirect: '/dashboard' } }]);
-        });
-
-        it('omits the redirect parameter when the current path is not a safe target', async () => {
-            const harness = createHarness({}, { fullPath: '/login?redirect=%2Fdashboard' });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(harness.pushes).toStrictEqual([{ name: 'auth.login' }]);
-        });
-
-        it('respects a custom login route and loop-guard path', async () => {
-            const harness = createHarness(
-                { routes: { login: '/sign-in', loginPath: '/sign-in' } },
-                { fullPath: '/sign-in' },
-            );
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(harness.pushes).toStrictEqual(['/sign-in']);
-        });
-
-        it('does not push when the session transitions from unauthenticated to authenticated', async () => {
-            const harness = createHarness();
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            store.hydrateFromStorage();
-            await nextTick();
-
-            expect(harness.pushes).toStrictEqual([]);
-        });
-
-        it('does not push when sessionLossRedirect is disabled', async () => {
-            const harness = createHarness({ sessionLossRedirect: false });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(harness.pushes).toStrictEqual([]);
-        });
-
-        it('does not push after teardown', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-            const teardown = await boot(harness);
-
-            teardown();
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(harness.pushes).toStrictEqual([]);
-        });
-
-        it('swallows a rejected navigation', async () => {
-            const harness = createHarness({}, { pushRejection: new Error('navigation aborted') });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-
-            store.clearLocal();
-            await nextTick();
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(harness.pushes).toHaveLength(1);
-        });
-    });
-
-    describe('identity fan-out', () => {
-        it('identifies every channel with the default mapping when the user loads', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(reporter.users).toStrictEqual([{ id: 'u1', email: 'alice@example.com', name: 'Alice Smith' }]);
-            expect(tracker.identified).toStrictEqual(['u1']);
-            expect(flags.contexts).toStrictEqual([{ userId: 'u1' }]);
-        });
-
-        it('stringifies a numeric user id across every channel', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user({ id: 7 }));
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(reporter.users).toStrictEqual([{ id: '7', email: 'alice@example.com', name: 'Alice Smith' }]);
-            expect(tracker.identified).toStrictEqual(['7']);
-            expect(flags.contexts).toStrictEqual([{ userId: '7' }]);
-        });
-
-        it('omits null email and name from the reported identity', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user({ email: null, name: null }));
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(reporter.users).toStrictEqual([{ id: 'u1' }]);
-        });
-
-        it('clears every channel together on sign-out', async () => {
-            const harness = createHarness();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(reporter.users).toStrictEqual([{ id: 'u1', email: 'alice@example.com', name: 'Alice Smith' }, null]);
-            expect(tracker.resets).toBe(1);
-            expect(flags.contexts).toStrictEqual([{ userId: 'u1' }, {}]);
-        });
-
-        it('merges custom per-channel mappings over the defaults', async () => {
-            const harness = createHarness({
-                identity: { analytics: identified => `analytics-${String(identified.id)}` },
-            });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(tracker.identified).toStrictEqual(['analytics-u1']);
-            expect(reporter.users).toStrictEqual([{ id: 'u1', email: 'alice@example.com', name: 'Alice Smith' }]);
-            expect(flags.contexts).toStrictEqual([{ userId: 'u1' }]);
-        });
-
-        it('merges a custom reporting mapping over the default', async () => {
-            const harness = createHarness({
-                identity: { reporting: identified => ({ id: `reporting-${String(identified.id)}` }) },
-            });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(reporter.users).toStrictEqual([{ id: 'reporting-u1' }]);
-            expect(tracker.identified).toStrictEqual(['u1']);
-            expect(flags.contexts).toStrictEqual([{ userId: 'u1' }]);
-        });
-
-        it('merges a custom feature-flag mapping over the default', async () => {
-            const harness = createHarness({
-                identity: { featureFlags: identified => ({ userId: `flags-${String(identified.id)}` }) },
-            });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            useSessionStore(harness.pinia);
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            expect(flags.contexts).toStrictEqual([{ userId: 'flags-u1' }]);
-            expect(reporter.users).toStrictEqual([{ id: 'u1', email: 'alice@example.com', name: 'Alice Smith' }]);
-            expect(tracker.identified).toStrictEqual(['u1']);
-        });
-
-        it('disables the fan-out entirely when identity is false', async () => {
-            const harness = createHarness({ identity: false });
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            fake.queueUser(user());
-
-            const store = useSessionStore(harness.pinia);
-
-            await boot(harness);
-            await vi.advanceTimersByTimeAsync(0);
-
-            store.clearLocal();
-            await nextTick();
-
-            expect(reporter.users).toStrictEqual([]);
-            expect(tracker.identified).toStrictEqual([]);
-            expect(tracker.resets).toBe(0);
-            expect(flags.contexts).toStrictEqual([]);
-        });
-
-        it('does not fan out after teardown', async () => {
-            const harness = createHarness();
-            const store = useSessionStore(harness.pinia);
-            const teardown = await boot(harness);
-
-            teardown();
-
-            harness.storage.set(ACCESS_TOKEN_KEY, 'tok');
-            store.hydrateFromStorage();
-            fake.queueUser(user());
-
-            await store.rehydrateUser();
-            await nextTick();
-
-            expect(store.user?.id).toBe('u1');
-            expect(reporter.users).toStrictEqual([]);
+            expect(sessionContext().api).toBe(gateway);
+            expect(factory).toHaveBeenCalledWith(installed);
         });
     });
 
     describe('device fingerprint', () => {
-        it('generates and persists the uuid on first use', () => {
-            const harness = createHarness({ generateUuid: () => 'test-uuid-1234' });
+        it('generates a uuid once and persists it in the application storage', () => {
+            const generateUuid = vi.fn(() => 'generated-uuid');
+            const target = harness({ generateUuid });
 
-            expect(sessionContext().device()).toStrictEqual({ uuid: 'test-uuid-1234', os: 'WEB' });
-            expect(harness.storage.get(DEVICE_UUID_KEY)).toBe('test-uuid-1234');
+            expect(sessionContext().device()).toStrictEqual({ uuid: 'generated-uuid', os: 'WEB' });
+            expect(sessionContext().device()).toStrictEqual({ uuid: 'generated-uuid', os: 'WEB' });
+            expect(generateUuid).toHaveBeenCalledTimes(1);
+            expect(target.appStorage.get('auth.device_uuid')).toBe('generated-uuid');
         });
 
-        it('reuses the stored uuid on subsequent calls', () => {
-            let callCount = 0;
+        it('reuses a stored uuid under an overridden key and reports a custom os', () => {
+            const target = harness({ deviceOs: 'DESKTOP', storageKeys: { deviceUuid: 'app.device' } });
 
-            createHarness({
-                generateUuid: () => {
-                    callCount += 1;
+            target.appStorage.set('app.device', 'stored-uuid');
 
-                    return `uuid-${callCount}`;
-                },
-            });
-
-            expect(sessionContext().device()).toStrictEqual({ uuid: 'uuid-1', os: 'WEB' });
-            expect(sessionContext().device()).toStrictEqual({ uuid: 'uuid-1', os: 'WEB' });
-            expect(callCount).toBe(1);
+            expect(sessionContext().device()).toStrictEqual({ uuid: 'stored-uuid', os: 'DESKTOP' });
         });
 
-        it('reuses a uuid seeded into storage before the first call', () => {
-            const harness = createHarness({ generateUuid: () => 'should-not-be-used' });
+        it('defaults the uuid to a random one', () => {
+            harness();
 
-            harness.storage.set(DEVICE_UUID_KEY, 'pre-seeded-uuid');
-
-            expect(sessionContext().device()).toStrictEqual({ uuid: 'pre-seeded-uuid', os: 'WEB' });
-        });
-
-        it('reports a custom deviceOs', () => {
-            createHarness({ deviceOs: 'KIOSK', generateUuid: () => 'uuid-kiosk' });
-
-            expect(sessionContext().device()).toStrictEqual({ uuid: 'uuid-kiosk', os: 'KIOSK' });
-        });
-
-        it('persists the uuid under an overridden storage key', () => {
-            const harness = createHarness({
-                storageKeys: { deviceUuid: 'custom.device' },
-                generateUuid: () => 'uuid-custom-key',
-            });
-
-            sessionContext().device();
-
-            expect(harness.storage.get('custom.device')).toBe('uuid-custom-key');
-            expect(harness.storage.get(DEVICE_UUID_KEY)).toBeNull();
-        });
-
-        it('defaults the uuid factory to crypto.randomUUID', () => {
-            const randomSpy = vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000000');
-
-            createHarness({});
-
-            expect(sessionContext().device()).toStrictEqual({
-                uuid: '00000000-0000-4000-8000-000000000000',
-                os: 'WEB',
-            });
-
-            randomSpy.mockRestore();
-        });
-
-        it('sends the fingerprint with login through the store', async () => {
-            const harness = createHarness({ generateUuid: () => 'login-uuid' });
-
-            fake.queueSession(tokens());
-            fake.queueUser(user());
-
-            await useSessionStore(harness.pinia).login({ email: 'alice@example.com', password: 'secret' });
-
-            expect(fake.loginCalls).toStrictEqual([
-                {
-                    credentials: { email: 'alice@example.com', password: 'secret' },
-                    device: { uuid: 'login-uuid', os: 'WEB' },
-                },
-            ]);
-            expect(harness.storage.get(DEVICE_UUID_KEY)).toBe('login-uuid');
+            expect(sessionContext().device().uuid).toMatch(
+                /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/,
+            );
         });
     });
 
-    describe('teardown', () => {
-        it('is safe to call twice', async () => {
-            const harness = createHarness();
-            const teardown = await boot(harness);
+    describe('gateway typing', () => {
+        /** A user shape richer than the default. */
+        interface TenantUser extends SessionUser {
+            /** The tenant the user belongs to. */
+            readonly tenant: string;
+        }
 
-            teardown();
+        /** A user shape the tenant gateway does not produce. */
+        interface RegionalUser extends TenantUser {
+            /** The region the user belongs to. */
+            readonly region: string;
+        }
 
-            expect(() => {
-                teardown();
-            }).not.toThrow();
-            expect(harness.win.listenerCount()).toBe(0);
+        /** A credential shape other than the default. */
+        interface TokenCredentials {
+            /** The sign-in token. */
+            readonly token: string;
+        }
+
+        /** A gateway over the richer user and credential shapes. */
+        const tenantApi = (): SessionApi<TenantUser, TokenCredentials> => ({
+            login: () => Promise.reject(new Error('unused')),
+            refresh: () => Promise.reject(new Error('unused')),
+            logout: () => Promise.resolve(),
+            currentUser: () => Promise.resolve({ ...user(), tenant: 't1' }),
+        });
+
+        it('defaults the gateway over the default user shape, for any credentials', () => {
+            expect(createSessionModule().name).toBe('session');
+            expect(createSessionModule({ storeId: 'auth' }).name).toBe('session');
+            expect(createSessionModule<SessionUser, TokenCredentials>().name).toBe('session');
+        });
+
+        it('infers the custom user from the gateway for the identity mapping', () => {
+            const module = createSessionModule({
+                api: tenantApi,
+                identity: {
+                    analytics: tenantUser => {
+                        expectTypeOf(tenantUser).toEqualTypeOf<TenantUser>();
+
+                        return tenantUser.tenant;
+                    },
+                },
+            });
+
+            expect(module.name).toBe('session');
+        });
+
+        it('rejects an identity mapping the gateway user does not satisfy', () => {
+            /**
+             * Map a user carrying a region onto that region.
+             *
+             * @param regionalUser - a user with a region
+             * @returns the region
+             */
+            const region = (regionalUser: RegionalUser): string => regionalUser.region;
+
+            // @ts-expect-error the mapping needs a field the gateway user lacks
+            expect(createSessionModule({ api: tenantApi, identity: { analytics: region } }).name).toBe('session');
+        });
+
+        it('requires a gateway for a custom user shape', () => {
+            expect(createSessionModule<TenantUser, TokenCredentials>({ api: tenantApi }).name).toBe('session');
+
+            // @ts-expect-error a custom user requires its gateway
+            expect(createSessionModule<TenantUser>().name).toBe('session');
+
+            // @ts-expect-error a custom user requires its gateway
+            expect(createSessionModule<TenantUser>({ storeId: 'auth' }).name).toBe('session');
+
+            const identity = { analytics: (tenantUser: TenantUser): string => tenantUser.tenant };
+
+            // @ts-expect-error a custom user requires its gateway
+            expect(createSessionModule({ identity }).name).toBe('session');
         });
     });
 });

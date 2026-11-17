@@ -8,16 +8,30 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createApp, defineComponent } from 'vue';
 
-import { BreadcrumbTrail } from './breadcrumb-trail';
-import type { ErrorReporter, ReportedUser } from './error-reporter';
+import { BreadcrumbTrail } from '@sinemacula/foundation/reporting/breadcrumb-trail';
+import type { ErrorReporter, ReportedUser } from '@sinemacula/foundation/reporting/error-reporter';
 import { installGlobalErrorHandling } from './install-global-error-handling';
 
 const Stub = defineComponent({ render: () => null });
 
+/** Build a reporter that records every captured error. */
 function makeReporter(): ErrorReporter & {
-    captureErrorCalls: Array<{ error: unknown; context: Readonly<Record<string, unknown>> | undefined }>;
+    /** The errors captured so far, in order. */
+    captureErrorCalls: Array<{
+        /** The captured error. */
+        error: unknown;
+
+        /** The context the error was captured with. */
+        context: Readonly<Record<string, unknown>> | undefined;
+    }>;
 } {
-    const captureErrorCalls: Array<{ error: unknown; context: Readonly<Record<string, unknown>> | undefined }> = [];
+    const captureErrorCalls: Array<{
+        /** The captured error. */
+        error: unknown;
+
+        /** The context the error was captured with. */
+        context: Readonly<Record<string, unknown>> | undefined;
+    }> = [];
 
     return {
         captureErrorCalls,
@@ -33,9 +47,21 @@ function makeReporter(): ErrorReporter & {
     };
 }
 
+/** Build a fake window whose error and rejection listeners can be driven. */
 function makeWindow(): Window & {
+    /**
+     * Dispatch an error event to the registered listeners.
+     */
     dispatchError(init: ErrorEventInit): void;
+
+    /**
+     * Dispatch an unhandled rejection to the registered listeners.
+     */
     dispatchRejection(reason: unknown): void;
+
+    /**
+     * Count the listeners registered for an event.
+     */
     listenerCount(type: string): number;
 } {
     const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
@@ -85,8 +111,19 @@ function makeWindow(): Window & {
             }
         },
     } as unknown as Window & {
+        /**
+         * Dispatch an error event to the registered listeners.
+         */
         dispatchError(init: ErrorEventInit): void;
+
+        /**
+         * Dispatch an unhandled rejection to the registered listeners.
+         */
         dispatchRejection(reason: unknown): void;
+
+        /**
+         * Count the listeners registered for an event.
+         */
         listenerCount(type: string): number;
     };
 

@@ -8,71 +8,74 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { TokenRefreshCoordinator } from '../http/token-refresh-coordinator';
-import type { MiddlewareContext } from '../router/middleware';
-import { MemoryStorage } from '../storage/memory-storage';
+import { HttpError } from '@sinemacula/foundation/http/http-error';
+import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import type { SessionUser } from '@sinemacula/foundation/session/session-user';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import type { MiddlewareContext, RouteMiddleware } from '../router/middleware';
 import type { SessionRoutes } from './create-session-module';
 import { authenticated, authorize, guestOnly } from './middleware';
-import type { SessionApi } from './session-api';
-import { installSessionContext, resetSessionContext } from './session-context';
+import { installSessionContext, resetSessionContext, sessionContext } from './session-context';
 import { useSessionStore } from './session-store';
-import type { SessionUser } from './session-user';
-
-const ACCESS_TOKEN_KEY = 'auth.access_token';
+import type { FakeSessionApi } from './test-support/session-fixtures';
+import {
+    createFakeSessionApi,
+    createTestSessionContext,
+    deferred,
+    persistSnapshot,
+    tokens,
+} from './test-support/session-fixtures';
 
 const context = { to: { fullPath: '/settings/billing' }, from: {} } as unknown as MiddlewareContext;
-
-/** Build a session API stand-in that fails loudly if any method is invoked. */
-function createSessionApiStub(): SessionApi {
-    const fail = (): Promise<never> => Promise.reject(new Error('not implemented'));
-
-    return { login: fail, refresh: fail, logout: fail, currentUser: fail };
-}
 
 /** An authenticated user record granted the given permissions. */
 function userWithPermissions(permissions: readonly string[]): SessionUser {
     return { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions };
 }
 
-/** Write the session user directly onto the store state. */
-function setStoreUser(user: SessionUser): void {
-    (useSessionStore() as unknown as { user: SessionUser | null }).user = user;
-}
-
 describe('session guards', () => {
     let storage: MemoryStorage;
+    let gateway: FakeSessionApi;
 
     /**
-     * Install a test session context over fresh collaborators.
+     * Install a test session context over the test storage and gateway.
      *
-     * @param routes - optional route-identity overrides
+     * @param routes - route-identity overrides
      */
-    function installTestContext(routes: Partial<SessionRoutes> = {}, currentUser?: () => Promise<SessionUser>): void {
+    function installTestContext(routes: Partial<SessionRoutes> = {}): void {
+        const base = createTestSessionContext();
+
         installSessionContext({
-            storageKeys: {
-                accessToken: ACCESS_TOKEN_KEY,
-                refreshToken: 'auth.refresh_token',
-                expiresAt: 'auth.expires_at',
-                deviceUuid: 'auth.device_uuid',
-            },
-            routes: {
-                login: { name: 'auth.login' },
-                loginPath: '/login',
-                home: '/',
-                forbidden: '/forbidden',
-                ...routes,
-            },
-            storage,
-            storeId: 'auth',
-            api: currentUser === undefined ? createSessionApiStub() : { ...createSessionApiStub(), currentUser },
-            coordinator: new TokenRefreshCoordinator({ refresh: () => Promise.resolve(false) }),
-            parseTimestamp: () => null,
-            device: () => ({ uuid: 'device-uuid', os: 'WEB' }),
+            ...base,
+            persistence: new KeyValueSessionPersistence(storage),
+            api: gateway,
+            routes: { ...base.routes, ...routes },
         });
+    }
+
+    /**
+     * Persist a session and load the given user once it is hydrated.
+     *
+     * @param permissions - the permissions the user is granted
+     */
+    function signIn(permissions: readonly string[] = []): void {
+        persistSnapshot(storage, tokens());
+        gateway.currentUser.mockResolvedValue(userWithPermissions(permissions));
+    }
+
+    /**
+     * Run a guard over the shared navigation context.
+     *
+     * @param guard - the guard to run
+     * @returns the guard's result
+     */
+    function run(guard: RouteMiddleware): unknown {
+        return guard.handle(context);
     }
 
     beforeEach(() => {
         storage = new MemoryStorage();
+        gateway = createFakeSessionApi();
         setActivePinia(createPinia());
         installTestContext();
     });
@@ -81,168 +84,179 @@ describe('session guards', () => {
         resetSessionContext();
     });
 
+    describe('readiness', () => {
+        it.each([
+            ['authenticated', authenticated()],
+            ['guestOnly', guestOnly()],
+            ['authorize', authorize('users.view')],
+        ])('%s decides only once the session has hydrated', async (_name, guard) => {
+            const hydrated = deferred<undefined>();
+
+            resetSessionContext();
+            installSessionContext(createTestSessionContext({ ready: () => hydrated.promise }));
+
+            let settled = false;
+            const decision = Promise.resolve(run(guard)).then(result => {
+                settled = true;
+
+                return result;
+            });
+
+            await Promise.resolve();
+
+            expect(settled).toBe(false);
+
+            hydrated.resolve(undefined);
+
+            await expect(decision).resolves.toHaveProperty('kind');
+        });
+    });
+
     describe('authenticated', () => {
-        describe('when the user is authenticated', () => {
-            beforeEach(() => {
-                storage.set(ACCESS_TOKEN_KEY, 'valid-token');
-                useSessionStore();
-            });
+        it('admits a visitor whose persisted session hydrates', async () => {
+            signIn();
 
-            it('returns next', () => {
-                expect(authenticated().handle(context)).toStrictEqual({ kind: 'next' });
-            });
+            await expect(run(authenticated())).resolves.toStrictEqual({ kind: 'next' });
+        });
 
-            it('returns next with a custom redirect target (redirect is never triggered)', () => {
-                expect(authenticated({ name: 'some.route' }).handle(context)).toStrictEqual({ kind: 'next' });
+        it('admits regardless of a custom redirect target', async () => {
+            signIn();
+
+            await expect(run(authenticated({ name: 'some.route' }))).resolves.toStrictEqual({ kind: 'next' });
+        });
+
+        it('redirects a signed-out visitor to the login route, carrying the attempted path', async () => {
+            await expect(run(authenticated())).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
             });
         });
 
-        describe('when the user is not authenticated', () => {
-            it('redirects to the context login route by default, carrying the attempted path', () => {
-                expect(authenticated().handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
-                });
+        it('redirects a signed-out visitor to a custom target, carrying the attempted path', async () => {
+            await expect(run(authenticated({ name: 'custom.route' }))).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'custom.route', query: { redirect: '/settings/billing' } },
             });
+        });
 
-            it('redirects to a custom target when one is provided, carrying the attempted path', () => {
-                expect(authenticated({ name: 'custom.route' }).handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: { name: 'custom.route', query: { redirect: '/settings/billing' } },
-                });
-            });
+        it('resolves the login route from the context at handle time', async () => {
+            const guard = authenticated();
 
-            it('resolves the default login route from the context lazily at handle time', () => {
-                const guard = authenticated();
+            resetSessionContext();
+            installTestContext({ login: { name: 'custom.login' } });
 
-                resetSessionContext();
-                installTestContext({ login: { name: 'custom.login' } });
-
-                expect(guard.handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: { name: 'custom.login', query: { redirect: '/settings/billing' } },
-                });
+            await expect(run(guard)).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'custom.login', query: { redirect: '/settings/billing' } },
             });
         });
     });
 
     describe('guestOnly', () => {
-        describe('when the user is not authenticated', () => {
-            it('returns next', () => {
-                expect(guestOnly().handle(context)).toStrictEqual({ kind: 'next' });
-            });
+        it('admits a signed-out visitor', async () => {
+            await expect(run(guestOnly())).resolves.toStrictEqual({ kind: 'next' });
+        });
 
-            it('returns next with a custom redirect target (redirect is never triggered)', () => {
-                expect(guestOnly({ name: 'some.route' }).handle(context)).toStrictEqual({ kind: 'next' });
+        it('admits a signed-out visitor regardless of a custom redirect target', async () => {
+            await expect(run(guestOnly({ name: 'some.route' }))).resolves.toStrictEqual({ kind: 'next' });
+        });
+
+        it('redirects a visitor whose persisted session hydrates to the home route', async () => {
+            signIn();
+
+            await expect(run(guestOnly())).resolves.toStrictEqual({ kind: 'redirect', to: '/' });
+        });
+
+        it('redirects an authenticated visitor to a custom target', async () => {
+            signIn();
+
+            await expect(run(guestOnly({ name: 'custom.route' }))).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'custom.route' },
             });
         });
 
-        describe('when the user is authenticated', () => {
-            beforeEach(() => {
-                storage.set(ACCESS_TOKEN_KEY, 'valid-token');
-                useSessionStore();
-            });
+        it('resolves the home route from the context at handle time', async () => {
+            const guard = guestOnly();
 
-            it('redirects to the context home route by default', () => {
-                expect(guestOnly().handle(context)).toStrictEqual({ kind: 'redirect', to: '/' });
-            });
+            signIn();
+            resetSessionContext();
+            installTestContext({ home: '/dashboard' });
 
-            it('redirects to a custom target when one is provided', () => {
-                expect(guestOnly({ name: 'custom.route' }).handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: { name: 'custom.route' },
-                });
-            });
-
-            it('resolves the default home route from the context lazily at handle time', () => {
-                const guard = guestOnly();
-
-                resetSessionContext();
-                installTestContext({ home: '/dashboard' });
-
-                expect(guard.handle(context)).toStrictEqual({ kind: 'redirect', to: '/dashboard' });
-            });
+            await expect(run(guard)).resolves.toStrictEqual({ kind: 'redirect', to: '/dashboard' });
         });
     });
 
     describe('authorize', () => {
-        describe('when the visitor is not authenticated', () => {
-            it('redirects to the context login route, carrying the attempted path', async () => {
-                expect(await authorize('users.view').handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
-                });
+        it('redirects a signed-out visitor to the login route, carrying the attempted path', async () => {
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
             });
         });
 
-        describe('when the visitor is authenticated with the user already loaded', () => {
-            beforeEach(() => {
-                storage.set(ACCESS_TOKEN_KEY, 'valid-token');
-                useSessionStore();
-            });
+        it('loads the user, then admits when the permission is held', async () => {
+            signIn(['users.view']);
 
-            it('redirects to the context forbidden route when the user lacks the permission', async () => {
-                setStoreUser(userWithPermissions([]));
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({ kind: 'next' });
+            expect(gateway.currentUser).toHaveBeenCalledTimes(1);
+        });
 
-                expect(await authorize('users.view').handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: '/forbidden',
-                });
-            });
+        it('admits through a wildcard grant', async () => {
+            signIn(['users.*']);
 
-            it('redirects to a custom target when the user lacks the permission', async () => {
-                setStoreUser(userWithPermissions([]));
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({ kind: 'next' });
+        });
 
-                expect(await authorize('users.view', { name: 'forbidden.route' }).handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: { name: 'forbidden.route' },
-                });
-            });
+        it('redirects to the forbidden route when the permission is missing', async () => {
+            signIn([]);
 
-            it('resolves the default forbidden route from the context lazily at handle time', async () => {
-                const guard = authorize('users.view');
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({ kind: 'redirect', to: '/forbidden' });
+        });
 
-                setStoreUser(userWithPermissions([]));
-                resetSessionContext();
-                installTestContext({ forbidden: '/no-access' });
+        it('redirects to a custom target when the permission is missing', async () => {
+            signIn([]);
 
-                expect(await guard.handle(context)).toStrictEqual({ kind: 'redirect', to: '/no-access' });
-            });
-
-            it('returns next when the user holds the permission', async () => {
-                setStoreUser(userWithPermissions(['users.view']));
-
-                expect(await authorize('users.view').handle(context)).toStrictEqual({ kind: 'next' });
-            });
-
-            it('returns next when the user holds the permission via a wildcard grant', async () => {
-                setStoreUser(userWithPermissions(['users.*']));
-
-                expect(await authorize('users.view').handle(context)).toStrictEqual({ kind: 'next' });
+            await expect(run(authorize('users.view', { name: 'forbidden.route' }))).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'forbidden.route' },
             });
         });
 
-        describe('when the user is not yet loaded', () => {
-            it('waits for the user to load, then admits when the permission is held', async () => {
-                resetSessionContext();
-                installTestContext({}, () => Promise.resolve(userWithPermissions(['users.view'])));
-                storage.set(ACCESS_TOKEN_KEY, 'valid-token');
-                useSessionStore();
+        it('resolves the forbidden route from the context at handle time', async () => {
+            const guard = authorize('users.view');
 
-                expect(await authorize('users.view').handle(context)).toStrictEqual({ kind: 'next' });
+            signIn([]);
+            resetSessionContext();
+            installTestContext({ forbidden: '/no-access' });
+
+            await expect(run(guard)).resolves.toStrictEqual({ kind: 'redirect', to: '/no-access' });
+        });
+
+        it('redirects to the login route when the session is lost while loading the user', async () => {
+            signIn(['users.view']);
+            gateway.currentUser.mockReset();
+            gateway.currentUser.mockImplementationOnce(async () => {
+                await sessionContext().coordinator.refresh();
+
+                throw new HttpError(401, 'expired');
             });
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
 
-            it('waits for the user to load, then redirects to forbidden without the permission', async () => {
-                resetSessionContext();
-                installTestContext({}, () => Promise.resolve(userWithPermissions([])));
-                storage.set(ACCESS_TOKEN_KEY, 'valid-token');
-                useSessionStore();
-
-                expect(await authorize('users.view').handle(context)).toStrictEqual({
-                    kind: 'redirect',
-                    to: '/forbidden',
-                });
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({
+                kind: 'redirect',
+                to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
             });
+            expect(useSessionStore().isAuthenticated).toBe(false);
+        });
+
+        it('reuses an already loaded user', async () => {
+            signIn(['users.view']);
+            await useSessionStore().hydrate();
+            await useSessionStore().rehydrateUser();
+
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({ kind: 'next' });
+            expect(gateway.currentUser).toHaveBeenCalledTimes(1);
         });
     });
 });

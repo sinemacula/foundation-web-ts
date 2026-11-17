@@ -15,12 +15,18 @@ import type { Pinia } from 'pinia';
 import type { App } from 'vue';
 import type { RouteRecordRaw, Router } from 'vue-router';
 
-import type { ConfigRepository } from '../config/config-repository';
-import type { Environment } from '../config/environment';
-import type { HttpClient, RequestInterceptor, ResponseErrorHandler, UnauthorizedHandler } from '../http/http-client';
+import type { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
+import type { Environment } from '@sinemacula/foundation/config/environment';
+import type {
+    HttpClient,
+    RequestInterceptor,
+    ResponseErrorHandler,
+    UnauthorizedHandler,
+} from '@sinemacula/foundation/http/http-client';
 import type { ApplicationI18n } from '../i18n/application-i18n';
+import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import type { RouteMiddleware } from '../router/middleware';
-import type { KeyValueStorage } from '../storage/key-value-storage';
+import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 
 /**
  * A flat or nested bag of translation key/value pairs for one locale.
@@ -38,6 +44,12 @@ export type LocaleMessageLoader = (locale: string) => Promise<LocaleMessages | n
 export type ModuleTeardown = () => void;
 
 /**
+ * Runs a task once after a delay in milliseconds, returning a function that
+ * cancels it; cancelling after it ran does nothing.
+ */
+export type ScheduleTask = (task: () => void, delayMs: number) => () => void;
+
+/**
  * Platform seams resolved once by the application preset and threaded to every
  * module hook.
  */
@@ -53,6 +65,9 @@ export interface ResolvedPlatform {
 
     /** Reads the current time as epoch milliseconds. */
     readonly clock: () => number;
+
+    /** Schedules and cancels delayed work. */
+    readonly schedule: ScheduleTask;
 }
 
 /**
@@ -129,6 +144,9 @@ export interface ModuleBootContext {
 
     /** The resolved platform seams. */
     readonly platform: ResolvedPlatform;
+
+    /** The application's realtime connection, installed but not connected, or null when none. */
+    readonly realtime: RealtimeConnection | null;
 }
 
 /**
@@ -170,6 +188,21 @@ export interface ModuleDefinition {
 
     /** This module owns the application catch-all; the registry orders it last. At most one module per registry may declare it. Keeping the catch-all last within the module's own routes array remains the module's responsibility. */
     readonly fallback?: boolean;
+}
+
+/**
+ * Schedule a task on the global timers: the browser scheduling seam.
+ *
+ * @param task - the task to run
+ * @param delayMs - the delay before it runs, in milliseconds
+ * @returns a function cancelling the task
+ */
+export function scheduleOnTimers(task: () => void, delayMs: number): () => void {
+    const timer = setTimeout(task, delayMs);
+
+    return () => {
+        clearTimeout(timer);
+    };
 }
 
 /**

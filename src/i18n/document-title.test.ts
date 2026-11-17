@@ -15,6 +15,7 @@ import { installDocumentTitleSync } from './document-title';
 
 const Empty = defineComponent({ render: () => null });
 
+/** Build an activated i18n instance and a router with titled routes. */
 async function buildEnv() {
     const i18n = createApplicationI18n('en-GB');
 

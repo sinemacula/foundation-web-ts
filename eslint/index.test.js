@@ -15,10 +15,12 @@ import config from './index.js';
 
 const linter = new Linter({ configType: 'flat' });
 
+/** Lint a code snippet as though it lived at the given filename. */
 function lint(code, filename) {
     return linter.verify(code, config, { filename });
 }
 
+/** Extract the rule id from each lint message. */
 function ruleIds(messages) {
     return messages.map(message => message.ruleId);
 }

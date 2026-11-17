@@ -42,8 +42,8 @@ real product wires the kernel, and is the template consuming apps follow.
 | `src/realtime/`      | Live connections behind a port: WebSocket and EventSource adapters sharing exponential-backoff reconnect                      | `RealtimeConnection`              | no        |
 | `src/reporting/`     | Error reporting through a swappable reporter, a breadcrumb trail, and a global error-handler installer                        | `ErrorReporter`                   | type-only |
 | `src/router/`        | Navigation: a middleware contract + pipeline, router factory, route-meta typing, chunk-load recovery, and navigation progress | `RouteMiddleware` (contract)      | runtime   |
-| `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and a default `/auth` gateway   | `SessionApi`                      | runtime   |
-| `src/storage/`       | A synchronous key-value storage port with browser, in-memory and key-namespacing adapters                                     | `KeyValueStorage`                 | no        |
+| `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and session persistence         | `SessionApi`                      | runtime   |
+| `src/storage/`       | A synchronous key-value storage port with browser, strict, in-memory and namespacing adapters, plus a Web Locks session lock  | `KeyValueStorage`                 | no        |
 | `src/support/`       | Small shared utilities (`deepFreeze`, `isRecord`, clipboard) and the `ServiceHolder` singleton primitive                      | -                                 | no        |
 | `src/updates/`       | Polls the deployed runtime document for a new release and notifies when one appears                                           | `UpdateMonitor` (no port)         | no        |
 
@@ -154,17 +154,17 @@ The application's configuration definition must structurally satisfy `WebCoreCon
 Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an
 optional `pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
 
-| Group           | Configures                                                                                     |
-|-----------------|------------------------------------------------------------------------------------------------|
-| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree   |
-| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build |
-| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`                   |
-| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                   |
-| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                     |
-| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose         |
-| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side     |
-| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery     |
-| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `history`, `localeCandidates` |
+| Group           | Configures                                                                                                 |
+|-----------------|------------------------------------------------------------------------------------------------------------|
+| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree               |
+| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build             |
+| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`                               |
+| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                               |
+| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                 |
+| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                     |
+| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side                 |
+| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                 |
+| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates` |
 
 The load-bearing defaults and behaviours:
 
@@ -190,7 +190,8 @@ The load-bearing defaults and behaviours:
   monitor runs and pauses its polling while offline. `monitors.chunkRecovery` is on by default.
 - The `platform` seams thread to every subsystem and to module hooks (as `ResolvedPlatform`), which is how
   tests drive the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed
-  clock and an injected pinia.
+  clock, a hand-run `schedule` (delayed work, cancelled through the function it returns; default the global
+  timers) and an injected pinia.
 
 ### Entry point
 
@@ -282,31 +283,46 @@ which the boot guarantees happens before mount:
 `createSessionModule` (`src/session/create-session-module.ts`) returns a plain `ModuleDefinition` - session
 support is opt-in and self-installs through the module contract, with no preset special case. At register it
 installs the session context and contributes the bearer-token interceptor plus the single unauthorized
-handler (a `TokenRefreshCoordinator`, so the reactive 401 path and the proactive refresh timer can never
-race); at the stores phase the session store hydrates from storage; at boot it wires cross-tab session
-mirroring, proactive refresh ahead of expiry, the session-loss redirect (login route plus the sanitised
-current path under the `redirect` query key) and identity fan-out to the reporting, analytics and
-feature-flag holders.
+handler (a `SessionRefreshCoordinator`, so the reactive 401 path, the proactive refresh timer and realtime
+reconnects can never race). At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor,
+refreshes and the boot hook all wait for that hydration, so the first navigation never sees a half-loaded
+session. At boot it wires the session-loss redirect (login route plus the sanitised current path under the
+`redirect` query key), cross-tab mirroring, identity fan-out to the reporting, analytics and feature-flag
+holders, proactive refresh ahead of expiry, and the realtime connection's session binding.
 
-Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`),
-`api` (the default gateway - `POST`/`PATCH`/`DELETE` on `auth`, `GET users/self`, a `{ data }` envelope and
-UTC `YYYY-MM-DD HH:MM:SS` expiry timestamps, each injectable via `endpoints`, `parseTimestamp`, `unwrap` and
-`mapUser` in `createDefaultSessionApi`), `storageKeys`, `routes`, `refreshSkewMs` (60 seconds), `deviceOs`
-(`WEB`), `generateUuid`, the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect` toggles (all true) and
-`identity` (per-channel mappings, or `false` to disable).
+The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`,
+`interactionRequired` with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A
+refused or pending refresh clears the session itself; the module never clears it a second time.
 
-The storage keys are a public contract - live sessions persist under them, so renaming any is a breaking
-change requiring an explicit migration:
+Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`), `api`
+(the foundation default gateway on the platform clock; required when the application declares its own user
+type), `storageKeys`, `routes`, `persistence`, `refreshSkewMs` (60 seconds), `deviceOs` (`WEB`),
+`generateUuid`, the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect`/`realtimeFollowsSession` toggles
+(all true) and `identity` (per-channel mappings, or `false` to disable).
 
-| Key            | Default              |
-|----------------|----------------------|
-| `accessToken`  | `auth.access_token`  |
-| `refreshToken` | `auth.refresh_token` |
-| `expiresAt`    | `auth.expires_at`    |
-| `deviceUuid`   | `auth.device_uuid`   |
+The session persists as one revisioned snapshot in `localStorage`, written through `StrictWebStorage` (storage
+failures surface instead of being swallowed) under a `WebLocksSessionLock` shared by every tab. The module
+refuses to register when the Web Locks API is unavailable rather than falling back to an unshared lock; supply
+`persistence` to store the session elsewhere, and pair it with `crossTabSync: false` plus your own calls to the
+store's `hydrate()` when that store does not raise `storage` events. The storage keys are a public contract:
+
+| Key          | Default            |
+|--------------|--------------------|
+| `session`    | `auth.session`     |
+| `deviceUuid` | `auth.device_uuid` |
 
 Keys are matched raw against cross-tab `storage` events, so the storage adapter must persist un-namespaced;
 an application wanting a prefix sets it in the keys themselves so event keys still match.
+
+With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when
+another session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens),
+retries with backoff a connect skipped while the token could not be refreshed, and disconnects when the session
+is lost, or at teardown when it opened the connection. A refresh on any path that is refused, returns to pending
+authentication or fails disconnects it and cancels pending retries, leaving the session as the refresh left
+it; it stays down until the session is replaced. Proactive refreshes and retries run on the platform
+`schedule`. Pass `sessionReconnectGuard()` from
+`src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
+token first and stops for good when the session ends.
 
 Route identity is one configurable source feeding the guards, the session-loss redirect and the redirect
 sanitiser's loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set together with `login`

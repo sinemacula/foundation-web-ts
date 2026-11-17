@@ -11,9 +11,9 @@
 
 import type { Router } from 'vue-router';
 
-import type { ErrorReporter } from '../reporting/error-reporter';
+import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
 import { installChunkErrorRecovery } from '../router/chunk-error-recovery';
-import type { KeyValueStorage } from '../storage/key-value-storage';
+import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 
 /**
  * Options for {@link wireChunkRecovery}.

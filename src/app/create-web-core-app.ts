@@ -2,15 +2,16 @@
  * Bootstrap preset assembling a complete web application from the kernel.
  *
  * `createWebCoreApp` runs a fixed sequence of boot phases over the kernel's
- * primitives: it fetches the runtime environment document, freezes the
- * application configuration, installs every kernel service singleton, runs the
- * module lifecycle (register, stores, boot), and wires i18n, routing,
- * observability, chunk recovery, realtime and the release monitors. Every
- * subsystem is overridable through the options and every platform dependency is
- * injectable, so applications boot with a declarative options object and tests
- * drive the full sequence through seams. The returned handle mounts the
- * application after the router is ready and disposes everything the boot
- * installed in reverse order.
+ * primitives: it validates the module registry, creates the Vue application,
+ * wires the colour scheme, delegates the platform-agnostic core phases to
+ * `bootFoundationCore` (runtime environment through HTTP client, with module
+ * registration bridged through its contributions callback), then runs stores,
+ * i18n, routing, realtime, module boot, chunk recovery and the release
+ * monitors. Every subsystem is overridable through the options and every
+ * platform dependency is injectable, so applications boot with a declarative
+ * options object and tests drive the full sequence through seams. The returned
+ * handle mounts the application after the router is ready and disposes
+ * everything the boot installed in reverse order.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -22,62 +23,59 @@ import type { App, Component } from 'vue';
 import { createApp } from 'vue';
 import type { Router, RouterHistory } from 'vue-router';
 
-import type { AnalyticsTracker } from '../analytics/analytics-tracker';
-import { installPageTracking } from '../analytics/install-page-tracking';
-import { ConfigRepository } from '../config/config-repository';
-import type { Environment } from '../config/environment';
-import { RUNTIME_ENVIRONMENT_URL, fetchRuntimeEnvironment } from '../config/runtime-environment';
-import type { ConnectivityMonitor } from '../connectivity/connectivity-monitor';
-import type { FeatureFlags } from '../feature-flags/feature-flags';
-import { StaticFeatureFlags } from '../feature-flags/static-feature-flags';
-import type { HttpClient, RequestInterceptor, ResponseErrorHandler } from '../http/http-client';
+import type { AnalyticsTracker } from '@sinemacula/foundation/analytics/analytics-tracker';
+import { installPageTracking } from '@sinemacula/foundation/analytics/install-page-tracking';
+import type { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
+import type { Environment } from '@sinemacula/foundation/config/environment';
+import { RUNTIME_ENVIRONMENT_URL } from '../config/runtime-environment';
+import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
+import type { FeatureFlags } from '@sinemacula/foundation/feature-flags/feature-flags';
+import type { HttpClient, RequestInterceptor, ResponseErrorHandler } from '@sinemacula/foundation/http/http-client';
 import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
-import type { Logger } from '../logging/logger';
-import type { LocaleMessages, ModuleDefinition, ModuleStoreFactory, ResolvedPlatform } from '../module/module';
-import type { ModuleHttpContributions, ModuleRegistry } from '../module/module-registry';
+import type { Logger } from '@sinemacula/foundation/logging/logger';
+import type {
+    LocaleMessages,
+    ModuleDefinition,
+    ModuleStoreFactory,
+    ResolvedPlatform,
+    ScheduleTask,
+} from '../module/module';
+import { scheduleOnTimers } from '../module/module';
+import type { ModuleRegistry } from '../module/module-registry';
 import { bootModules, createModuleRegistry, registerModules } from '../module/module-registry';
 import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
-import type { RealtimeConnection } from '../realtime/realtime-connection';
-import type { ErrorReporter } from '../reporting/error-reporter';
+import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
+import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
 import { installGlobalErrorHandling } from '../reporting/install-global-error-handling';
 import { BrowserStorage } from '../storage/browser-storage';
-import type { KeyValueStorage } from '../storage/key-value-storage';
-import type { ColorSchemePreference } from '../theme/color-scheme';
-import type { ColorSchemeService } from '../theme/color-scheme-service';
+import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
+import type { ColorSchemePreference } from '@sinemacula/foundation/theme/color-scheme';
+import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import type { UpdateMonitor } from '../updates/update-monitor';
-import {
-    installConfig,
-    installConfirm,
-    installFeatureFlags,
-    installRealtime,
-    installStorage,
-    installToasts,
-    toasts,
-} from './services';
-import type { WebCoreConfig } from './web-core-config';
+import { installRealtime, toasts } from './services';
+import { bootFoundationCore } from '@sinemacula/foundation/app/boot-foundation-core';
+import type { FoundationConfig } from '@sinemacula/foundation/app/foundation-config';
 import { wireChunkRecovery } from './wire-chunk-recovery';
 import { wireColorScheme } from './wire-color-scheme';
-import type { WireHttpClientTools } from './wire-http-client';
-import { wireHttpClient } from './wire-http-client';
+import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
 import type { WiredLocale } from './wire-locale';
 import { wireLocale } from './wire-locale';
 import type { UpdateMonitorWiring, WiredMonitors } from './wire-monitors';
 import { wireMonitors } from './wire-monitors';
-import type { WiredObservability } from './wire-observability';
-import { wireObservability } from './wire-observability';
+import type { WiredObservability } from '@sinemacula/foundation/app/wire-observability';
 import { wireRouter } from './wire-router';
 
 const DEFAULT_MOUNT_SELECTOR = '#app';
 
 // Internal by design: phase insertions must never be breaking API changes.
 const BOOT_PHASES = [
+    'module-registry',
+    'application',
+    'color-scheme',
     'runtime-environment',
     'configuration',
     'storage',
-    'color-scheme',
-    'module-registry',
-    'application',
     'feature-flags',
     'notifications',
     'observability',
@@ -87,9 +85,9 @@ const BOOT_PHASES = [
     'locale',
     'router',
     'error-handling',
+    'realtime',
     'boot-modules',
     'chunk-recovery',
-    'realtime',
     'monitors',
 ] as const;
 
@@ -127,7 +125,7 @@ function recordPhase(phase: BootPhase): void {
 /**
  * Configuration construction options.
  */
-export interface WebCoreConfigOptions<T extends WebCoreConfig> {
+export interface WebCoreConfigOptions<T extends FoundationConfig> {
     /** Caller-owned environment construction - the only place build-time variables may appear. Receives the fetched runtime document; throw to abort boot. Pair with `createWebEnvironment` for the standard dev-chain and production required-keys behaviour. */
     readonly createEnvironment: (runtime: Readonly<Record<string, string>>) => Environment;
 
@@ -141,7 +139,7 @@ export interface WebCoreConfigOptions<T extends WebCoreConfig> {
 /**
  * HTTP client construction options.
  */
-export interface WebCoreHttpOptions<T extends WebCoreConfig> {
+export interface WebCoreHttpOptions<T extends FoundationConfig> {
     /** Preset-level interceptors; module contributions are appended after these. */
     readonly interceptors?: readonly RequestInterceptor[];
 
@@ -196,7 +194,7 @@ export interface WebCoreColorSchemeOptions {
  * Observability adapter factories; without one the local environment gets
  * console adapters and every other environment gets the null adapters.
  */
-export interface WebCoreObservabilityOptions<T extends WebCoreConfig> {
+export interface WebCoreObservabilityOptions<T extends FoundationConfig> {
     /** Error-reporter factory; wins over the environment default. */
     readonly reporter?: (settings: Readonly<T>) => ErrorReporter;
 
@@ -235,7 +233,7 @@ export interface WebCoreChunkRecoveryOptions {
 /**
  * Release monitoring options.
  */
-export interface WebCoreMonitorOptions<T extends WebCoreConfig> {
+export interface WebCoreMonitorOptions<T extends FoundationConfig> {
     /** Update-monitor options; omit to take the version-derived defaults. */
     readonly updates?: UpdateMonitorWiring<T>;
 
@@ -268,6 +266,9 @@ export interface WebCorePlatformOptions {
     /** Resolves the current time; defaults to `Date.now`. */
     readonly clock?: () => number;
 
+    /** Schedules and cancels delayed work; defaults to the global timers. */
+    readonly schedule?: ScheduleTask;
+
     /** The router history implementation; defaults to web history. */
     readonly history?: RouterHistory;
 
@@ -278,7 +279,7 @@ export interface WebCorePlatformOptions {
 /**
  * Options accepted by {@link createWebCoreApp}.
  */
-export interface WebCoreAppOptions<T extends WebCoreConfig> {
+export interface WebCoreAppOptions<T extends FoundationConfig> {
     /** Root component mounted by {@link WebCoreApp.start}. */
     readonly root: Component;
 
@@ -306,7 +307,7 @@ export interface WebCoreAppOptions<T extends WebCoreConfig> {
     /** Feature-flag provider factory; defaults to the config-driven static adapter. */
     readonly featureFlags?: (settings: Readonly<T>) => FeatureFlags;
 
-    /** Opt-in realtime connection, installed into the realtime holder and disconnected on dispose. No default - the kernel knows no endpoint. */
+    /** Opt-in realtime connection, installed into the realtime holder before the modules boot, handed to them unconnected, and disconnected on dispose. No default - the kernel knows no endpoint. */
     readonly realtime?: (settings: Readonly<T>) => RealtimeConnection;
 
     /** State-only notification services. */
@@ -363,7 +364,7 @@ export interface WebCoreServices<T> {
 /**
  * The assembled application handle returned by {@link createWebCoreApp}.
  */
-export interface WebCoreApp<T extends WebCoreConfig> {
+export interface WebCoreApp<T extends FoundationConfig> {
     /** The Vue application instance. */
     readonly app: App<Element>;
 
@@ -412,7 +413,7 @@ export interface WebCoreApp<T extends WebCoreConfig> {
 /**
  * The kernel services and Vue application produced by the foundation phases.
  */
-interface AppFoundation<T extends WebCoreConfig> {
+interface AppFoundation<T extends FoundationConfig> {
     /** The constructed runtime environment. */
     readonly environment: Environment;
 
@@ -448,16 +449,15 @@ interface AppFoundation<T extends WebCoreConfig> {
 
     /** The wired observability instances and breadcrumb trail. */
     readonly observability: WiredObservability;
+
+    /** The installed HTTP client. */
+    readonly http: HttpClient;
 }
 
 /**
- * The HTTP client, eager store handles and locale wiring from the module
- * phases.
+ * The eager store handles and locale wiring from the module phases.
  */
 interface ModuleLayer {
-    /** The installed HTTP client. */
-    readonly http: HttpClient;
-
     /** The eager store handles instantiated during boot. */
     readonly storeHandles: readonly ReturnType<ModuleStoreFactory>[];
 
@@ -486,18 +486,17 @@ interface AppIntegration {
 
     /** Runs the module boot teardowns. */
     readonly moduleTeardown: () => void;
+
+    /** The installed realtime connection, or null when none. */
+    readonly realtime: RealtimeConnection | null;
 }
 
 /**
- * The realtime connection, monitors and chunk-recovery teardown from the
- * release phases.
+ * The monitors and chunk-recovery teardown from the release phases.
  */
 interface ReleaseLayer {
     /** Removes the chunk-recovery error handler, or null when disabled. */
     readonly chunkRecoveryTeardown: (() => void) | null;
-
-    /** The installed realtime connection, or null when none. */
-    readonly realtimeConnection: RealtimeConnection | null;
 
     /** The started release monitors. */
     readonly monitors: WiredMonitors;
@@ -509,9 +508,11 @@ interface ReleaseLayer {
  * @param options - the application's modules, configuration and overrides
  * @returns the assembled application handle, ready to start
  * @throws {ModuleRegistryError} when the module list fails validation
- * @throws {WebCoreAppError} when the monitor options cannot work
+ * @throws {FoundationBootError} when the monitor options cannot work
  */
-export async function createWebCoreApp<T extends WebCoreConfig>(options: WebCoreAppOptions<T>): Promise<WebCoreApp<T>> {
+export async function createWebCoreApp<T extends FoundationConfig>(
+    options: WebCoreAppOptions<T>,
+): Promise<WebCoreApp<T>> {
     const platform = resolvePlatform(options.platform);
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
 
@@ -524,42 +525,21 @@ export async function createWebCoreApp<T extends WebCoreConfig>(options: WebCore
 }
 
 /**
- * Run the foundation phases: fetch the runtime environment, freeze the
- * configuration, install storage, feature flags and notifications, create the
- * Vue application, and resolve observability.
+ * Run the web-owned head phases - module registry, Vue application and colour
+ * scheme - then delegate the platform-agnostic core to `bootFoundationCore`,
+ * bridging the register-modules phase through its contributions callback so
+ * pinia and the registry never cross the foundation boundary.
  *
  * @param options - the application's modules, configuration and overrides
  * @param platform - the resolved platform seams
  * @param runtimeUrl - the runtime document URL
  * @returns the kernel services and application feeding the later phases
  */
-async function bootFoundation<T extends WebCoreConfig>(
+async function bootFoundation<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
 ): Promise<AppFoundation<T>> {
-    recordPhase('runtime-environment');
-
-    const runtime = await fetchRuntimeEnvironment(platform.fetchFn, runtimeUrl);
-
-    recordPhase('configuration');
-
-    const environment = options.config.createEnvironment(runtime);
-    const repository = new ConfigRepository(options.config.define(environment) as T & Record<string, unknown>);
-    const settings: Readonly<T> = repository.all();
-
-    installConfig(repository);
-
-    recordPhase('storage');
-
-    const storage = options.platform?.storage ?? new BrowserStorage(platform.targetWindow.localStorage);
-
-    installStorage(storage);
-
-    recordPhase('color-scheme');
-
-    const colorScheme = resolveColorScheme(storage, platform, options);
-
     recordPhase('module-registry');
 
     const registry = createModuleRegistry(options.modules);
@@ -571,69 +551,53 @@ async function bootFoundation<T extends WebCoreConfig>(
 
     app.use(pinia);
 
-    recordPhase('feature-flags');
+    recordPhase('color-scheme');
 
-    const flags = options.featureFlags?.(settings) ?? new StaticFeatureFlags(settings.featureFlags.flags);
-
-    installFeatureFlags(flags);
-
-    recordPhase('notifications');
+    const storage = options.platform?.storage ?? new BrowserStorage(platform.targetWindow.localStorage);
+    const colorScheme = resolveColorScheme(storage, platform, options);
 
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
 
-    installToasts(toastService);
-    installConfirm(confirmService);
+    const core = await bootFoundationCore<T>(
+        {
+            createEnvironment: options.config.createEnvironment,
+            define: options.config.define,
+            storage,
+            toasts: toastService,
+            confirm: confirmService,
+            ...(options.featureFlags === undefined ? {} : { featureFlags: options.featureFlags }),
+            ...(options.observability === undefined ? {} : { observability: options.observability }),
+            ...(options.http === undefined ? {} : { http: options.http }),
+            collectHttpContributions: ({ config, environment }) => {
+                recordPhase('register-modules');
 
-    recordPhase('observability');
+                return registerModules(registry.modules, { config, environment, storage, pinia, platform });
+            },
+            onPhase: recordPhase,
+        },
+        { fetchFn: platform.fetchFn },
+        runtimeUrl,
+    );
 
-    const observability = resolveObservability(settings, options.observability);
-
-    return {
-        environment,
-        repository,
-        settings,
-        storage,
-        colorScheme,
-        registry,
-        app,
-        pinia,
-        flags,
-        toastService,
-        confirmService,
-        observability,
-    };
+    return { ...core, storage, colorScheme, registry, app, pinia, toastService, confirmService };
 }
 
 /**
- * Run the module phases: register modules, build the HTTP client, instantiate
- * eager stores, and wire internationalisation.
+ * Run the module phases: instantiate eager stores and wire
+ * internationalisation.
  *
  * @param options - the application's modules, configuration and overrides
  * @param platform - the resolved platform seams
  * @param foundation - the services and application from the foundation phases
- * @returns the HTTP client, eager store handles and locale wiring
+ * @returns the eager store handles and locale wiring
  */
-async function bootModuleLayer<T extends WebCoreConfig>(
+async function bootModuleLayer<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
 ): Promise<ModuleLayer> {
-    const { settings, repository, environment, storage, registry, app, pinia } = foundation;
-
-    recordPhase('register-modules');
-
-    const contributions = registerModules(registry.modules, {
-        config: repository,
-        environment,
-        storage,
-        pinia,
-        platform,
-    });
-
-    recordPhase('http-client');
-
-    const http = resolveHttpClient(settings, platform.fetchFn, contributions, options.http);
+    const { settings, storage, registry, app, pinia } = foundation;
 
     recordPhase('stores');
 
@@ -647,27 +611,29 @@ async function bootModuleLayer<T extends WebCoreConfig>(
 
     app.use(i18n);
 
-    return { http, storeHandles, i18n, switcher };
+    return { storeHandles, i18n, switcher };
 }
 
 /**
  * Run the app-integration phases: wire the router, install global error
- * handling and page tracking, then boot the modules.
+ * handling and page tracking, install the realtime connection, then boot the
+ * modules with it.
  *
  * @param options - the application's modules, configuration and overrides
  * @param platform - the resolved platform seams
  * @param foundation - the services and application from the foundation phases
  * @param moduleLayer - the HTTP client and locale wiring from the module phases
- * @returns the router and the teardown handles installed by these phases
+ * @returns the router, the realtime connection and the teardown handles
+ * installed by these phases
  */
-async function wireAppIntegration<T extends WebCoreConfig>(
+async function wireAppIntegration<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
     moduleLayer: ModuleLayer,
 ): Promise<AppIntegration> {
-    const { settings, repository, storage, registry, app, pinia, observability } = foundation;
-    const { http, i18n } = moduleLayer;
+    const { settings, repository, storage, registry, app, pinia, observability, http } = foundation;
+    const { i18n } = moduleLayer;
 
     recordPhase('router');
 
@@ -695,6 +661,10 @@ async function wireAppIntegration<T extends WebCoreConfig>(
         trail: observability.trail,
     });
 
+    recordPhase('realtime');
+
+    const realtime = resolveRealtime(settings, options.realtime);
+
     recordPhase('boot-modules');
 
     const moduleTeardown = await bootModules(registry.modules, {
@@ -706,23 +676,24 @@ async function wireAppIntegration<T extends WebCoreConfig>(
         storage,
         config: repository,
         platform,
+        realtime,
     });
 
-    return { router, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, moduleTeardown };
+    return { router, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, moduleTeardown, realtime };
 }
 
 /**
- * Run the release phases: wire chunk-load recovery, connect realtime, and start
- * the update and connectivity monitors.
+ * Run the release phases: wire chunk-load recovery and start the update and
+ * connectivity monitors.
  *
  * @param options - the application's modules, configuration and overrides
  * @param platform - the resolved platform seams
  * @param runtimeUrl - the runtime document URL, the default monitor poll target
  * @param foundation - the services and application from the foundation phases
  * @param integration - the router wired by the app-integration phases
- * @returns the chunk-recovery teardown, realtime connection and monitors
+ * @returns the chunk-recovery teardown and monitors
  */
-function wireReleaseMonitors<T extends WebCoreConfig>(
+function wireReleaseMonitors<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
@@ -742,19 +713,42 @@ function wireReleaseMonitors<T extends WebCoreConfig>(
         options.monitors?.chunkRecovery,
     );
 
-    recordPhase('realtime');
-
-    const realtimeConnection = options.realtime === undefined ? null : options.realtime(settings);
-
-    if (realtimeConnection !== null) {
-        installRealtime(realtimeConnection);
-    }
-
     recordPhase('monitors');
 
     const monitors = resolveMonitors(settings, runtimeUrl, platform, options.monitors);
 
-    return { chunkRecoveryTeardown, realtimeConnection, monitors };
+    return { chunkRecoveryTeardown, monitors };
+}
+
+/**
+ * Collect the services the application handle exposes from the boot phases.
+ *
+ * @param foundation - the services and application from the foundation phases
+ * @param moduleLayer - the HTTP client, eager stores and locale wiring
+ * @param integration - the router, realtime connection and teardown handles
+ * @returns the services exposed on the application handle
+ */
+function buildServices<T extends FoundationConfig>(
+    foundation: AppFoundation<T>,
+    moduleLayer: ModuleLayer,
+    integration: AppIntegration,
+): WebCoreServices<T> {
+    const { repository, storage, colorScheme, toastService, confirmService, observability, flags } = foundation;
+
+    return {
+        config: repository,
+        http: foundation.http,
+        storage,
+        toasts: toastService,
+        confirm: confirmService,
+        reporting: observability.reporter,
+        analytics: observability.analytics,
+        logger: observability.logger,
+        featureFlags: flags,
+        localeSwitcher: moduleLayer.switcher,
+        colorScheme,
+        realtime: integration.realtime,
+    };
 }
 
 /**
@@ -762,22 +756,20 @@ function wireReleaseMonitors<T extends WebCoreConfig>(
  *
  * @param foundation - the services and application from the foundation phases
  * @param moduleLayer - the HTTP client, eager stores and locale wiring
- * @param integration - the router and teardown handles
- * @param release - the realtime connection, monitors and chunk-recovery
- * teardown
+ * @param integration - the router, realtime connection and teardown handles
+ * @param release - the monitors and chunk-recovery teardown
  * @returns the assembled application handle, ready to start
  */
-function assembleApp<T extends WebCoreConfig>(
+function assembleApp<T extends FoundationConfig>(
     foundation: AppFoundation<T>,
     moduleLayer: ModuleLayer,
     integration: AppIntegration,
     release: ReleaseLayer,
 ): WebCoreApp<T> {
-    const { app, pinia, settings, repository, storage, colorScheme, toastService, confirmService, observability, flags } =
-        foundation;
-    const { http, switcher, i18n } = moduleLayer;
+    const { app, pinia, settings, colorScheme } = foundation;
+    const { i18n } = moduleLayer;
     const { router } = integration;
-    const { realtimeConnection, monitors } = release;
+    const { monitors } = release;
 
     let disposed = false;
 
@@ -787,20 +779,7 @@ function assembleApp<T extends WebCoreConfig>(
         pinia,
         i18n,
         config: settings,
-        services: {
-            config: repository,
-            http,
-            storage,
-            toasts: toastService,
-            confirm: confirmService,
-            reporting: observability.reporter,
-            analytics: observability.analytics,
-            logger: observability.logger,
-            featureFlags: flags,
-            localeSwitcher: switcher,
-            colorScheme,
-            realtime: realtimeConnection,
-        },
+        services: buildServices(foundation, moduleLayer, integration),
         monitors,
         async start(selector: string | Element = DEFAULT_MOUNT_SELECTOR): Promise<void> {
             await router.isReady();
@@ -826,9 +805,9 @@ function assembleApp<T extends WebCoreConfig>(
  * OS-change listener.
  *
  * @param moduleLayer - the eager store handles to dispose
- * @param integration - the module boot and page, error and title teardowns
- * @param release - the monitors, realtime connection and chunk-recovery
- * teardown
+ * @param integration - the realtime connection, and the module boot, page,
+ * error and title teardowns
+ * @param release - the monitors and chunk-recovery teardown
  * @param colorScheme - the colour-scheme service to dispose
  */
 function teardownApp(
@@ -838,12 +817,12 @@ function teardownApp(
     colorScheme: ColorSchemeService,
 ): void {
     const { storeHandles } = moduleLayer;
-    const { moduleTeardown, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown } = integration;
-    const { chunkRecoveryTeardown, realtimeConnection, monitors } = release;
+    const { moduleTeardown, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, realtime } = integration;
+    const { chunkRecoveryTeardown, monitors } = release;
 
     monitors.connectivity?.stop();
     monitors.updates?.stop();
-    realtimeConnection?.disconnect();
+    realtime?.disconnect();
     chunkRecoveryTeardown?.();
     moduleTeardown();
 
@@ -869,26 +848,8 @@ function resolvePlatform(platform: WebCorePlatformOptions | undefined): Resolved
         targetWindow: platform?.targetWindow ?? globalThis.window,
         targetDocument: platform?.targetDocument ?? globalThis.document,
         clock: platform?.clock ?? ((): number => Date.now()),
+        schedule: platform?.schedule ?? scheduleOnTimers,
     };
-}
-
-/**
- * Resolve and install the observability services.
- *
- * @param settings - the frozen application configuration
- * @param factories - the caller's adapter factories, when any were provided
- * @returns the installed instances plus the breadcrumb trail
- */
-function resolveObservability<T extends WebCoreConfig>(
-    settings: Readonly<T>,
-    factories: WebCoreObservabilityOptions<T> | undefined,
-): WiredObservability {
-    return wireObservability({
-        config: settings,
-        ...(factories?.reporter === undefined ? {} : { reporter: factories.reporter }),
-        ...(factories?.analytics === undefined ? {} : { analytics: factories.analytics }),
-        ...(factories?.logger === undefined ? {} : { logger: factories.logger }),
-    });
 }
 
 /**
@@ -899,7 +860,7 @@ function resolveObservability<T extends WebCoreConfig>(
  * @param options - the full boot options carrying the colour-scheme seams
  * @returns the installed colour-scheme service
  */
-function resolveColorScheme<T extends WebCoreConfig>(
+function resolveColorScheme<T extends FoundationConfig>(
     storage: KeyValueStorage,
     platform: ResolvedPlatform,
     options: WebCoreAppOptions<T>,
@@ -917,34 +878,6 @@ function resolveColorScheme<T extends WebCoreConfig>(
 }
 
 /**
- * Build and install the application HTTP client.
- *
- * @param settings - the frozen application configuration
- * @param fetchFn - the resolved fetch seam
- * @param contributions - the register phase's module HTTP contributions
- * @param http - the caller's HTTP options, when any were provided
- * @returns the installed HTTP client
- */
-function resolveHttpClient<T extends WebCoreConfig>(
-    settings: Readonly<T>,
-    fetchFn: typeof fetch,
-    contributions: ModuleHttpContributions,
-    http: WebCoreHttpOptions<T> | undefined,
-): HttpClient {
-    return wireHttpClient({
-        config: settings,
-        fetchFn,
-        contributions,
-        ...(http?.interceptors === undefined ? {} : { interceptors: http.interceptors }),
-        ...(http?.onResponseError === undefined ? {} : { onResponseError: http.onResponseError }),
-        ...(http?.unexpectedErrorToastKey === undefined
-            ? {}
-            : { unexpectedErrorToastKey: http.unexpectedErrorToastKey }),
-        ...(http?.client === undefined ? {} : { client: http.client }),
-    });
-}
-
-/**
  * Wire internationalisation and install the locale switcher.
  *
  * @param settings - the frozen application configuration
@@ -954,7 +887,7 @@ function resolveHttpClient<T extends WebCoreConfig>(
  * @param options - the full boot options carrying the i18n and locale seams
  * @returns the i18n instance and the installed locale switcher
  */
-function resolveLocale<T extends WebCoreConfig>(
+function resolveLocale<T extends FoundationConfig>(
     settings: Readonly<T>,
     modules: readonly ModuleDefinition[],
     storage: KeyValueStorage,
@@ -976,6 +909,29 @@ function resolveLocale<T extends WebCoreConfig>(
         localeCandidates: options.platform?.localeCandidates ?? [...platform.targetWindow.navigator.languages],
         targetDocument: platform.targetDocument,
     });
+}
+
+/**
+ * Build the opt-in realtime connection and install it into the realtime holder,
+ * unconnected.
+ *
+ * @param settings - the frozen application configuration
+ * @param factory - the caller's realtime connection factory, when any
+ * @returns the installed connection, or null when none was configured
+ */
+function resolveRealtime<T extends FoundationConfig>(
+    settings: Readonly<T>,
+    factory: ((settings: Readonly<T>) => RealtimeConnection) | undefined,
+): RealtimeConnection | null {
+    if (factory === undefined) {
+        return null;
+    }
+
+    const connection = factory(settings);
+
+    installRealtime(connection);
+
+    return connection;
 }
 
 /**
@@ -1015,7 +971,7 @@ function resolveChunkRecovery(
  * @param monitors - the caller's monitor options, when any were provided
  * @returns the started monitors, each null when disabled
  */
-function resolveMonitors<T extends WebCoreConfig>(
+function resolveMonitors<T extends FoundationConfig>(
     settings: Readonly<T>,
     runtimeUrl: string,
     platform: ResolvedPlatform,

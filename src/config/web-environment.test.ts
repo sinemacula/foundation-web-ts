@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { Environment } from './environment';
+import { Environment } from '@sinemacula/foundation/config/environment';
 import { ConfigurationError, createWebEnvironment } from './web-environment';
 
 /**
@@ -187,6 +187,9 @@ describe('createWebEnvironment in production', () => {
     });
 
     it('throws ConfigurationError naming the single missing key', () => {
+        /**
+         * Build an environment missing one required key.
+         */
         const build = (): void => {
             createWebEnvironment({
                 runtime: wire([['API_URL', 'https://api.example.com']]),

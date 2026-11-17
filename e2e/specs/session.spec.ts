@@ -20,7 +20,7 @@ test.describe('token refresh', () => {
         const refreshRequestCount = await mockAuthRefreshSuccess(page);
 
         const refreshRequest = page.waitForRequest(
-            request => request.method() === 'PATCH' && request.url().includes('/auth'),
+            request => request.method() === 'POST' && request.url().endsWith('/auth/refresh'),
         );
 
         await page.goto('/');

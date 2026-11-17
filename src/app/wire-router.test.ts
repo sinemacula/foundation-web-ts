@@ -13,12 +13,13 @@ import type { ApplicationI18n } from '../i18n/application-i18n';
 import { createApplicationI18n } from '../i18n/application-i18n';
 import type { ModuleDefinition } from '../module/module';
 import type { RouteMiddleware } from '../router/middleware';
-import { next, redirect } from '../router/middleware';
+import { next, redirect } from '@sinemacula/foundation/router/middleware';
 import type { WireRouterOptions } from './wire-router';
 import { wireRouter } from './wire-router';
 
 const EmptyComponent = defineComponent({ render: () => null });
 
+/** Build an i18n instance with a single en-US page title message. */
 function buildI18n(): ApplicationI18n {
     const i18n = createApplicationI18n('en-US');
 
@@ -27,6 +28,7 @@ function buildI18n(): ApplicationI18n {
     return i18n;
 }
 
+/** Build router wiring options for the given modules, with overrides. */
 function baseOptions(
     modules: readonly ModuleDefinition[],
     overrides: Partial<WireRouterOptions> = {},

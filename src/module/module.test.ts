@@ -5,13 +5,19 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent } from 'vue';
 
 import type { RouteMiddleware } from '../router/middleware';
-import { next } from '../router/middleware';
+import { next } from '@sinemacula/foundation/router/middleware';
 import type { ModuleDefinition } from './module';
-import { collectModuleGuards, collectModuleMessages, collectModuleRoutes, createLocaleLoader } from './module';
+import {
+    collectModuleGuards,
+    collectModuleMessages,
+    collectModuleRoutes,
+    createLocaleLoader,
+    scheduleOnTimers,
+} from './module';
 
 const EmptyComponent = defineComponent({ render: () => null });
 
@@ -42,6 +48,35 @@ describe('createLocaleLoader', () => {
         const result = await loader('fr-FR');
 
         expect(result).toBeNull();
+    });
+});
+
+describe('scheduleOnTimers', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('runs the task once its delay elapses', () => {
+        const task = vi.fn();
+
+        vi.useFakeTimers();
+        scheduleOnTimers(task, 100);
+
+        vi.advanceTimersByTime(99);
+        expect(task).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(task).toHaveBeenCalledTimes(1);
+    });
+
+    it('never runs a cancelled task', () => {
+        const task = vi.fn();
+
+        vi.useFakeTimers();
+        scheduleOnTimers(task, 100)();
+
+        vi.advanceTimersByTime(100);
+        expect(task).not.toHaveBeenCalled();
     });
 });
 

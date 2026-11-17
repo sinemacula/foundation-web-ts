@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ToastService } from '../notifications/toast-service';
 import type { UpdateMonitor } from '../updates/update-monitor';
-import { WebCoreAppError } from './web-core-app-error';
+import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
 import type { MonitorWiringSettings, WireMonitorsOptions } from './wire-monitors';
 import { wireMonitors } from './wire-monitors';
 
@@ -32,6 +32,7 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/** Build a version-endpoint response reporting the given version. */
 function versionResponse(version: string): Response {
     return new Response(JSON.stringify(wire([['APP_VERSION', version]])), {
         status: 200,
@@ -39,6 +40,7 @@ function versionResponse(version: string): Response {
     });
 }
 
+/** Build a fetch spy that always answers with the given deployed version. */
 function makeFetch(version: string) {
     return vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
         versionResponse(version),
@@ -46,13 +48,23 @@ function makeFetch(version: string) {
 }
 
 interface Harness {
+    /** The settings passed to the wiring. */
     readonly settings: MonitorWiringSettings;
+
+    /** The toast service the monitors notify through. */
     readonly service: ToastService;
+
+    /** Resolve the toast service. */
     readonly toasts: () => ToastService;
+
+    /** The fetch spy used to poll the deployed version. */
     readonly fetchFn: ReturnType<typeof makeFetch>;
+
+    /** The options passed to the wiring. */
     readonly options: WireMonitorsOptions<MonitorWiringSettings>;
 }
 
+/** Build the wiring options and collaborators shared by the monitor tests. */
 function makeHarness(
     overrides: Partial<WireMonitorsOptions<MonitorWiringSettings>> = {},
     deployedVersion = '2.0.0',
@@ -241,18 +253,18 @@ describe('wireMonitors update monitoring', () => {
     it('throws when enabled is explicitly true with no way to surface updates', () => {
         const { options } = makeHarness({ updates: { enabled: true } });
 
-        expect(() => wireMonitors(options)).toThrowError(WebCoreAppError);
+        expect(() => wireMonitors(options)).toThrowError(FoundationBootError);
         expect(() => wireMonitors(options)).toThrow(THROW_MESSAGE);
     });
 
-    it('names the error WebCoreAppError', () => {
+    it('names the error FoundationBootError', () => {
         const { options } = makeHarness({ updates: { enabled: true } });
 
         try {
             wireMonitors(options);
             expect.unreachable('wireMonitors must throw');
         } catch (error) {
-            expect((error as Error).name).toBe('WebCoreAppError');
+            expect((error as Error).name).toBe('FoundationBootError');
         }
     });
 
