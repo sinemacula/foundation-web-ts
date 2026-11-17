@@ -49,6 +49,32 @@ describe('usePagination', () => {
             expect(pageCount.value).toBe(expected);
         });
 
+        it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+            'counts one page for the non-finite total %s',
+            total => {
+                const { page, pageCount, goTo } = usePagination({ total: ref(total), perPage: 10 });
+
+                goTo(5);
+
+                expect(pageCount.value).toBe(1);
+                expect(page.value).toBe(1);
+            },
+        );
+
+        it('stops at the last page a safe offset reaches', () => {
+            const { page, pageCount, offset, goTo, next } = usePagination({
+                total: ref(Number.MAX_SAFE_INTEGER),
+                perPage: 2,
+            });
+
+            goTo(Number.MAX_SAFE_INTEGER);
+            next();
+
+            expect(pageCount.value).toBe(Math.floor(Number.MAX_SAFE_INTEGER / 2));
+            expect(page.value).toBe(pageCount.value);
+            expect(offset.value).toBe(Number.MAX_SAFE_INTEGER - 3);
+        });
+
         it('reacts when total changes', () => {
             const total = ref(100);
             const { pageCount } = usePagination({ total, perPage: 10 });
@@ -226,10 +252,17 @@ describe('usePagination', () => {
             expect(page.value).toBe(expected);
         });
 
-        it.each([0, -5, 2.5, Number.NaN])('rejects perPage %s', perPage => {
+        it.each([0, -5, 2.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])('rejects perPage %s', perPage => {
             expect(() => usePagination({ total: ref(100), perPage })).toThrow(
-                new RangeError(`perPage must be a positive integer, received ${perPage}.`),
+                new RangeError(`perPage must be a positive safe integer, received ${perPage}.`),
             );
+        });
+
+        it('clamps initialPage to the last page a safe offset reaches', () => {
+            const { page, offset } = usePagination({ total: ref(100), perPage: 10, initialPage: 1e20 });
+
+            expect(page.value).toBe(Math.floor(Number.MAX_SAFE_INTEGER / 10));
+            expect(Number.isSafeInteger(offset.value)).toBe(true);
         });
 
         it('accepts a single item per page', () => {
