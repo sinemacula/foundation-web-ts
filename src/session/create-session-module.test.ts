@@ -222,6 +222,28 @@ describe('createSessionModule', () => {
             expect(target.observability.warnings).toStrictEqual([]);
         });
 
+        it('surfaces a write failure of the given persistence over a blocked localStorage', async () => {
+            const failure = new Error('secure store unavailable');
+            const inner = new KeyValueSessionPersistence(new MemoryStorage());
+            const target = harness(
+                {
+                    persistence: () => ({
+                        load: () => inner.load(),
+                        saveIf: () => Promise.reject(failure),
+                        clearIf: revision => inner.clearIf(revision),
+                    }),
+                    crossTabSync: false,
+                },
+                { storageBlocked: true },
+            );
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+
+            await expect(target.store().login({ email: 'a', password: 'b' })).rejects.toBe(failure);
+            expect(target.store().isAuthenticated).toBe(false);
+            expect(target.observability.warnings).toStrictEqual([]);
+        });
+
         it('surfaces a failure of the given persistence rather than falling back', () => {
             const failure = new Error('secure store unavailable');
 
