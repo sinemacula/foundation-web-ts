@@ -20,6 +20,7 @@ import type {
     LocaleMessages,
     ModuleBootContext,
     ModuleDefinition,
+    ModuleHttpRegistrar,
     ModuleRegisterContext,
     ResolvedPlatform,
 } from './module';
@@ -30,6 +31,7 @@ import {
     createModuleRegistry,
     registerModules,
 } from './module-registry';
+import { TeardownStack } from './teardown-stack';
 
 const EmptyComponent = defineComponent({ render: () => null });
 
@@ -392,14 +394,99 @@ describe('registerModules', () => {
             'Modules "session" and "session" both set the unauthorized handler; only one refresh authority is allowed.',
         );
     });
+
+    it('rejects an async register hook before running later hooks', async () => {
+        const later = vi.fn();
+        const settled = deferred<undefined>();
+        const modules: ModuleDefinition[] = [
+            {
+                name: 'session',
+                routes: [],
+                register: async ({ http }) => {
+                    await settled.promise;
+                    http.setUnauthorizedHandler(async () => true);
+                },
+            },
+            { name: 'other', routes: [], register: later },
+        ];
+
+        expect(() => registerModules(modules, createRegisterContext())).toThrow(
+            new ModuleRegistryError(
+                'Module "session" has an async register hook; register hooks must contribute synchronously.',
+            ),
+        );
+        expect(later).not.toHaveBeenCalled();
+
+        settled.resolve(undefined);
+        await settled.promise;
+    });
+
+    it.each([
+        ['addRequestInterceptor', (http: ModuleHttpRegistrar) => http.addRequestInterceptor(request => request)],
+        ['setUnauthorizedHandler', (http: ModuleHttpRegistrar) => http.setUnauthorizedHandler(async () => true)],
+        ['addResponseErrorHandler', (http: ModuleHttpRegistrar) => http.addResponseErrorHandler(() => undefined)],
+    ])('rejects %s once the register hook has returned', (_label, contribute) => {
+        let retained: ModuleHttpRegistrar | null = null;
+        const contributions = registerModules(
+            [
+                {
+                    name: 'late',
+                    routes: [],
+                    register: ({ http }) => {
+                        retained = http;
+                    },
+                },
+            ],
+            createRegisterContext(),
+        );
+
+        expect(() => {
+            contribute(retained as unknown as ModuleHttpRegistrar);
+        }).toThrow(
+            new ModuleRegistryError(
+                'Module "late" contributed after its register hook returned; ' +
+                    'register hooks must contribute synchronously.',
+            ),
+        );
+        expect(contributions).toStrictEqual({
+            requestInterceptors: [],
+            onUnauthorized: null,
+            responseErrorHandlers: [],
+        });
+    });
+
+    it('closes a registrar even when its register hook throws', () => {
+        let retained: ModuleHttpRegistrar | null = null;
+        const failure = new Error('register failed');
+
+        expect(() =>
+            registerModules(
+                [
+                    {
+                        name: 'broken',
+                        routes: [],
+                        register: ({ http }) => {
+                            retained = http;
+                            throw failure;
+                        },
+                    },
+                ],
+                createRegisterContext(),
+            ),
+        ).toThrow(failure);
+        expect(() => {
+            (retained as unknown as ModuleHttpRegistrar).addRequestInterceptor(request => request);
+        }).toThrow(ModuleRegistryError);
+    });
 });
 
 describe('bootModules', () => {
-    it('resolves a callable no-op teardown when no module boots', async () => {
-        const teardown = await bootModules([{ name: 'plain', routes: [] }], createBootContext());
+    it('pushes nothing when no module boots', async () => {
+        const teardowns = new TeardownStack();
 
-        expect(typeof teardown).toBe('function');
-        expect(() => teardown()).not.toThrow();
+        await bootModules([{ name: 'plain', routes: [] }], createBootContext(), teardowns);
+
+        expect(teardowns.drain()).toStrictEqual([]);
     });
 
     it('passes the boot context to every boot hook exactly once', async () => {
@@ -413,6 +500,7 @@ describe('bootModules', () => {
                 { name: 'beta', routes: [], boot: bootB },
             ],
             context,
+            new TeardownStack(),
         );
 
         expect(bootA).toHaveBeenCalledOnce();
@@ -424,16 +512,16 @@ describe('bootModules', () => {
     it('skips modules without a boot hook', async () => {
         const boot = vi.fn();
 
-        const teardown = await bootModules(
+        await bootModules(
             [
                 { name: 'plain', routes: [] },
                 { name: 'booted', routes: [], boot },
             ],
             createBootContext(),
+            new TeardownStack(),
         );
 
         expect(boot).toHaveBeenCalledOnce();
-        expect(() => teardown()).not.toThrow();
     });
 
     it('awaits each boot before starting the next', async () => {
@@ -463,7 +551,7 @@ describe('bootModules', () => {
             },
         ];
 
-        const pending = bootModules(modules, createBootContext());
+        const pending = bootModules(modules, createBootContext(), new TeardownStack());
 
         expect(order).toStrictEqual(['alpha:start']);
 
@@ -473,89 +561,80 @@ describe('bootModules', () => {
         expect(order).toStrictEqual(['alpha:start', 'alpha:end', 'beta:start']);
     });
 
-    it('composes returned teardowns into one LIFO disposal', async () => {
+    it('pushes returned teardowns so the stack disposes them LIFO, skipping undefined', async () => {
         const order: string[] = [];
+        const teardowns = new TeardownStack();
 
         const modules: ModuleDefinition[] = [
             { name: 'alpha', routes: [], boot: () => () => order.push('alpha') },
             { name: 'beta', routes: [], boot: async () => () => order.push('beta') },
-            { name: 'gamma', routes: [], boot: () => () => order.push('gamma') },
+            { name: 'gamma', routes: [], boot: () => undefined },
+            { name: 'delta', routes: [], boot: () => () => order.push('delta') },
         ];
 
-        const teardown = await bootModules(modules, createBootContext());
+        await bootModules(modules, createBootContext(), teardowns);
 
         expect(order).toStrictEqual([]);
 
-        teardown();
+        teardowns.dispose();
 
-        expect(order).toStrictEqual(['gamma', 'beta', 'alpha']);
+        expect(order).toStrictEqual(['delta', 'beta', 'alpha']);
     });
 
-    it('ignores boots that return undefined when composing the teardown', async () => {
+    it('still runs the earlier teardowns when a later one throws', async () => {
         const order: string[] = [];
-
-        const modules: ModuleDefinition[] = [
-            { name: 'alpha', routes: [], boot: () => () => order.push('alpha') },
-            { name: 'beta', routes: [], boot: () => undefined },
-        ];
-
-        const teardown = await bootModules(modules, createBootContext());
-
-        teardown();
-
-        expect(order).toStrictEqual(['alpha']);
-    });
-
-    it('tears down already-booted modules in LIFO order and rethrows when a boot rejects', async () => {
-        const order: string[] = [];
-        const failure = new Error('gamma failed to boot');
-
-        const modules: ModuleDefinition[] = [
-            { name: 'alpha', routes: [], boot: () => () => order.push('alpha') },
-            { name: 'beta', routes: [], boot: () => () => order.push('beta') },
-            {
-                name: 'gamma',
-                routes: [],
-                boot: () => Promise.reject(failure),
-            },
-            { name: 'delta', routes: [], boot: vi.fn() },
-        ];
-
-        await expect(bootModules(modules, createBootContext())).rejects.toThrow('gamma failed to boot');
-
-        expect(order).toStrictEqual(['beta', 'alpha']);
-        expect(modules[3]?.boot).not.toHaveBeenCalled();
-    });
-
-    it('tears down already-booted modules when a boot throws synchronously', async () => {
-        const order: string[] = [];
+        const failure = new Error('beta teardown failed');
+        const teardowns = new TeardownStack();
 
         const modules: ModuleDefinition[] = [
             { name: 'alpha', routes: [], boot: () => () => order.push('alpha') },
             {
                 name: 'beta',
                 routes: [],
-                boot: () => {
-                    throw new Error('beta exploded');
+                boot: () => () => {
+                    throw failure;
                 },
             },
+            { name: 'gamma', routes: [], boot: () => () => order.push('gamma') },
         ];
 
-        await expect(bootModules(modules, createBootContext())).rejects.toThrow('beta exploded');
+        await bootModules(modules, createBootContext(), teardowns);
 
-        expect(order).toStrictEqual(['alpha']);
+        expect(() => {
+            teardowns.dispose();
+        }).toThrow(failure);
+        expect(order).toStrictEqual(['gamma', 'alpha']);
     });
 
-    it('rethrows without running any teardown when the first boot rejects', async () => {
-        const modules: ModuleDefinition[] = [
-            {
-                name: 'alpha',
-                routes: [],
-                boot: () => Promise.reject(new Error('alpha failed to boot')),
+    it.each([
+        ['rejects', (failure: Error) => () => Promise.reject(failure)],
+        [
+            'throws synchronously',
+            (failure: Error) => () => {
+                throw failure;
             },
+        ],
+    ])('rethrows when a boot %s, leaving the booted modules on the stack', async (_label, failing) => {
+        const order: string[] = [];
+        const failure = new Error('gamma failed to boot');
+        const teardowns = new TeardownStack();
+        const delta = vi.fn();
+
+        const modules: ModuleDefinition[] = [
+            { name: 'alpha', routes: [], boot: () => () => order.push('alpha') },
+            { name: 'beta', routes: [], boot: () => () => order.push('beta') },
+            { name: 'gamma', routes: [], boot: failing(failure) },
+            { name: 'delta', routes: [], boot: delta },
         ];
 
-        await expect(bootModules(modules, createBootContext())).rejects.toThrow('alpha failed to boot');
+        await expect(bootModules(modules, createBootContext(), teardowns)).rejects.toBe(failure);
+
+        expect(order).toStrictEqual([]);
+        expect(delta).not.toHaveBeenCalled();
+
+        teardowns.dispose();
+
+        expect(order).toStrictEqual(['beta', 'alpha']);
     });
 });
 

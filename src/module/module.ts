@@ -173,7 +173,7 @@ export interface ModuleDefinition {
     /** Stores instantiated in registry order after pinia and storage install, before i18n and the router; a `useXStore` hook fits directly. */
     readonly stores?: readonly ModuleStoreFactory[];
 
-    /** Contributes HTTP interceptors and handlers, synchronously, before the client is built. */
+    /** Contributes HTTP interceptors and handlers, synchronously, before the client is built; an async hook fails boot. */
     readonly register?: (context: ModuleRegisterContext) => void;
 
     /** Installs module runtime behaviour after router creation, before mount; may return a teardown for whatever it installed. */
