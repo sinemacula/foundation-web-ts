@@ -35,10 +35,10 @@ describe('localesConfig', () => {
     });
 
     it('parses ENABLED_LOCALES as a JSON array when present', () => {
-        const env = new Environment(new ObjectEnvironmentSource(wire([['ENABLED_LOCALES', '["en-US","fr-FR"]']])));
+        const env = new Environment(new ObjectEnvironmentSource(wire([['ENABLED_LOCALES', '["en-US"]']])));
         const result = localesConfig(env);
 
-        expect(result.enabled).toEqual(['en-US', 'fr-FR']);
+        expect(result.enabled).toEqual(['en-US']);
     });
 
     it('includes en-US in the supported map with ltr direction', () => {

@@ -8,7 +8,9 @@
 import { installColorScheme } from '@sinemacula/web-core/app/services';
 import { Environment } from '@sinemacula/foundation/config/environment';
 import { ObjectEnvironmentSource } from '@sinemacula/foundation/config/object-environment-source';
+import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
+import { ConfirmService } from '@sinemacula/web-core/notifications/confirm-service';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { sessionContext } from '@sinemacula/web-core/session/session-context';
 import { useSessionStore } from '@sinemacula/web-core/session/session-store';
@@ -23,6 +25,8 @@ import { AUTH_ROUTE_NAMES } from '@/modules/auth/route-names';
 import DashboardView from '@/modules/dashboard/views/dashboard-view.vue';
 import { initialiseApi, resetApi } from '@/services/api';
 import { initialiseConfiguration, resetConfiguration } from '@/services/config';
+import { initialiseConfirm, resetConfirm } from '@/services/confirm';
+import { initialiseFeatureFlags } from '@/services/feature-flags';
 import { initialiseLocaleSwitcher, resetLocaleSwitcher } from '@/services/locale';
 import { initialiseStorage, resetStorage } from '@/services/storage';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
@@ -97,8 +101,22 @@ function mountDashboardView(): MountedDashboardView {
     };
 }
 
+/**
+ * Click the header sign-out button inside the given container.
+ */
+function clickSignOut(container: HTMLDivElement): void {
+    const signOutButton = container.querySelector('.sm-button');
+
+    if (signOutButton === null) {
+        throw new Error('sign-out button not found');
+    }
+
+    signOutButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
 describe('DashboardView', () => {
     let storage: MemoryStorage;
+    let confirmations: ConfirmService;
 
     beforeEach(() => {
         storage = new MemoryStorage();
@@ -115,6 +133,9 @@ describe('DashboardView', () => {
         initialiseConfiguration(new Environment(new ObjectEnvironmentSource(wire([['APP_NAME', 'TestApp']]))));
         initialiseLocaleSwitcher(stubLocaleSwitcher);
         installColorScheme(stubColorScheme);
+        confirmations = new ConfirmService();
+        initialiseConfirm(confirmations);
+        initialiseFeatureFlags(new StaticFeatureFlags());
         setActivePinia(createPinia());
     });
 
@@ -124,6 +145,7 @@ describe('DashboardView', () => {
         resetConfiguration();
         resetLocaleSwitcher();
         resetSessionContext();
+        resetConfirm();
     });
 
     it('renders the dashboard card', () => {
@@ -134,7 +156,40 @@ describe('DashboardView', () => {
         unmount();
     });
 
-    it('signs out of the session and navigates to login', async () => {
+    it.each([
+        ['shows', true, 1],
+        ['hides', false, 0],
+    ])('%s the new dashboard preview notice by its feature flag', (_case, enabled, expected) => {
+        initialiseFeatureFlags(new StaticFeatureFlags(Object.fromEntries([['new-dashboard', enabled]])));
+
+        const { container, unmount } = mountDashboardView();
+
+        expect(container.querySelectorAll('.dashboard__preview')).toHaveLength(expected);
+
+        unmount();
+    });
+
+    it('asks for confirmation before signing out', async () => {
+        const fake = new FakeHttpClient();
+
+        initialiseApi(fake);
+
+        const { container, router, unmount } = mountDashboardView();
+
+        await router.isReady();
+        clickSignOut(container);
+
+        expect(confirmations.active.value).toMatchObject({
+            title: 'dashboard.signOut.title',
+            message: 'dashboard.signOut.message',
+            confirmLabel: 'common.actions.signOut',
+        });
+        expect(fake.calls).toEqual([]);
+
+        unmount();
+    });
+
+    it('signs out of the session and navigates to login once confirmed', async () => {
         const fake = new FakeHttpClient();
 
         initialiseApi(fake);
@@ -148,22 +203,46 @@ describe('DashboardView', () => {
 
         const pushSpy = vi.spyOn(router, 'push');
 
-        const signOutButton = container.querySelector('.sm-button');
-
-        if (signOutButton === null) {
-            throw new Error('sign-out button not found');
-        }
-
-        signOutButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        clickSignOut(container);
+        confirmations.settle(true);
 
         await new Promise<void>(resolve => setTimeout(resolve, 50));
 
         expect(pushSpy).toHaveBeenCalledWith({ name: AUTH_ROUTE_NAMES.login });
         expect(fake.calls).toEqual([
-            { method: 'POST', path: 'auth/logout', body: wire([['refresh_token', 'refresh-token']]) },
+            {
+                method: 'POST',
+                path: 'auth/logout',
+                body: wire([['refresh_token', 'refresh-token']]),
+                options: { notifyOnError: false, retryOnUnauthorized: false },
+            },
         ]);
         expect(useSessionStore().isAuthenticated).toBe(false);
         expect(JSON.parse(storage.get(SESSION_KEY) ?? 'null')).toEqual({ revision: 2, tokens: null });
+
+        unmount();
+    });
+
+    it('stays signed in when the confirmation is cancelled', async () => {
+        const fake = new FakeHttpClient();
+
+        initialiseApi(fake);
+
+        const { container, router, unmount } = mountDashboardView();
+
+        await router.isReady();
+        await sessionContext().ready();
+
+        const pushSpy = vi.spyOn(router, 'push');
+
+        clickSignOut(container);
+        confirmations.settle(false);
+
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+
+        expect(pushSpy).not.toHaveBeenCalled();
+        expect(fake.calls).toEqual([]);
+        expect(useSessionStore().isAuthenticated).toBe(true);
 
         unmount();
     });

@@ -22,7 +22,7 @@ All scripts run from the repository root; `dev`, `build`, `preview` and `size` p
 | `npm run build`    | Production build and error pages to `playground/dist/` |
 | `npm run preview`  | Serve the production build locally                     |
 | `npm run test:e2e` | Playwright end-to-end suite against this app           |
-| `npm run size`     | size-limit budgets over the built `dist/assets/*`      |
+| `npm run size`     | Gzip budgets: first paint, login route, whole build    |
 
 The root `typecheck`, `test`, `test:coverage`, `test:mutation`, `check` and `deadcode` scripts cover this
 workspace's source alongside the kernel's.
@@ -56,7 +56,8 @@ scripts/
   generate-error-pages.mjs  Writes static HTTP error pages to dist/errors/ after each build
   generate-runtime-env.mjs  Renders runtime-env.json at deploy time
 src/
-  main.ts                   Entry point and composition root - one createWebCoreApp call, then mount
+  main.ts                   Entry point - boots the app with the build's env and mounts it, or renders the failure
+  boot.ts                   Composition root - one createWebCoreApp call - and the boot failure notice
   App.vue                   Application root: router outlet, progress, error panel, notification hosts
   assets/                   Global styles (theme tokens + app layer)
   config/                   Laravel-style typed configuration definitions
@@ -75,9 +76,9 @@ For what lives in the kernel itself, see the [root README](../README.md).
 
 ## Boot sequence
 
-`src/main.ts` is the whole composition root: one `createWebCoreApp` call, then `app.start('#app')`. The phase
-sequence is kernel-owned and documented in the [root README](../README.md#bootstrapping-an-application); this
-app supplies only its own inputs:
+`src/boot.ts` is the whole composition root: one `createWebCoreApp` call, which `src/main.ts` makes with the build's
+`import.meta.env` before `app.start('#app')`. The phase sequence is kernel-owned and documented in the
+[root README](../README.md#bootstrapping-an-application); this app supplies only its own inputs:
 
 - Configuration: `createWebEnvironment` over the fetched `/runtime-env.json`. In development, `VITE_*`
   variables are chained behind the runtime document as a fallback; in production the document must contain
@@ -89,9 +90,10 @@ app supplies only its own inputs:
 - Application copy: the two toast keys the kernel never defaults, `common.states.error` for unexpected HTTP
   failures and `common.updates.available` for the update monitor.
 
-A failed boot renders a static message into the mount node instead of mounting. `src/boot.test.ts` drives
-`createWebCoreApp` through the kernel's platform seams (fake fetch, memory storage, memory history) to pin
-what is app-specific about this composition; the phase machinery is covered by the kernel's own suite.
+A failed boot renders a static message into the mount node instead of mounting, with the error's message only in
+development. `src/boot.test.ts` drives the same composition through the kernel's platform seams (fake fetch, memory
+storage, memory history) to pin what is app-specific about it; the phase machinery is covered by the kernel's own
+suite.
 
 ## Configuration (runtime, not build time)
 

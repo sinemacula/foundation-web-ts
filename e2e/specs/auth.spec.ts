@@ -106,6 +106,7 @@ test.describe('authentication', () => {
 
         await dashboardPage.goto();
         await dashboardPage.signOutButton.click();
+        await page.getByRole('alertdialog').getByRole('button', { name: 'Sign out' }).click();
 
         await expect(loginPage.heading).toBeVisible();
         await expect(page).toHaveURL(/\/login$/u);

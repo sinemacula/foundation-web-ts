@@ -87,8 +87,10 @@
     --sm-accent-secondary: var(--sm-secondary-600);
     --sm-accent-secondary-hover: var(--sm-secondary-500);
     --sm-on-accent: var(--sm-neutral-0);
+    --sm-on-accent-secondary: var(--sm-primary-900);
     --sm-danger: var(--sm-error);
     --sm-danger-hover: var(--sm-error-strong);
+    --sm-danger-text: var(--sm-error);
     --sm-status-success: var(--sm-success);
     --sm-status-error: var(--sm-error);
     --sm-status-information: var(--sm-information);
@@ -135,6 +137,7 @@
     --sm-on-accent: var(--sm-neutral-0);
     --sm-danger: var(--sm-error-strong);
     --sm-danger-hover: var(--sm-error);
+    --sm-danger-text: var(--sm-error-soft);
     --sm-status-success: var(--sm-success-strong);
     --sm-status-error: var(--sm-error-strong);
     --sm-status-information: var(--sm-information-strong);
@@ -163,6 +166,7 @@
         --sm-on-accent: var(--sm-neutral-0);
         --sm-danger: var(--sm-error-strong);
         --sm-danger-hover: var(--sm-error);
+        --sm-danger-text: var(--sm-error-soft);
         --sm-status-success: var(--sm-success-strong);
         --sm-status-error: var(--sm-error-strong);
         --sm-status-information: var(--sm-information-strong);

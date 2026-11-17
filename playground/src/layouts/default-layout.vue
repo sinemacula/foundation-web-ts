@@ -7,6 +7,7 @@
 -->
 
 <script setup lang="ts">
+import { useCan } from '@sinemacula/web-core/session/authorization';
 import { useI18n } from 'vue-i18n';
 
 import LocaleSwitcher from '@/components/locale-switcher.vue';
@@ -15,6 +16,7 @@ import { config } from '@/services/config';
 
 const { t } = useI18n();
 const appName = config().app.name;
+const can = useCan();
 </script>
 
 <template>
@@ -24,7 +26,7 @@ const appName = config().app.name;
                 <span class="default-layout__brand">{{ appName }}</span>
                 <nav class="default-layout__nav" :aria-label="t('common.nav.label')">
                     <RouterLink to="/" class="default-layout__nav-link">{{ t('common.nav.dashboard') }}</RouterLink>
-                    <RouterLink to="/users" class="default-layout__nav-link">{{ t('common.nav.users') }}</RouterLink>
+                    <RouterLink v-if="can('users.view')" to="/users" class="default-layout__nav-link">{{ t('common.nav.users') }}</RouterLink>
                 </nav>
                 <div class="default-layout__header-actions">
                     <LocaleSwitcher />

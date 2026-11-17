@@ -30,6 +30,15 @@ describe('zodToTypedSchema', () => {
         expect(result.errors).toStrictEqual([{ path: 'email', errors: ['required'] }]);
     });
 
+    it('joins a nested field path with dots', async () => {
+        const schema = z.object({ address: z.object({ street: z.string().min(1, 'required') }) });
+        const typed = zodToTypedSchema(schema);
+
+        const result = await typed.parse({ address: { street: '' } });
+
+        expect(result.errors).toStrictEqual([{ path: 'address.street', errors: ['required'] }]);
+    });
+
     it('maps root-level issues without a field path', async () => {
         const schema = z.object({ name: z.string() }).refine(() => false, 'form-level issue');
         const typed = zodToTypedSchema(schema);

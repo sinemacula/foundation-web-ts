@@ -31,7 +31,12 @@ export default defineConfig({
     test: {
         environment: 'happy-dom',
         setupFiles: ['playground/src/test-support/setup-network-guard.ts'],
-        include: ['src/**/*.test.ts', 'playground/src/**/*.test.ts', 'eslint/**/*.test.js'],
+        include: [
+            'src/**/*.test.ts',
+            'playground/src/**/*.test.ts',
+            'playground/scripts/**/*.test.ts',
+            'eslint/**/*.test.js',
+        ],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'html', 'lcov'],

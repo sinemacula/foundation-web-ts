@@ -87,7 +87,7 @@ const id = useId();
 }
 
 .sm-text-input__error {
-    color: var(--sm-danger);
+    color: var(--sm-danger-text);
     font-size: var(--sm-text-sm);
 }
 </style>
