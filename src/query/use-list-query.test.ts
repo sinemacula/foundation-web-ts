@@ -92,6 +92,12 @@ describe('useListQuery', () => {
             expect(parameters.value['limit']).toBe(10);
         });
 
+        it('accepts a page size of one', () => {
+            const { parameters } = useListQuery(defineListQuery({ pageSize: 1 }));
+
+            expect(parameters.value['limit']).toBe(1);
+        });
+
         it.each([0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
             'rejects the page size %s',
             pageSize => {

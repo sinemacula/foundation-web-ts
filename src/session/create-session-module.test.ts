@@ -16,7 +16,7 @@ import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-v
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
-import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
+import type { SessionPersistence, SessionSnapshot } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionState } from '@sinemacula/foundation/session/session-state';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
@@ -159,7 +159,7 @@ describe('createSessionModule', () => {
 
             await target.store().login({ email: 'a', password: 'b' });
 
-            const stored: unknown = JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null');
+            const stored = JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null') as SessionSnapshot;
 
             expect(stored).toStrictEqual({ revision: 1, session: { lineage: expect.any(String), tokens: tokens() } });
             expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:exchange', 'auth.session:lock']);
@@ -170,7 +170,7 @@ describe('createSessionModule', () => {
 
             expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null')).not.toHaveProperty(
                 'session.lineage',
-                (stored as { session: { lineage: string } }).session.lineage,
+                stored.session?.lineage,
             );
         });
 
@@ -229,7 +229,12 @@ describe('createSessionModule', () => {
         });
 
         it('refuses to register without Web Locks unless a persistence is given', () => {
-            expect(() => harness({}, { withoutLocks: true })).toThrowError(SessionError);
+            expect(() => harness({}, { withoutLocks: true })).toThrowError(
+                new SessionError(
+                    'The session module needs the Web Locks API to share the persisted session across tabs; ' +
+                        'pass the persistence option where it is unavailable.',
+                ),
+            );
         });
 
         it.each([
@@ -426,6 +431,19 @@ describe('createSessionModule', () => {
             expect(target.store().accessToken).toBeNull();
         });
 
+        it('ends renewal on a refusal of the session it refreshed', async () => {
+            const target = await signedIn();
+            const error = new HttpError(401, 'refused');
+            const halted = vi.fn();
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error });
+            sessionContext().coordinator.onTerminal(halted);
+
+            await expect(sessionContext().coordinator.refresh()).resolves.toStrictEqual({ kind: 'rejected', error });
+            expect(halted).toHaveBeenCalledOnce();
+            expect(target.store().isAuthenticated).toBe(false);
+        });
+
         it('leaves clearing a refused session to the core, clearing it once', async () => {
             const target = await signedIn();
             const clearIf = vi.spyOn(KeyValueSessionPersistence.prototype, 'clearIf');
@@ -460,6 +478,18 @@ describe('createSessionModule', () => {
             await retries(target);
 
             await expect(unauthorizedHandler(target)(request)).resolves.toBe(true);
+            expect(gateway.refresh).toHaveBeenCalledTimes(2);
+        });
+
+        it('refreshes for a request that brought its own session token, even once it is replaced', async () => {
+            const target = await signedIn();
+            const sent = { ...REQUEST, headers: { authorization: 'Bearer access' } };
+
+            await expect(target.contributions.requestInterceptors[0]?.(sent)).resolves.toBe(sent);
+            gateway.refresh.mockResolvedValue({ kind: 'refreshed', tokens: tokens({ accessToken: 'fresh' }) });
+            await retries(target);
+
+            await expect(unauthorizedHandler(target)(sent)).resolves.toBe(true);
             expect(gateway.refresh).toHaveBeenCalledTimes(2);
         });
 

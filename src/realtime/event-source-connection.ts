@@ -48,6 +48,13 @@ export interface EventSourceConnectionOptions {
 }
 
 /**
+ * The default error sink: contained errors are dropped.
+ */
+function ignoreError(): void {
+    // Nothing to do without an application sink.
+}
+
+/**
  * Whether `event` carries a server-sent frame rather than a transport event;
  * checked structurally so events from another realm or a factory-supplied
  * EventSource still qualify.
@@ -57,17 +64,12 @@ function isServerFrame(event: Event): event is MessageEvent {
 }
 
 /**
- * SSE connection that reconnects with backoff whenever the source errors
- * without a `disconnect()`, attaching one listener per subscribed event name to
- * each new EventSource; the backoff resets only once a source stays open for
- * {@link STABLE_CONNECTION_MS}.
- *
- * Every transport error closes the source, whatever its ready state, so each
- * reconnect runs the hook and a fresh `url()`. Native reconnection is given up
- * with it: the `Last-Event-ID` header and the server's `retry:` delay are not
- * carried over, and a server ending the stream for good (such as with a 204)
- * is retried like any other loss. Frames named `open` or `error` are delivered
- * to their subscribers like any other event.
+ * SSE connection that closes the source on every transport error, whatever its
+ * ready state, and reconnects through the hook and a fresh `url()` with backoff
+ * that resets once a source stays open for {@link STABLE_CONNECTION_MS}; it
+ * gives up native reconnection, so `Last-Event-ID` and the server's `retry:`
+ * are not carried over and a stream ended for good (such as with a 204) is
+ * retried, while frames named `open` or `error` reach their subscribers.
  */
 export class EventSourceConnection implements RealtimeConnection {
     /** The endpoint URL, or a factory returning it per connect. */
@@ -85,8 +87,8 @@ export class EventSourceConnection implements RealtimeConnection {
     /** Optional hook awaited before each reconnect. */
     readonly #beforeReconnect: BeforeReconnectHook | undefined;
 
-    /** The optional sink for errors the connection contains. */
-    readonly #onError: ((error: unknown) => void) | undefined;
+    /** The sink for errors the connection contains. */
+    readonly #onError: (error: unknown) => void;
 
     /** Registered message handlers, keyed by event name. */
     readonly #messages: EventSubscribers<RealtimeMessage> = new EventSubscribers(error => this.#report(error));
@@ -121,7 +123,7 @@ export class EventSourceConnection implements RealtimeConnection {
         this.#backoff = options.backoff ?? new ExponentialBackoff({ jitter: 'equal' });
         this.#factory = options.eventSourceFactory ?? ((url, init) => new EventSource(url, init));
         this.#beforeReconnect = options.beforeReconnect;
-        this.#onError = options.onError;
+        this.#onError = options.onError ?? ignoreError;
     }
 
     /**
@@ -256,7 +258,7 @@ export class EventSourceConnection implements RealtimeConnection {
          * Deliver a server frame to the event name's current handlers.
          */
         const listener = (frame: Event): void => {
-            if (this.#source === source && isServerFrame(frame)) {
+            if (isServerFrame(frame)) {
                 this.#messages.snapshot(event)?.({ event, data: String(frame.data) }, () => this.#source === source);
             }
         };
@@ -295,7 +297,7 @@ export class EventSourceConnection implements RealtimeConnection {
      */
     #report(error: unknown): void {
         try {
-            this.#onError?.(error);
+            this.#onError(error);
         } catch {
             // The sink is the last resort; nothing is left to report to.
         }

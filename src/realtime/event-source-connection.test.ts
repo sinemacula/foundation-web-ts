@@ -6,6 +6,7 @@
  */
 
 import { ExponentialBackoff } from '@sinemacula/foundation/realtime/exponential-backoff';
+import { RealtimeError } from '@sinemacula/foundation/realtime/realtime-error';
 import {
     describeRealtimeContract,
     type RealtimeContractHarness,
@@ -247,6 +248,17 @@ describe('EventSourceConnection', () => {
             conn.connect();
 
             expect(sources.at(0)?.withCredentials).toBe(true);
+        });
+
+        it('wraps a throwing EventSource factory in a RealtimeError', () => {
+            const recording = makeFactory();
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: recording.factory });
+
+            recording.failure = new Error('factory failed');
+
+            expect(() => conn.connect()).toThrowError(
+                new RealtimeError('Cannot connect: the EventSource could not be opened.'),
+            );
         });
 
         it('defaults withCredentials to false', () => {

@@ -10,14 +10,12 @@ import type { HttpRequest } from '@sinemacula/foundation/http/http-client';
 const DEFAULT_CAPACITY = 32;
 
 /**
- * Remembers the latest access tokens the session attached to requests, so a
- * 401 for a request sent with one the session has since replaced is retried
- * on the current token instead of refreshing again. The oldest token is
- * forgotten past the capacity, and a 401 for it then refreshes.
+ * Remembers the latest access tokens the session attached to requests, up to a
+ * capacity, so a 401 for one since replaced can retry without a refresh.
  */
 export class SessionTokenHistory {
     /** The remembered tokens, oldest first. */
-    readonly #tokens: Set<string> = new Set();
+    readonly #tokens: Set<string | null> = new Set();
 
     /** How many tokens are remembered. */
     readonly #capacity: number;
@@ -51,7 +49,7 @@ export class SessionTokenHistory {
     isSuperseded(request: HttpRequest, current: string | null): boolean {
         const token = bearerOf(request);
 
-        return token !== null && current !== null && token !== current && this.#tokens.has(token);
+        return current !== null && token !== current && this.#tokens.has(token);
     }
 }
 
@@ -59,5 +57,5 @@ export class SessionTokenHistory {
  * Read the bearer token a request carries, if any.
  */
 function bearerOf(request: HttpRequest): string | null {
-    return /^Bearer (.+)$/u.exec(request.headers['authorization'] ?? '')?.[1] ?? null;
+    return /^Bearer (.+)/u.exec(String(request.headers['authorization']))?.[1] ?? null;
 }

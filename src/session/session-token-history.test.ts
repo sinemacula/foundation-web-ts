@@ -36,6 +36,7 @@ describe('SessionTokenHistory', () => {
         ['a token while signed out', request('Bearer old'), null],
         ['a token it never recorded', request('Bearer other'), 'new'],
         ['another authorization scheme', request('Basic old'), 'new'],
+        ['a bearer token inside another scheme', request('Basic Bearer old'), 'new'],
         ['no authorization', request(), 'new'],
     ])('does not report %s', (_case, sent, current) => {
         const history = new SessionTokenHistory();
@@ -48,9 +49,9 @@ describe('SessionTokenHistory', () => {
     it('records nothing for a request without a bearer token', () => {
         const history = new SessionTokenHistory();
 
-        history.record(request('Basic old'));
+        history.record(request());
 
-        expect(history.isSuperseded(request('Bearer old'), 'new')).toBe(false);
+        expect(history.isSuperseded(request(), 'new')).toBe(false);
     });
 
     it('forgets the least recently sent token past its capacity', () => {

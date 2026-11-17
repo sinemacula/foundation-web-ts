@@ -229,9 +229,7 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
 /**
  * Install the session context, contribute the bearer-token interceptor, and
  * claim the unauthorized handler. Every request and refresh first awaits the
- * session's hydration, which itself sends no request. A 401 for a request sent
- * with a session token since replaced retries on the current token without
- * refreshing again.
+ * session's hydration, which itself sends no request.
  *
  * @returns false when blocked storage left the default persistence in memory,
  * shared with no other tab
@@ -256,7 +254,6 @@ function registerSession(
             ? createDefaultPersistence(platform, storageKeys.session)
             : { persistence: options.persistence(platform) };
     const exchangeLock = options.exchangeLock?.(platform) ?? shared?.exchangeLock;
-    const history = new SessionTokenHistory();
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
@@ -279,9 +276,26 @@ function registerSession(
         },
     });
 
-    const attachBearer = createBearerTokenInterceptor({
-        getAccessToken: () => useSessionStore(pinia).accessToken,
-    });
+    contributeHttp(context, ready, coordinator);
+
+    return shared !== null;
+}
+
+/**
+ * Attach the session's bearer token to every request once hydrated, and retry a
+ * 401 on the current token, refreshing first unless the request's session token
+ * has since been replaced.
+ */
+function contributeHttp(
+    context: ModuleRegisterContext,
+    ready: () => Promise<void>,
+    coordinator: SessionRefreshCoordinator,
+): void {
+    const history = new SessionTokenHistory();
+
+    /** Read the held access token. */
+    const accessToken = (): string | null => useSessionStore(context.pinia).accessToken;
+    const attachBearer = createBearerTokenInterceptor({ getAccessToken: accessToken });
 
     context.http.addRequestInterceptor(async request => {
         await ready();
@@ -296,12 +310,10 @@ function registerSession(
     });
     context.http.setUnauthorizedHandler(async request => {
         /** Whether the request's session token has since been replaced. */
-        const isStale = (): boolean => history.isSuperseded(request, useSessionStore(pinia).accessToken);
+        const isStale = (): boolean => history.isSuperseded(request, accessToken());
 
         return isStale() || (await coordinator.refresh()).kind === 'refreshed' || isStale();
     });
-
-    return shared !== null;
 }
 
 /**
