@@ -132,6 +132,6 @@
         }
     },
     "dependencies": {
-        "@sinemacula/foundation": "github:sinemacula/foundation-ts#feat/toolkit-auth-contract-sync"
+        "@sinemacula/foundation": "github:sinemacula/foundation-ts#master"
     }
 }
