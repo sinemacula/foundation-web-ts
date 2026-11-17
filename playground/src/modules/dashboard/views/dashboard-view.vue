@@ -11,6 +11,7 @@ import SmCard from '@/components/ui/sm-card.vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 
+import { useFeatureFlag } from '@/composables/use-feature-flag';
 import DefaultLayout from '@/layouts/default-layout.vue';
 import { AUTH_ROUTE_NAMES, useAuthStore } from '@/modules/auth';
 import { confirmDialogs } from '@/services/confirm';
@@ -18,6 +19,7 @@ import { confirmDialogs } from '@/services/confirm';
 const { t } = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
+const previewingNewDashboard = useFeatureFlag('new-dashboard');
 
 const handleSignOut = async (): Promise<void> => {
     const confirmed = await confirmDialogs().confirm({
@@ -42,6 +44,7 @@ const handleSignOut = async (): Promise<void> => {
         </template>
         <SmCard :title="t('dashboard.home.title')">
             <p class="dashboard__welcome">{{ t('dashboard.home.welcome') }}</p>
+            <p v-if="previewingNewDashboard" class="dashboard__preview">{{ t('dashboard.home.preview') }}</p>
         </SmCard>
     </DefaultLayout>
 </template>
@@ -49,6 +52,12 @@ const handleSignOut = async (): Promise<void> => {
 <style scoped>
 .dashboard__welcome {
     color: var(--sm-text-muted);
+    font-size: var(--sm-text-sm);
+}
+
+.dashboard__preview {
+    margin-top: var(--sm-space-3);
+    color: var(--sm-text-body);
     font-size: var(--sm-text-sm);
 }
 </style>

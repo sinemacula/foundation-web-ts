@@ -8,6 +8,7 @@
 import { installColorScheme } from '@sinemacula/web-core/app/services';
 import { Environment } from '@sinemacula/foundation/config/environment';
 import { ObjectEnvironmentSource } from '@sinemacula/foundation/config/object-environment-source';
+import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
 import { ConfirmService } from '@sinemacula/web-core/notifications/confirm-service';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
@@ -25,6 +26,7 @@ import DashboardView from '@/modules/dashboard/views/dashboard-view.vue';
 import { initialiseApi, resetApi } from '@/services/api';
 import { initialiseConfiguration, resetConfiguration } from '@/services/config';
 import { initialiseConfirm, resetConfirm } from '@/services/confirm';
+import { initialiseFeatureFlags } from '@/services/feature-flags';
 import { initialiseLocaleSwitcher, resetLocaleSwitcher } from '@/services/locale';
 import { initialiseStorage, resetStorage } from '@/services/storage';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
@@ -133,6 +135,7 @@ describe('DashboardView', () => {
         installColorScheme(stubColorScheme);
         confirmations = new ConfirmService();
         initialiseConfirm(confirmations);
+        initialiseFeatureFlags(new StaticFeatureFlags());
         setActivePinia(createPinia());
     });
 
@@ -149,6 +152,19 @@ describe('DashboardView', () => {
         const { container, unmount } = mountDashboardView();
 
         expect(container.querySelector('.dashboard__welcome')).not.toBeNull();
+
+        unmount();
+    });
+
+    it.each([
+        ['shows', true, 1],
+        ['hides', false, 0],
+    ])('%s the new dashboard preview notice by its feature flag', (_case, enabled, expected) => {
+        initialiseFeatureFlags(new StaticFeatureFlags(Object.fromEntries([['new-dashboard', enabled]])));
+
+        const { container, unmount } = mountDashboardView();
+
+        expect(container.querySelectorAll('.dashboard__preview')).toHaveLength(expected);
 
         unmount();
     });
