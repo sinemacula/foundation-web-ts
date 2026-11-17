@@ -27,7 +27,16 @@ export interface GlobalErrorHandlingOptions {
     readonly targetWindow?: Window;
 }
 
-type VueErrorHandler = NonNullable<App['config']['errorHandler']>;
+/** Marks a Vue error handler installed by {@link installGlobalErrorHandling} with its installation. */
+const INSTALLATION = Symbol('installation');
+
+/**
+ * A Vue error handler, carrying its installation when this module installed it.
+ */
+type VueErrorHandler = NonNullable<App['config']['errorHandler']> & {
+    /** The installation that put this handler in place. */
+    readonly [INSTALLATION]?: Installation;
+};
 
 /**
  * The handler an installation replaced and whether it is still installed.
@@ -40,21 +49,13 @@ interface Installation {
     active: boolean;
 }
 
-/** Every handler installed by {@link installGlobalErrorHandling}, mapped to its installation. */
-const installations = new WeakMap<VueErrorHandler, Installation>();
-
 /**
  * Follow `handler` back past torn-down installations to the nearest live one.
  */
 function nearestLive(handler: VueErrorHandler | undefined): VueErrorHandler | undefined {
-    let installation = handler === undefined ? undefined : installations.get(handler);
+    const installation = handler?.[INSTALLATION];
 
-    while (installation !== undefined && !installation.active) {
-        handler = installation.previous;
-        installation = handler === undefined ? undefined : installations.get(handler);
-    }
-
-    return handler;
+    return installation === undefined || installation.active ? handler : nearestLive(installation.previous);
 }
 
 /**
@@ -63,7 +64,7 @@ function nearestLive(handler: VueErrorHandler | undefined): VueErrorHandler | un
  *
  * @returns a teardown that removes the window listeners and, while its handler
  * is still the app's, restores the nearest handler that is still installed, so
- * installations can be torn down in any order; repeat calls are no-ops
+ * installations can be torn down in any order; repeat calls are harmless
  */
 export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions): () => void {
     const { app, reporter, trail } = options;
@@ -74,7 +75,7 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
      * Report a Vue error, or once torn down hand it to the nearest live handler,
      * rethrowing for Vue's default logging when there is none.
      */
-    const errorHandler: VueErrorHandler = (err, instance, info) => {
+    const handleError: VueErrorHandler = (err, instance, info) => {
         if (!installation.active) {
             const live = nearestLive(installation.previous);
 
@@ -96,7 +97,8 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
         reporter.captureError(err, context);
     };
 
-    installations.set(errorHandler, installation);
+    const errorHandler: VueErrorHandler = Object.assign(handleError, { [INSTALLATION]: installation });
+
     app.config.errorHandler = errorHandler;
 
     /**
@@ -129,10 +131,6 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
     target.addEventListener('unhandledrejection', onUnhandledRejection);
 
     return () => {
-        if (!installation.active) {
-            return;
-        }
-
         installation.active = false;
 
         if (app.config.errorHandler === errorHandler) {
