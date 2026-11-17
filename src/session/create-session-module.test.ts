@@ -5,16 +5,19 @@
  * @copyright   2026 Sine Macula Limited
  */
 
+import type { Store } from 'pinia';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { FetchHttpClient } from '@sinemacula/foundation/http/fetch-http-client';
 import type { HttpClient, HttpRequest, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
+import { InProcessSessionLock } from '@sinemacula/foundation/session/in-process-session-lock';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
+import type { SessionState } from '@sinemacula/foundation/session/session-state';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installApi, resetWebCoreServices } from '../app/services';
@@ -27,6 +30,7 @@ import {
     deferred,
     persistSnapshot,
     SESSION_KEY,
+    snapshot,
     tokens,
     user,
 } from './test-support/session-fixtures';
@@ -147,7 +151,7 @@ describe('createSessionModule', () => {
     });
 
     describe('persistence', () => {
-        it('persists the snapshot in the window localStorage under a Web Locks lock named after the key', async () => {
+        it('persists a fresh lineage in the window localStorage, exchanging and writing under Web Locks locks named after the key', async () => {
             const target = harness();
 
             gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
@@ -155,26 +159,60 @@ describe('createSessionModule', () => {
 
             await target.store().login({ email: 'a', password: 'b' });
 
-            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null')).toStrictEqual({
-                revision: 1,
-                tokens: tokens(),
-            });
-            expect(target.win.navigator.locks?.names).toContain('auth.session:lock');
+            const stored: unknown = JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null');
+
+            expect(stored).toStrictEqual({ revision: 1, session: { lineage: expect.any(String), tokens: tokens() } });
+            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:exchange', 'auth.session:lock']);
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null')).not.toHaveProperty(
+                'session.lineage',
+                (stored as { session: { lineage: string } }).session.lineage,
+            );
         });
 
-        it('follows an overridden session key for the snapshot and the lock', async () => {
+        it('follows an overridden session key for the snapshot and the locks', async () => {
             const target = harness({ storageKeys: { session: 'app.session' } });
 
-            target.win.localStorage.setItem('app.session', JSON.stringify({ revision: 3, tokens: tokens() }));
+            target.win.localStorage.setItem('app.session', JSON.stringify(snapshot(tokens(), 3)));
 
             await sessionContext().ready();
 
             expect(target.store().accessToken).toBe('access');
             expect(target.win.navigator.locks?.names).toStrictEqual([]);
 
-            await target.store().clearLocal();
+            await target.store().logout();
 
-            expect(target.win.navigator.locks?.names).toStrictEqual(['app.session:lock']);
+            expect(target.win.navigator.locks?.names).toStrictEqual(['app.session:lock', 'app.session:exchange']);
+        });
+
+        it('runs every exchange under the given exchange lock, built over the platform', async () => {
+            const lock = new InProcessSessionLock();
+            const run = vi.spyOn(lock, 'run');
+            const factory = vi.fn(() => lock);
+            const target = harness({ exchangeLock: factory });
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(factory).toHaveBeenCalledWith(target.platform);
+            expect(run).toHaveBeenCalledOnce();
+            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:lock']);
+        });
+
+        it('keeps the exchanges of a given persistence to this tab unless an exchange lock is given', async () => {
+            const target = harness({ persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) });
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(target.store().isAuthenticated).toBe(true);
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
         });
 
         it('rejects a sign-in whose storage write fails', async () => {
@@ -400,6 +438,103 @@ describe('createSessionModule', () => {
             expect(target.store().isAuthenticated).toBe(false);
         });
 
+        it('retries a request sent with a session token since replaced without refreshing again', async () => {
+            const target = await signedIn();
+            const sent = await intercept(target);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'fresh' }) });
+            await retries(target);
+
+            await expect(unauthorizedHandler(target)(sent)).resolves.toBe(true);
+            expect(gateway.refresh).toHaveBeenCalledOnce();
+        });
+
+        it.each<[string, HttpRequest]>([
+            ['a bearer the session never sent', { ...REQUEST, headers: { authorization: 'Bearer other' } }],
+            ['another authorization scheme', { ...REQUEST, headers: { authorization: 'Basic access' } }],
+        ])('refreshes for a request sent with %s', async (_case, request) => {
+            const target = await signedIn();
+
+            gateway.refresh.mockResolvedValue({ kind: 'refreshed', tokens: tokens({ accessToken: 'fresh' }) });
+            await intercept(target);
+            await retries(target);
+
+            await expect(unauthorizedHandler(target)(request)).resolves.toBe(true);
+            expect(gateway.refresh).toHaveBeenCalledTimes(2);
+        });
+
+        it('refreshes for a request sent with the current session token', async () => {
+            const target = await signedIn();
+            const sent = await intercept(target);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'fresh' }) });
+
+            await expect(unauthorizedHandler(target)(sent)).resolves.toBe(true);
+            expect(gateway.refresh).toHaveBeenCalledOnce();
+        });
+
+        it('does not retry a replaced session token once signed out', async () => {
+            const target = await signedIn();
+            const sent = await intercept(target);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'fresh' }) });
+            await retries(target);
+            await target.store().clearLocal();
+
+            await expect(unauthorizedHandler(target)(sent)).resolves.toBe(false);
+            expect(gateway.refresh).toHaveBeenCalledOnce();
+        });
+
+        it('retries on the session a sign-in installed while the refresh was pending', async () => {
+            const target = await signedIn();
+            const sent = await intercept(target);
+            const pending = deferred<RefreshResult>();
+
+            gateway.refresh.mockReturnValueOnce(pending.promise);
+
+            const retried = unauthorizedHandler(target)(sent);
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalled();
+            });
+            gateway.login.mockResolvedValueOnce({
+                kind: 'authenticated',
+                tokens: tokens({ accessToken: 'signed-in' }),
+            });
+            gateway.currentUser.mockResolvedValueOnce(user());
+
+            const signingIn = target.store().login({ email: 'a', password: 'b' });
+
+            pending.resolve({ kind: 'refreshed', tokens: tokens({ accessToken: 'discarded' }) });
+
+            await expect(signingIn).resolves.toStrictEqual({ kind: 'authenticated' });
+            await expect(retried).resolves.toBe(true);
+            expect(target.store().accessToken).toBe('signed-in');
+        });
+
+        it('reports a refusal that settles after another sign-in replaced the session as superseded', async () => {
+            const target = await signedIn();
+            const error = new HttpError(401, 'refused');
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error });
+            const store = target.store() as unknown as Store<'auth', SessionState>;
+
+            store.$onAction(({ name, after }) => {
+                if (name === 'refresh') {
+                    after(() => {
+                        store.$patch({ accessToken: 'signed-in-elsewhere' });
+                    });
+                }
+            });
+
+            const halted = vi.fn();
+
+            sessionContext().coordinator.onTerminal(halted);
+
+            await expect(sessionContext().coordinator.refresh()).resolves.toStrictEqual({ kind: 'superseded' });
+            expect(halted).not.toHaveBeenCalled();
+        });
+
         it('reports a failed refresh once, without retrying, and keeps the session', async () => {
             const target = await signedIn();
             const error = new HttpError(422, 'malformed');
@@ -515,26 +650,32 @@ describe('createSessionModule', () => {
         /** How the fake server answers a refresh. */
         let refreshResponse: () => Response;
 
+        /** Responses held back until released, keyed by path. */
+        let holds: Map<string, Promise<void>>;
+
         /**
-         * Answer the fake server's routes: the user only for the fresh token,
-         * and a refresh as scripted.
+         * Answer the fake server's routes: a user only for the fresh token, and
+         * a refresh as scripted, each once any hold on its path is released.
          */
-        const server = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const server = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             const method = init?.method ?? 'GET';
             const path = new URL(String(input)).pathname;
             const bearer = new Headers(init?.headers).get('authorization');
+            const hold = holds.get(path);
 
             exchanges.push(`${method} ${path} ${bearer ?? '-'}`);
+            holds.delete(path);
+            await hold;
 
             if (path === '/auth/refresh') {
-                return Promise.resolve(refreshResponse());
+                return refreshResponse();
             }
 
-            if (path === '/users/self' && bearer === 'Bearer fresh') {
-                return Promise.resolve(Response.json({ id: 'u1', email: null, name: null, permissions: [] }));
+            if (path.startsWith('/users/') && bearer === 'Bearer fresh') {
+                return Response.json({ id: 'u1', email: null, name: null, permissions: [] });
             }
 
-            return Promise.resolve(new Response('expired', { status: 401 }));
+            return new Response('expired', { status: 401 });
         };
 
         /**
@@ -559,6 +700,7 @@ describe('createSessionModule', () => {
 
         beforeEach(() => {
             exchanges = [];
+            holds = new Map();
             refreshResponse = () =>
                 Response.json({ access_token: 'fresh', refresh_token: 'fresh-refresh', expires_in: 3_600 });
         });
@@ -574,9 +716,33 @@ describe('createSessionModule', () => {
             ]);
             expect(target.store().refreshToken).toBe('fresh-refresh');
             expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toHaveProperty(
-                'tokens.accessToken',
+                'session.tokens.accessToken',
                 'fresh',
             );
+        });
+
+        it('retries a late 401 for a request sent before a completed refresh without refreshing again', async () => {
+            const { http } = await wired();
+            const release = deferred<undefined>();
+
+            holds.set('/users/slow', release.promise);
+
+            const slow = http.get('users/slow');
+
+            await vi.waitFor(() => {
+                expect(exchanges).toStrictEqual(['GET /users/slow Bearer access']);
+            });
+            await http.get('users/self');
+            release.resolve(undefined);
+
+            await expect(slow).resolves.toHaveProperty('id', 'u1');
+            expect(exchanges).toStrictEqual([
+                'GET /users/slow Bearer access',
+                'GET /users/self Bearer access',
+                'POST /auth/refresh Bearer access',
+                'GET /users/self Bearer fresh',
+                'GET /users/slow Bearer fresh',
+            ]);
         });
 
         it('surfaces the 401 and clears the session when the refresh is refused, without refreshing again', async () => {

@@ -23,6 +23,7 @@ import {
     deferred,
     persistSnapshot,
     SESSION_KEY,
+    snapshot,
     tokens,
     user,
 } from './test-support/session-fixtures';
@@ -103,10 +104,10 @@ describe('useSessionStore', () => {
         const credentials = { email: 'alice@example.com', password: 'secret' };
 
         await expect(store.login(credentials)).resolves.toStrictEqual({ kind: 'authenticated' });
-        expect(gateway.login).toHaveBeenCalledWith(credentials, { uuid: 'device-uuid', os: 'WEB' });
+        expect(gateway.login).toHaveBeenCalledWith(credentials, { uuid: 'device-uuid', os: 'WEB' }, null);
         expect(store.accessToken).toBe('access');
         expect(store.user).toStrictEqual(user());
-        expect(persisted()).toStrictEqual({ revision: 1, tokens: tokens() });
+        expect(persisted()).toStrictEqual(snapshot(tokens(), 1, 'lineage-2'));
     });
 
     it('returns a pending authentication unchanged without persisting', async () => {
@@ -149,10 +150,10 @@ describe('useSessionStore', () => {
 
         await expect(store.refresh()).resolves.toStrictEqual({ kind: 'rejected', error });
         expect(store.isAuthenticated).toBe(false);
-        expect(persisted()).toStrictEqual({ revision: 2, tokens: null });
+        expect(persisted()).toStrictEqual(snapshot(null, 2));
     });
 
-    it('signs out server-side, then discards the session locally and from persistence', async () => {
+    it('discards the session locally and from persistence, then signs it out server-side', async () => {
         persistSnapshot(storage, tokens());
 
         const store = useSessionStore();
@@ -160,9 +161,9 @@ describe('useSessionStore', () => {
         await store.hydrate();
         await store.logout();
 
-        expect(gateway.logout).toHaveBeenCalledWith('refresh');
+        expect(gateway.logout).toHaveBeenCalledWith(tokens());
         expect(store.isAuthenticated).toBe(false);
-        expect(persisted()).toStrictEqual({ revision: 2, tokens: null });
+        expect(persisted()).toStrictEqual(snapshot(null, 2));
     });
 
     it('clears the session locally at once, then from persistence, without calling the server', async () => {
@@ -179,7 +180,7 @@ describe('useSessionStore', () => {
         await clearing;
 
         expect(gateway.logout).not.toHaveBeenCalled();
-        expect(persisted()).toStrictEqual({ revision: 2, tokens: null });
+        expect(persisted()).toStrictEqual(snapshot(null, 2));
     });
 
     it('loads the user of the held session', async () => {
