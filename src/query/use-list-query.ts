@@ -109,6 +109,9 @@ export interface ListQuery<Filters extends Record<string, ListFilter<never>>> {
 
 /**
  * Create reactive list-query state from a {@link ListQueryDefinition}.
+ *
+ * The query compiles in order: base shaping, active filters in insertion order,
+ * search, sort (explicit, then default), pagination and refinements.
  */
 export function useListQuery<Filters extends Record<string, ListFilter<never>>>(
     definition: ListQueryDefinition<Filters>,
@@ -191,10 +194,8 @@ type NavigationMutations<Filters extends Record<string, ListFilter<never>>> = Pi
 >;
 
 /**
- * Compile an {@link ApiQuery} from the current list-query state.
- *
- * Applies, in order: base shaping, active filters in insertion order, search,
- * sort (explicit, then default), pagination and refinements.
+ * Compile an {@link ApiQuery} from the current list-query state, in the order
+ * documented on {@link useListQuery}.
  */
 function compileQuery<Filters extends Record<string, ListFilter<never>>>(
     definition: ListQueryDefinition<Filters>,
