@@ -33,8 +33,32 @@ describe('mapUserRow', () => {
             id: 'u1',
             fullName: 'Alice Smith',
             email: 'alice@example.com',
-            createdAt: '2026-01-01 00:00:00',
+            createdAt: new Date('2026-01-01T00:00:00Z'),
         });
+    });
+
+    it('reads created_at as a UTC instant', () => {
+        const row = mapUserRow({ ...validRow(), ...wire([['created_at', '2028-02-29 23:59:59']]) });
+
+        expect(row.createdAt.toISOString()).toBe('2028-02-29T23:59:59.000Z');
+    });
+
+    it.each([
+        ['an ISO 8601 timestamp', '2026-01-01T00:00:00Z'],
+        ['an ISO 8601 timestamp without a zone', '2026-01-01T00:00:00'],
+        ['a timestamp with fractional seconds', '2026-01-01 00:00:00.000'],
+        ['leading text', 'x2026-01-01 00:00:00'],
+        ['a date without a time', '2026-01-01'],
+        ['unpadded fields', '2026-1-1 0:00:00'],
+        ['trailing text', '2026-01-01 00:00:00 UTC'],
+        ['a day the month does not have', '2026-02-30 00:00:00'],
+        ['a month that does not exist', '2026-13-01 00:00:00'],
+        ['the end-of-day hour', '2026-01-01 24:00:00'],
+        ['an empty string', ''],
+    ])('throws when created_at is %s', (_case, createdAt) => {
+        expect(() => mapUserRow({ ...validRow(), ...wire([['created_at', createdAt]]) })).toThrow(
+            'The user row did not match the expected shape.',
+        );
     });
 
     it.each(['id', 'full_name', 'email', 'created_at'])('throws when %s is not a string', field => {
@@ -58,7 +82,12 @@ describe('createUsersClient', () => {
         expect(call?.method).toBe('GET');
         expect(call?.path).toBe('users');
         expect(result.items).toEqual([
-            { id: 'u1', fullName: 'Alice Smith', email: 'alice@example.com', createdAt: '2026-01-01 00:00:00' },
+            {
+                id: 'u1',
+                fullName: 'Alice Smith',
+                email: 'alice@example.com',
+                createdAt: new Date('2026-01-01T00:00:00Z'),
+            },
         ]);
     });
 });

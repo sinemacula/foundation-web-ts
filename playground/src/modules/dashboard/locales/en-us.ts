@@ -11,6 +11,11 @@ const messages: LocaleMessages = {
     home: {
         title: 'Dashboard',
         welcome: 'Welcome back. This is the starting point for the Sine Macula console.',
+        preview: 'You are previewing the new dashboard.',
+    },
+    signOut: {
+        title: 'Sign out?',
+        message: 'You will need to sign in again to continue.',
     },
 };
 

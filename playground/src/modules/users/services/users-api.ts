@@ -24,21 +24,39 @@ export interface UserListItem {
     /** The user's email address. */
     readonly email: string;
 
-    /** When the user was created, as the API's `YYYY-MM-DD HH:MM:SS` UTC timestamp. */
-    readonly createdAt: string;
+    /** When the user was created. */
+    readonly createdAt: Date;
+}
+
+/**
+ * Parse the API's `YYYY-MM-DD HH:MM:SS` UTC wire timestamp, or return null when
+ * it is not in that exact form or names a date or time that does not exist.
+ */
+function parseWireTimestamp(wireTimestamp: string): Date | null {
+    const parsed = new Date(`${wireTimestamp.replace(' ', 'T')}Z`);
+
+    if (Number.isNaN(parsed.getTime())) {
+        return null;
+    }
+
+    // Round-tripping rejects other shapes and rolled-over dates like Feb 30.
+    return parsed.toISOString().slice(0, 19).replace('T', ' ') === wireTimestamp ? parsed : null;
 }
 
 /**
  * Validate and map a raw wire record onto a {@link UserListItem}.
  *
- * @throws PlaygroundError when a required field is missing or of the wrong type
+ * @throws PlaygroundError when a required field is missing, of the wrong type
+ * or, for `created_at`, not a valid wire timestamp
  */
 export const mapUserRow: ResourceMapper<UserListItem> = (raw: RawRecord): UserListItem => {
+    const createdAt = typeof raw['created_at'] === 'string' ? parseWireTimestamp(raw['created_at']) : null;
+
     if (
         typeof raw['id'] !== 'string' ||
         typeof raw['full_name'] !== 'string' ||
         typeof raw['email'] !== 'string' ||
-        typeof raw['created_at'] !== 'string'
+        createdAt === null
     ) {
         throw new PlaygroundError('The user row did not match the expected shape.');
     }
@@ -47,7 +65,7 @@ export const mapUserRow: ResourceMapper<UserListItem> = (raw: RawRecord): UserLi
         id: raw['id'],
         fullName: raw['full_name'],
         email: raw['email'],
-        createdAt: raw['created_at'],
+        createdAt,
     };
 };
 

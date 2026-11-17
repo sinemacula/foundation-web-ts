@@ -16,6 +16,9 @@ interface RecordedCall {
 
     /** The request body, if any. */
     readonly body: unknown;
+
+    /** The request options, if any. */
+    readonly options: HttpRequestOptions | undefined;
 }
 
 type QueuedResult =
@@ -61,50 +64,50 @@ export class FakeHttpClient implements HttpClient {
     /**
      * Record a GET and replay the next queued result.
      */
-    get<T>(path: string, _options?: HttpRequestOptions): Promise<T> {
-        return this.#consume('GET', path, undefined);
+    get<T>(path: string, options?: HttpRequestOptions): Promise<T> {
+        return this.#consume('GET', path, undefined, options);
     }
 
     /**
      * Record a POST and replay the next queued result.
      */
-    post<T>(path: string, body?: unknown, _options?: HttpRequestOptions): Promise<T> {
-        return this.#consume('POST', path, body);
+    post<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
+        return this.#consume('POST', path, body, options);
     }
 
     /**
      * Record a PUT and replay the next queued result.
      */
-    put<T>(path: string, body?: unknown, _options?: HttpRequestOptions): Promise<T> {
-        return this.#consume('PUT', path, body);
+    put<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
+        return this.#consume('PUT', path, body, options);
     }
 
     /**
      * Record a PATCH and replay the next queued result.
      */
-    patch<T>(path: string, body?: unknown, _options?: HttpRequestOptions): Promise<T> {
-        return this.#consume('PATCH', path, body);
+    patch<T>(path: string, body?: unknown, options?: HttpRequestOptions): Promise<T> {
+        return this.#consume('PATCH', path, body, options);
     }
 
     /**
      * Record a DELETE and replay the next queued result.
      */
-    delete<T>(path: string, _options?: HttpRequestOptions): Promise<T> {
-        return this.#consume('DELETE', path, undefined);
+    delete<T>(path: string, options?: HttpRequestOptions): Promise<T> {
+        return this.#consume('DELETE', path, undefined, options);
     }
 
     /**
      * Record a GET and replay the next queued result as a Blob.
      */
-    download(path: string, _options?: HttpRequestOptions): Promise<Blob> {
-        return this.#consume('GET', path, undefined);
+    download(path: string, options?: HttpRequestOptions): Promise<Blob> {
+        return this.#consume('GET', path, undefined, options);
     }
 
     /**
      * Record the call and resolve or reject with the next queued result.
      */
-    #consume<T>(method: string, path: string, body: unknown): Promise<T> {
-        this.calls.push({ method, path, body });
+    #consume<T>(method: string, path: string, body: unknown, options: HttpRequestOptions | undefined): Promise<T> {
+        this.calls.push({ method, path, body, options });
 
         const result = this.#queue.shift() ?? { kind: 'resolve', value: undefined };
 

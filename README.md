@@ -195,8 +195,8 @@ Defaults and behaviours worth knowing:
 
 #### Entry point
 
-The whole composition root is one call. The canonical example is the playground's entry (`playground/src/main.ts`),
-shown here with its imports de-aliased:
+The whole composition root is one call. The canonical example is the playground's (`playground/src/boot.ts`, called
+from `playground/src/main.ts`), shown here as a single entry file with its imports de-aliased:
 
 ```ts
 import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
