@@ -44,12 +44,12 @@ function syncTrap(): void {
  * Answer the request with the given id once; a stale or repeated answer is ignored.
  */
 function answer(id: string, outcome: boolean): void {
-    if (answeredId.value === id || service.active.value?.id !== id) {
+    if (answeredId.value === id) {
         return;
     }
 
     answeredId.value = id;
-    service.settle(outcome);
+    service.settle(outcome, id);
 }
 
 /**
