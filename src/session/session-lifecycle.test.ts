@@ -933,6 +933,21 @@ describe('session lifecycle', () => {
 
             expect(scheduler.delays()).toStrictEqual([]);
         });
+
+        it('arms nothing for a session that begins after teardown', async () => {
+            const target = expiring(1_000_000 + 120_000);
+            const teardown = await target.boot();
+
+            teardown();
+            gateway.login.mockResolvedValueOnce({
+                kind: 'authenticated',
+                tokens: tokens({ expiresAtEpochMs: 1_000_000 + 300_000 }),
+            });
+            await target.store().login({ email: 'a', password: 'b' });
+            await settle();
+
+            expect(scheduler.delays()).toStrictEqual([]);
+        });
     });
 
     describe('realtime', () => {

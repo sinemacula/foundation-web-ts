@@ -6,9 +6,10 @@
  */
 
 import type { Pinia } from 'pinia';
-import { createPinia } from 'pinia';
+import { createPinia, defineStore } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, onMounted, onUnmounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { RouteRecordRaw, RouterHistory } from 'vue-router';
 import { createMemoryHistory, createWebHistory } from 'vue-router';
 
@@ -579,6 +580,32 @@ describe('createWebCoreApp', () => {
             expect(loggerFactory).toHaveBeenCalledWith(app.config);
             expect(flagsFactory).toHaveBeenCalledWith(app.config);
             expect(realtimeFactory).toHaveBeenCalledWith(app.config);
+
+            app.dispose();
+        });
+
+        it('provides the pinia and i18n instances to the components it mounts', async () => {
+            const useProbe = defineStore('probe', () => ({}));
+            const pinia = createPinia();
+            let store: unknown;
+            let greeting: string | undefined;
+            const app = await bootApp({
+                pinia,
+                modules: [homeModule({ locales: async locale => ({ greeting: `hello-${locale}` }) })],
+                root: defineComponent({
+                    setup() {
+                        store = useProbe();
+                        greeting = useI18n().t('home.greeting');
+
+                        return () => h('div');
+                    },
+                }),
+            });
+
+            app.app.mount(document.createElement('div'));
+
+            expect(store).toBe(useProbe(pinia));
+            expect(greeting).toBe('hello-en-US');
 
             app.dispose();
         });
