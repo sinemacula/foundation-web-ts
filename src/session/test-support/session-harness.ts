@@ -71,6 +71,9 @@ export interface Observability {
     /** One entry per analytics reset. */
     readonly resets: number[];
 
+    /** Every analytics identify and reset, in order. */
+    readonly analyticsCalls: string[];
+
     /** Every feature-flag evaluation context. */
     readonly flagContexts: unknown[];
 }
@@ -194,6 +197,7 @@ export function installObservability(): Observability {
         reportedUsers: [],
         identified: [],
         resets: [],
+        analyticsCalls: [],
         flagContexts: [],
     };
 
@@ -212,9 +216,11 @@ export function installObservability(): Observability {
         page: () => undefined,
         identify: id => {
             observability.identified.push(id);
+            observability.analyticsCalls.push(`identify ${id}`);
         },
         reset: () => {
             observability.resets.push(1);
+            observability.analyticsCalls.push('reset');
         },
     });
     installFeatureFlags({

@@ -102,16 +102,18 @@ export async function bootSessionLifecycle(
     const fanOut = options.identity === false ? null : createIdentityFanOut(resolveIdentityMapping(options.identity));
     const teardowns: ModuleTeardown[] = [];
 
+    let disposed = false;
+
     /**
-     * Load the held session's user; a session whose user cannot be loaded no
-     * longer vouches for the identity fanned out.
+     * Load the held session's user; until torn down, a session whose user
+     * cannot be loaded no longer vouches for the identity fanned out.
      */
     const loadUser = async (): Promise<void> => {
         const identity = store.sessionIdentity();
 
         await store.rehydrateUser();
 
-        if (identity !== null && store.user === null && store.sessionIdentity() === identity) {
+        if (!disposed && store.user === null && store.sessionIdentity() === identity) {
             fanOut?.clear();
         }
     };
@@ -140,6 +142,8 @@ export async function bootSessionLifecycle(
     void loadUser();
 
     return () => {
+        disposed = true;
+
         for (const teardown of teardowns.reverse()) {
             teardown();
         }

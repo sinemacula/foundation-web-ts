@@ -290,6 +290,26 @@ describe('session lifecycle', () => {
             expect(load).toHaveBeenCalledTimes(loads + 1);
         });
 
+        it('loads no user after a failed synchronisation', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens());
+            gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(gateway.currentUser).toHaveBeenCalledTimes(1);
+            });
+
+            target.win.localStorage.setItem('auth.session', 'not json');
+            target.win.dispatchStorage({ key: 'auth.session' });
+
+            await vi.waitFor(() => {
+                expect(target.observability.errors).toHaveLength(1);
+            });
+            await settle();
+            expect(gateway.currentUser).toHaveBeenCalledTimes(1);
+        });
+
         it('reports a failed synchronisation and keeps the session', async () => {
             const target = persisted();
 
@@ -506,6 +526,39 @@ describe('session lifecycle', () => {
             expect(target.observability.flagContexts).toStrictEqual([{ userId: 'u1' }]);
         });
 
+        it('touches no channel when a session whose user never loaded ends', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens());
+            gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(gateway.currentUser).toHaveBeenCalled();
+            });
+
+            await target.store().clearLocal();
+            await settle();
+
+            expect(target.observability.reportedUsers).toStrictEqual([]);
+            expect(target.observability.resets).toStrictEqual([]);
+            expect(target.observability.flagContexts).toStrictEqual([]);
+        });
+
+        it('fans nothing out when disabled, even when the user cannot be loaded', async () => {
+            const target = harness({ identity: false });
+
+            persistSnapshot(target.win.localStorage, tokens());
+            gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(gateway.currentUser).toHaveBeenCalled();
+            });
+            await settle();
+
+            expect(target.observability.resets).toStrictEqual([]);
+            expect(target.observability.errors).toStrictEqual([]);
+        });
+
         it('fans nothing out when disabled', async () => {
             const target = persisted({ identity: false });
 
@@ -565,9 +618,8 @@ describe('session lifecycle', () => {
                 persistElsewhere(target, tokens({ accessToken: 'other-user' }));
 
                 await vi.waitFor(() => {
-                    expect(target.observability.identified).toStrictEqual(['u1', 'u2']);
+                    expect(target.observability.analyticsCalls).toStrictEqual(['identify u1', 'reset', 'identify u2']);
                 });
-                expect(target.observability.resets).toHaveLength(1);
                 expect(target.observability.reportedUsers.at(-1)).toStrictEqual({ id: 'u2' });
                 expect(target.observability.flagContexts.at(-1)).toStrictEqual({ userId: 'u2' });
             });
@@ -591,6 +643,18 @@ describe('session lifecycle', () => {
                 expect(target.observability.flagContexts).toHaveLength(1);
             });
 
+            it('reports again an identity that lost a field', async () => {
+                const target = await identified();
+
+                gateway.currentUser.mockResolvedValue(user({ email: null }));
+                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+
+                await vi.waitFor(() => {
+                    expect(target.observability.reportedUsers).toHaveLength(2);
+                });
+                expect(target.observability.reportedUsers.at(-1)).toStrictEqual({ id: 'u1', name: 'Alice Smith' });
+            });
+
             it('clears every channel when the adopted session user cannot be loaded', async () => {
                 const target = await identified();
 
@@ -603,6 +667,54 @@ describe('session lifecycle', () => {
                 expect(target.store().isAuthenticated).toBe(true);
                 expect(target.observability.reportedUsers.at(-1)).toBeNull();
                 expect(target.observability.flagContexts.at(-1)).toStrictEqual({});
+            });
+
+            it('leaves every channel alone when a superseded adoption fails to load its user', async () => {
+                const target = await identified();
+                const superseded = deferred<SessionUser>();
+                const current = deferred<SessionUser>();
+
+                gateway.currentUser.mockReturnValueOnce(superseded.promise).mockReturnValueOnce(current.promise);
+                persistElsewhere(target, tokens({ accessToken: 'first' }));
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(2);
+                });
+                persistElsewhere(target, tokens({ accessToken: 'second' }), 3);
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(3);
+                });
+
+                superseded.reject(new NetworkError('offline'));
+                await settle();
+                current.resolve(user());
+                await settle();
+
+                expect(target.store().accessToken).toBe('second');
+                expect(target.observability.resets).toStrictEqual([]);
+                expect(target.observability.reportedUsers).toHaveLength(1);
+            });
+
+            it('leaves every channel alone when the adopted user fails to load after teardown', async () => {
+                const target = persisted();
+                const teardown = await target.boot();
+                const loading = deferred<SessionUser>();
+
+                await vi.waitFor(() => {
+                    expect(target.observability.identified).toStrictEqual(['u1']);
+                });
+                gateway.currentUser.mockReturnValueOnce(loading.promise);
+                persistSnapshot(target.win.localStorage, tokens({ accessToken: 'rotated' }), 2);
+                target.win.dispatchStorage({ key: 'auth.session' });
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(2);
+                });
+
+                teardown();
+                loading.reject(new NetworkError('offline'));
+                await settle();
+
+                expect(target.observability.resets).toStrictEqual([]);
+                expect(target.observability.reportedUsers).toHaveLength(1);
             });
 
             it('clears every channel when the session ends before the adopted user loads', async () => {

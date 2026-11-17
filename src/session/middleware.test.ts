@@ -247,8 +247,11 @@ describe('session guards', () => {
             gateway.currentUser.mockReset();
             gateway.currentUser.mockRejectedValueOnce(failure);
 
-            await expect(run(authorize('users.view'))).rejects.toThrowError(SessionError);
+            await expect(run(authorize('users.view'))).rejects.toThrowError(
+                new SessionError('The signed-in user could not be loaded to check a permission.'),
+            );
             expect(useSessionStore().isAuthenticated).toBe(true);
+            expect(gateway.currentUser).toHaveBeenCalledTimes(1);
         });
 
         it('loads the user of a session that replaced the held one during the load', async () => {
