@@ -46,7 +46,14 @@ interface NavigationGate {
  * Hold every navigation on `router` in a guard until the gate is released.
  */
 function holdNavigations(router: Router): NavigationGate {
+    /**
+     * Signal that a navigation reached the guard.
+     */
     let enter: () => void = () => undefined;
+
+    /**
+     * Let held navigations continue.
+     */
     let release: () => void = () => undefined;
     const entered = new Promise<void>(resolve => {
         enter = resolve;

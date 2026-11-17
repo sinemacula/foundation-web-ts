@@ -18,6 +18,17 @@ export interface ActiveConfirm extends ConfirmRequest {
     readonly id: string;
 }
 
+/**
+ * The active confirmation's id and the resolver for its promise.
+ */
+interface CurrentEntry {
+    /** The id of the active confirmation. */
+    readonly id: string;
+
+    /** Settles the active confirmation's promise with the outcome. */
+    readonly resolve: (outcome: boolean) => void;
+}
+
 interface PendingEntry {
     /** The confirmation content awaiting display. */
     readonly request: ConfirmRequest;
@@ -41,7 +52,7 @@ export class ConfirmService implements Confirmer {
     #sequence = 0;
 
     /** The active confirmation's id and the resolver for its promise, or null. */
-    #current: { readonly id: string; readonly resolve: (outcome: boolean) => void } | null = null;
+    #current: CurrentEntry | null = null;
 
     /** The reactive, read-only currently-active confirmation request. */
     readonly active: ComputedRef<ActiveConfirm | null>;

@@ -59,6 +59,16 @@ function nearestLive(handler: VueErrorHandler | undefined): VueErrorHandler | un
 }
 
 /**
+ * Send an error to the reporter, attaching the breadcrumb snapshot when a trail
+ * is configured.
+ */
+function capture(options: GlobalErrorHandlingOptions, error: unknown, context: Record<string, unknown>): void {
+    const { reporter, trail } = options;
+
+    reporter.captureError(error, trail === undefined ? context : { ...context, breadcrumbs: trail.list() });
+}
+
+/**
  * Forward Vue component errors, window errors and unhandled rejections to
  * `reporter`.
  *
@@ -67,13 +77,13 @@ function nearestLive(handler: VueErrorHandler | undefined): VueErrorHandler | un
  * installations can be torn down in any order; repeat calls are harmless
  */
 export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions): () => void {
-    const { app, reporter, trail } = options;
+    const { app } = options;
     const target = options.targetWindow ?? globalThis.window;
     const installation: Installation = { previous: app.config.errorHandler, active: true };
 
     /**
-     * Report a Vue error, or once torn down hand it to the nearest live handler,
-     * rethrowing for Vue's default logging when there is none.
+     * Report a Vue error, or once torn down pass it to the nearest live
+     * handler, rethrowing for Vue's default logging when there is none.
      */
     const handleError: VueErrorHandler = (err, instance, info) => {
         if (!installation.active) {
@@ -88,13 +98,7 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
             return;
         }
 
-        const context: Record<string, unknown> = { source: 'vue', info };
-
-        if (trail !== undefined) {
-            context['breadcrumbs'] = trail.list();
-        }
-
-        reporter.captureError(err, context);
+        capture(options, err, { source: 'vue', info });
     };
 
     const errorHandler: VueErrorHandler = Object.assign(handleError, { [INSTALLATION]: installation });
@@ -105,26 +109,14 @@ export function installGlobalErrorHandling(options: GlobalErrorHandlingOptions):
      * Forward a synchronous window error to the reporter with breadcrumbs.
      */
     const onError = (event: ErrorEvent): void => {
-        const context: Record<string, unknown> = { source: 'window' };
-
-        if (trail !== undefined) {
-            context['breadcrumbs'] = trail.list();
-        }
-
-        reporter.captureError(event.error ?? event.message, context);
+        capture(options, event.error ?? event.message, { source: 'window' });
     };
 
     /**
      * Forward an unhandled promise rejection to the reporter with breadcrumbs.
      */
     const onUnhandledRejection = (event: PromiseRejectionEvent): void => {
-        const context: Record<string, unknown> = { source: 'unhandledrejection' };
-
-        if (trail !== undefined) {
-            context['breadcrumbs'] = trail.list();
-        }
-
-        reporter.captureError(event.reason, context);
+        capture(options, event.reason, { source: 'unhandledrejection' });
     };
 
     target.addEventListener('error', onError);

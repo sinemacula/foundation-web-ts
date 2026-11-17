@@ -14,6 +14,7 @@ export interface IdleMonitorOptions {
 
     /** The window whose activity events are observed; defaults to the global window. */
     readonly targetWindow?: Window;
+
     /** Receives an error thrown by a subscriber, which never stops the others; defaults to the global `reportError`. */
     readonly onError?: (error: unknown) => void;
 }

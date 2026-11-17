@@ -85,6 +85,20 @@ function handleTrapKeydown(event: KeyboardEvent, container: HTMLElement): void {
 }
 
 /**
+ * Detach a trap's keydown listener, undo its container tabindex and remove it
+ * from the trap stack.
+ */
+function releaseTrap(trap: ActiveTrap): void {
+    trap.element.removeEventListener('keydown', trap.listener);
+
+    if (trap.addedTabIndex) {
+        trap.element.removeAttribute('tabindex');
+    }
+
+    trapStack.splice(trapStack.indexOf(trap), 1);
+}
+
+/**
  * Create a focus trap the host activates once the container has rendered and
  * deactivates when it hides; when traps nest, only the latest one handles Tab.
  */
@@ -93,22 +107,13 @@ export function useFocusTrap(container: Ref<HTMLElement | null>): FocusTrapContr
     let trap: ActiveTrap | null = null;
 
     /**
-     * Detach the keydown listener, undo the container tabindex and leave the
-     * trap stack.
+     * Release the current trap, if any.
      */
     function release(): void {
-        if (trap === null) {
-            return;
+        if (trap !== null) {
+            releaseTrap(trap);
+            trap = null;
         }
-
-        trap.element.removeEventListener('keydown', trap.listener);
-
-        if (trap.addedTabIndex) {
-            trap.element.removeAttribute('tabindex');
-        }
-
-        trapStack.splice(trapStack.indexOf(trap), 1);
-        trap = null;
     }
 
     /**

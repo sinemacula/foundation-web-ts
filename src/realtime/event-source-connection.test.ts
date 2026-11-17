@@ -93,7 +93,8 @@ class FakeEventSource {
     }
 
     /**
-     * Dispatch a data-less transport event to its handler property and listeners.
+     * Dispatch a data-less transport event to its handler property and
+     * listeners.
      */
     #dispatchTransportEvent(type: string, handler: ((event: Event) => void) | null): void {
         const event = new Event(type);

@@ -40,6 +40,17 @@ const DEFAULT_INTERVAL = 300_000;
 const DEFAULT_TIMEOUT = 10_000;
 
 /**
+ * A check in flight and the controller that abandons it.
+ */
+interface InFlightCheck {
+    /** The check's completion. */
+    readonly promise: Promise<void>;
+
+    /** Aborts the check on timeout or stop. */
+    readonly controller: AbortController;
+}
+
+/**
  * Polls on an interval and on tab focus, notifying once per new version.
  */
 export class UpdateMonitor {
@@ -93,7 +104,7 @@ export class UpdateMonitor {
     #notifiedVersion: string | null = null;
 
     /** The check in flight and the controller that abandons it, or null when idle. */
-    #inFlight: { readonly promise: Promise<void>; readonly controller: AbortController } | null = null;
+    #inFlight: InFlightCheck | null = null;
 
     constructor(options: UpdateMonitorOptions) {
         this.#currentVersion = options.currentVersion;

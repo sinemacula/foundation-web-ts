@@ -238,6 +238,9 @@ export class EventSourceConnection implements RealtimeConnection {
     #attachEventListener(source: EventSource, event: string, subscription: Subscription): void {
         const { handlers } = subscription;
 
+        /**
+         * Deliver a server frame to every handler, isolating throwing ones.
+         */
         const listener = (frame: Event): void => {
             if (this.#source !== source || !isServerFrame(frame)) {
                 return;
@@ -255,7 +258,13 @@ export class EventSourceConnection implements RealtimeConnection {
         };
 
         source.addEventListener(event, listener);
-        subscription.detach = () => source.removeEventListener(event, listener);
+
+        /**
+         * Remove the listener from the EventSource it was attached to.
+         */
+        subscription.detach = (): void => {
+            source.removeEventListener(event, listener);
+        };
     }
 
     /**

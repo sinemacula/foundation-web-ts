@@ -13,6 +13,7 @@ import type {
 export interface ConnectivityMonitorOptions {
     /** The window whose connectivity events are observed; defaults to the global window. */
     readonly targetWindow?: Window;
+
     /** Receives an error thrown by a subscriber, which never stops the others; defaults to the global `reportError`. */
     readonly onError?: (error: unknown) => void;
 }

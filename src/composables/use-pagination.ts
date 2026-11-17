@@ -84,8 +84,8 @@ export function usePagination(options: UsePaginationOptions): Pagination {
     const offset = computed(() => (page.value - 1) * perPage);
 
     /**
-     * Jump to a page, truncated and clamped into `[1, pageCount]`; a
-     * non-finite page is ignored.
+     * Jump to a page, truncated and clamped into `[1, pageCount]`; a non-finite
+     * page is ignored.
      */
     function goTo(target: number): void {
         if (Number.isFinite(target)) {
