@@ -372,7 +372,7 @@ describe('installChunkErrorRecovery', () => {
 
     describe('default reload', () => {
         /**
-         * Stub the global location at `href`, recording assignments and reloads.
+         * Stub the global location at `href`, recording assigns and reloads.
          */
         function stubLocation(href: string): string[] {
             const calls: string[] = [];

@@ -20,7 +20,7 @@ export class RedirectLoopError extends Error {
     readonly limit: number;
 
     /**
-     * Construct the error naming the navigation, the refused target and the limit.
+     * Construct the error naming the navigation, refused target and limit.
      */
     constructor(origin: string, target: string, limit: number) {
         super(`Navigation to "${origin}" exceeded ${limit} middleware redirects; the next was to "${target}".`);

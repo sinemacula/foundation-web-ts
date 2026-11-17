@@ -33,8 +33,8 @@ export interface DomColorSchemeApplierOptions {
 }
 
 /**
- * A {@link ColorSchemeApplier} that stamps the DOM and owns every
- * `theme-color` meta tag.
+ * A {@link ColorSchemeApplier} that stamps the DOM and owns every `theme-color`
+ * meta tag.
  */
 export class DomColorSchemeApplier implements ColorSchemeApplier {
     /** The document whose root and head receive the applied scheme. */

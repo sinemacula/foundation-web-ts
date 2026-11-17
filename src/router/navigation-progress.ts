@@ -48,7 +48,7 @@ export function createNavigationProgress(router: Router): NavigationProgress {
     });
 
     const removeAfterEach = router.afterEach((to, _from, failure) => {
-        // A duplicated navigation skips the before hook yet supersedes any pending one.
+        // A duplicate skips the before hook yet supersedes any pending one.
         if (isNavigationFailure(failure, NavigationFailureType.duplicated)) {
             isNavigating.value = false;
         } else {

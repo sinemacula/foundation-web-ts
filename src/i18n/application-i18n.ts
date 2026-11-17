@@ -141,8 +141,8 @@ export interface LocaleSwitcher {
     /**
      * Match `locale` against the enabled locales, load its messages, then
      * activate and persist it; a call superseded by a later one before its
-     * messages load applies and persists nothing, and still rejects if its
-     * own load fails.
+     * messages load applies and persists nothing, and still rejects if its own
+     * load fails.
      *
      * @throws {@link I18nError} when `locale` does not match any enabled locale
      */
@@ -156,32 +156,8 @@ export interface LocaleSwitcher {
  */
 export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher {
     const current = computed(() => options.i18n.global.locale.value);
-    const installed = new Set<string>(options.i18n.global.availableLocales);
-    const loading = new Map<string, Promise<void>>();
+    const ensureInstalled = createOnceInstaller(options.i18n.global.availableLocales);
     let latestSwitch: object | null = null;
-
-    /**
-     * Install `locale`'s messages once, sharing a load already in flight.
-     */
-    const ensureInstalled = (activation: ActivateLocaleOptions, locale: string): Promise<void> => {
-        if (installed.has(locale)) {
-            return Promise.resolve();
-        }
-
-        const pending =
-            loading.get(locale) ??
-            installLocaleMessages(activation, locale)
-                .then(() => {
-                    installed.add(locale);
-                })
-                .finally(() => {
-                    loading.delete(locale);
-                });
-
-        loading.set(locale, pending);
-
-        return pending;
-    };
 
     return {
         current,
@@ -219,6 +195,37 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
             applyLocale(activation);
             options.localeService.persist(matched);
         },
+    };
+}
+
+/**
+ * Build an installer that loads each locale's messages once, sharing a load
+ * already in flight and retrying one that failed.
+ */
+function createOnceInstaller(
+    alreadyInstalled: readonly string[],
+): (activation: ActivateLocaleOptions, locale: string) => Promise<void> {
+    const installed = new Set<string>(alreadyInstalled);
+    const loading = new Map<string, Promise<void>>();
+
+    return (activation, locale) => {
+        if (installed.has(locale)) {
+            return Promise.resolve();
+        }
+
+        const pending =
+            loading.get(locale) ??
+            installLocaleMessages(activation, locale)
+                .then(() => {
+                    installed.add(locale);
+                })
+                .finally(() => {
+                    loading.delete(locale);
+                });
+
+        loading.set(locale, pending);
+
+        return pending;
     };
 }
 
