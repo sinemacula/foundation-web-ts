@@ -5,7 +5,30 @@
         "jsx": "preserve",
         "jsxImportSource": "vue",
         "paths": {
-            "@/*": ["./playground/src/*"]
+            "@/*": ["./playground/src/*"],
+            "@sinemacula/web-core/app/create-web-core-app": ["./src/app/create-web-core-app.ts"],
+            "@sinemacula/web-core/app/services": ["./src/app/services.ts"],
+            "@sinemacula/web-core/composables/use-focus-trap": ["./src/composables/use-focus-trap.ts"],
+            "@sinemacula/web-core/config/web-environment": ["./src/config/web-environment.ts"],
+            "@sinemacula/web-core/i18n/application-i18n": ["./src/i18n/application-i18n.ts"],
+            "@sinemacula/web-core/module/module": ["./src/module/module.ts"],
+            "@sinemacula/web-core/notifications/confirm-service": ["./src/notifications/confirm-service.ts"],
+            "@sinemacula/web-core/notifications/toast-service": ["./src/notifications/toast-service.ts"],
+            "@sinemacula/web-core/query/use-list-query": ["./src/query/use-list-query.ts"],
+            "@sinemacula/web-core/query/use-resource": ["./src/query/use-resource.ts"],
+            "@sinemacula/web-core/router/navigation-progress": ["./src/router/navigation-progress.ts"],
+            "@sinemacula/web-core/session/authorization": ["./src/session/authorization.ts"],
+            "@sinemacula/web-core/session/create-session-module": ["./src/session/create-session-module.ts"],
+            "@sinemacula/web-core/session/middleware": ["./src/session/middleware.ts"],
+            "@sinemacula/web-core/session/redirect": ["./src/session/redirect.ts"],
+            "@sinemacula/web-core/session/session-context": ["./src/session/session-context.ts"],
+            "@sinemacula/web-core/session/session-realtime": ["./src/session/session-realtime.ts"],
+            "@sinemacula/web-core/session/session-refresh-coordinator": [
+                "./src/session/session-refresh-coordinator.ts"
+            ],
+            "@sinemacula/web-core/session/session-store": ["./src/session/session-store.ts"],
+            "@sinemacula/web-core/storage/strict-web-storage": ["./src/storage/strict-web-storage.ts"],
+            "@sinemacula/web-core/storage/web-locks-session-lock": ["./src/storage/web-locks-session-lock.ts"]
         },
         "types": ["vite/client", "node"],
         "noEmit": true

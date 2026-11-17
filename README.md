@@ -13,9 +13,9 @@
 
 </div>
 
-`@sinemacula/web-core` is the framework-agnostic kernel on which Sine Macula web applications are built. It
-provides the cross-cutting concerns every frontend needs - configuration, HTTP, routing, modules, i18n, storage
-and more - as small, port-driven TypeScript units with no product code and no UI.
+`@sinemacula/web-core` is the Vue kernel on which Sine Macula web applications are built. It layers the
+browser and Vue bindings - the composition root, feature modules, routing, i18n, the session module, realtime and
+release monitoring - over the platform-agnostic `@sinemacula/foundation`, with no product code and no UI.
 
 The repository root is the package: `src/` is the published kernel source. The repository is also the
 **reference architecture** for consuming frontends - the playground application under `playground/` shows how a
@@ -23,29 +23,26 @@ real product wires the kernel, and is the template consuming apps follow.
 
 ## What lives here
 
-| Area                 | What it provides                                                                                                              | Port / service                    | Vue       |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------- |
-| `src/activity/`      | Detects when the user has stopped interacting, for policies like auto-logout                                                  | `IdleMonitor` (no port)           | no        |
-| `src/analytics/`     | Records product events through a swappable tracker (console + no-op adapters)                                                 | `AnalyticsTracker`                | type-only |
-| `src/app/`           | The composition root: `createWebCoreApp` wires every subsystem in order, plus the service holders and accessors               | `createWebCoreApp`                | runtime   |
-| `src/authorization/` | Evaluates flat permission grants with wildcard-prefix matching                                                                | `PermissionSet` (no port)         | no        |
-| `src/composables/`   | Reusable Vue composables: focus trap, pagination, route-query state                                                           | -                                 | runtime   |
-| `src/config/`        | Reads typed configuration from the environment and freezes it into a repository                                               | `EnvironmentSource`               | no        |
-| `src/connectivity/`  | Tracks browser online/offline and notifies subscribers on change                                                              | `ConnectivityMonitor` (no port)   | no        |
-| `src/feature-flags/` | Resolves feature flags through a swappable provider (static adapter + `useFeatureFlag`)                                       | `FeatureFlags`                    | runtime   |
-| `src/http/`          | HTTP client: a fetch adapter behind a port, a typed error hierarchy, and bearer-token attach + refresh-and-retry              | `HttpClient`                      | no        |
-| `src/i18n/`          | Detects and persists the active locale, wires vue-i18n, and syncs the document title                                          | `LocaleSwitcher` (service)        | runtime   |
-| `src/logging/`       | A minimal logging port with console and no-op adapters                                                                        | `Logger`                          | no        |
-| `src/module/`        | The feature-module contract and the registry that validates, orders, boots and collects messages from modules                 | `ModuleDefinition` (contract)     | type-only |
-| `src/notifications/` | Toast and confirm-dialog services - state and lifecycle only; rendering stays app-side                                        | `ToastService` / `ConfirmService` | runtime   |
-| `src/query/`         | Resource queries: the `ApiQuery` builder, a typed filter DSL, envelope mapping, `ResourceClient`, and list-query composables  | `ResourceClient` (service)        | runtime   |
-| `src/realtime/`      | Live connections behind a port: WebSocket and EventSource adapters sharing exponential-backoff reconnect                      | `RealtimeConnection`              | no        |
-| `src/reporting/`     | Error reporting through a swappable reporter, a breadcrumb trail, and a global error-handler installer                        | `ErrorReporter`                   | type-only |
-| `src/router/`        | Navigation: a middleware contract + pipeline, router factory, route-meta typing, chunk-load recovery, and navigation progress | `RouteMiddleware` (contract)      | runtime   |
-| `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and session persistence         | `SessionApi`                      | runtime   |
-| `src/storage/`       | A synchronous key-value storage port with browser, strict, in-memory and namespacing adapters, plus a Web Locks session lock  | `KeyValueStorage`                 | no        |
-| `src/support/`       | Small shared utilities (`deepFreeze`, `isRecord`, clipboard) and the `ServiceHolder` singleton primitive                      | -                                 | no        |
-| `src/updates/`       | Polls the deployed runtime document for a new release and notifies when one appears                                           | `UpdateMonitor` (no port)         | no        |
+| Area                 | What it provides                                                                                                      | Port / service                    | Vue       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------- |
+| `src/activity/`      | Detects when the user has stopped interacting, for policies like auto-logout                                          | `IdleMonitor` (no port)           | no        |
+| `src/app/`           | The composition root: `createWebCoreApp` wires every subsystem in order, plus the service holders and accessors       | `createWebCoreApp`                | runtime   |
+| `src/composables/`   | Reusable Vue composables: focus trap, pagination, route-query state                                                   | -                                 | runtime   |
+| `src/config/`        | The web environment over build-time variables and the runtime document                                                | `EnvironmentSource`               | no        |
+| `src/connectivity/`  | The browser online/offline adapter of the foundation connectivity port                                                | `ConnectivityMonitor`             | no        |
+| `src/feature-flags/` | The `useFeatureFlag` composable over the foundation feature-flag provider                                             | `FeatureFlags`                    | runtime   |
+| `src/i18n/`          | Detects and persists the active locale, wires vue-i18n, and syncs the document title                                  | `LocaleSwitcher` (service)        | runtime   |
+| `src/module/`        | The feature-module contract and the registry that validates, orders, boots and collects messages from modules         | `ModuleDefinition` (contract)     | type-only |
+| `src/notifications/` | Toast and confirm-dialog services - state and lifecycle only; rendering stays app-side                                | `ToastService` / `ConfirmService` | runtime   |
+| `src/query/`         | List-query, resource and API-query composables over the foundation `ApiQuery` and `ResourceClient`                    | `ResourceClient` (service)        | runtime   |
+| `src/realtime/`      | The EventSource adapter of the foundation realtime port (the WebSocket adapter ships in foundation)                   | `RealtimeConnection`              | no        |
+| `src/reporting/`     | Installs the global error handlers that feed the foundation error reporter and breadcrumb trail                       | `ErrorReporter`                   | type-only |
+| `src/router/`        | Vue Router binding: router factory, route-meta typing, middleware wiring, chunk-load recovery, navigation progress    | `RouteMiddleware` (contract)      | runtime   |
+| `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and session persistence | `SessionApi`                      | runtime   |
+| `src/storage/`       | Browser and strict Web Storage adapters, plus the Web Locks session lock                                              | `KeyValueStorage`                 | no        |
+| `src/support/`       | Clipboard access                                                                                                      | -                                 | no        |
+| `src/theme/`         | The colour-scheme boot script, DOM applier and `matchMedia` source for the foundation colour-scheme service           | `ColorSchemeService`              | no        |
+| `src/updates/`       | Polls the deployed runtime document for a new release and notifies when one appears                                   | `UpdateMonitor` (no port)         | no        |
 
 ## Installation
 
@@ -61,14 +58,14 @@ is ESM-only and ships compiled `dist/` with type declarations.
 No barrel exports. Import the file you need, by its full subpath:
 
 ```ts
-import { FetchHttpClient } from '@sinemacula/web-core/http/fetch-http-client';
+import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
 ```
 
-Inside this repository the exports map (`"./*": "./src/*.ts"`) resolves every subpath directly to its source file,
-so the playground consumes the kernel with no build step. The published package remaps the same wildcard to
-compiled output (`"./*": { "types": "./dist/*.d.ts", "import": "./dist/*.js" }`); import specifiers are identical
-either way. `vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies; the framework-agnostic areas (http,
-storage, config, ...) never import them.
+The exports map points every kernel subpath at compiled output (`{ "types": "./dist/<path>.d.ts", "import":
+"./dist/<path>.js" }`), and the `prepare` script builds `dist/`, so the package also installs straight from git
+(`github:sinemacula/web-core-ts#master`). Inside this repository the TypeScript, Vite and Vitest configs map the
+same specifiers to `src/`, so the playground and tests run with no build step. `vue`, `vue-router`, `vue-i18n` and
+`pinia` are peer dependencies; the framework-agnostic layer (http, query, session core, storage, config, ...) lives in `@sinemacula/foundation`.
 
 ## Modules
 
@@ -378,9 +375,9 @@ playground/    Reference application + dev harness (@sinemacula/web-core-playgro
 e2e/           Playwright suite driving the playground application
 ```
 
-The playground consumes the kernel as `"@sinemacula/web-core": "file:.."` - a self-link resolved through the
-package's real exports map, not a path alias. Its import specifiers are therefore exactly what an external
-consumer writes, so the reference application doubles as a permanent integration test of the published surface.
+The playground consumes the kernel as `"@sinemacula/web-core": "file:.."`, through the package's real export
+specifiers. Only exported subpaths are mapped to source, so its imports are exactly what an external consumer
+writes and the reference application doubles as a permanent integration test of the published surface.
 
 For the application-side details - boot sequence, runtime environment mechanics, adding a feature module - see
 [playground/README.md](playground/README.md).
@@ -430,7 +427,7 @@ The package is published to npm from CI - never by hand.
 
 - **Versioning**: release-please reads Conventional Commit history and maintains a standing Release PR that bumps
   `package.json` and `CHANGELOG.md`. Merging it tags the release and cuts a GitHub Release.
-- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which compiles `dist/` through the `prepack`
+- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which compiles `dist/` through the `prepare`
   lifecycle and runs `npm publish --provenance` under npm trusted publishing (OIDC - no token).
 - **Local checks**: `npm run build:dist` compiles the package; `npm run check:pkg` packs it and validates the
   published surface with publint and are-the-types-wrong.
