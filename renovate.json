@@ -34,6 +34,7 @@
                 "vue-router",
                 "vue-i18n",
                 "pinia",
+                "@vue/devtools-api",
                 "vee-validate",
                 "vue-tsc",
                 "@vitejs/plugin-vue"
