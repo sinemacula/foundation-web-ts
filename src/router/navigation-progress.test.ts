@@ -258,4 +258,29 @@ describe('createNavigationProgress', () => {
 
         progress.stop();
     });
+
+    it('settles when a newer navigation fails in a guard that runs before the progress hook', async () => {
+        const pending = deferredComponent();
+        const router = buildRouter(pending.load);
+
+        router.beforeEach(to => {
+            if (to.path === '/') {
+                throw new Error('guard failed');
+            }
+        });
+        router.onError(() => undefined);
+
+        const progress = createNavigationProgress(router);
+
+        void router.push('/lazy');
+        await flushRouterGuards();
+
+        expect(progress.isNavigating.value).toBe(true);
+
+        await router.push('/').catch(() => undefined);
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
+    });
 });

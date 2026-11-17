@@ -8,7 +8,6 @@
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 import type { RouteLocation, RouteLocationNormalized, Router } from 'vue-router';
-import { isNavigationFailure, NavigationFailureType } from 'vue-router';
 
 /**
  * The reactive navigation-progress state returned by
@@ -26,35 +25,32 @@ export interface NavigationProgress {
 
 /**
  * Track whether `router` has a navigation in flight, ignoring the settling of
- * navigations a newer one superseded; inside an active effect scope, `stop()`
- * also runs when the scope is disposed.
+ * a tracked navigation that a newer one superseded; inside an active effect
+ * scope, `stop()` also runs when the scope is disposed.
  */
 export function createNavigationProgress(router: Router): NavigationProgress {
     const isNavigating = ref(false);
+    const tracked = new WeakSet<RouteLocation | RouteLocationNormalized>();
     let latest: RouteLocation | RouteLocationNormalized | null = null;
 
     /**
-     * Clear the flag when `to` belongs to the latest tracked navigation.
+     * Clear the flag unless `to` is a tracked navigation a newer one replaced.
      */
     const settle = (to: RouteLocationNormalized): void => {
-        if (navigationOf(to) === latest) {
+        const navigation = navigationOf(to);
+
+        if (navigation === latest || !tracked.has(navigation)) {
             isNavigating.value = false;
         }
     };
 
     const removeBeforeEach = router.beforeEach(to => {
         latest = navigationOf(to);
+        tracked.add(latest);
         isNavigating.value = true;
     });
 
-    const removeAfterEach = router.afterEach((to, _from, failure) => {
-        // A duplicate skips the before hook yet supersedes any pending one.
-        if (isNavigationFailure(failure, NavigationFailureType.duplicated)) {
-            isNavigating.value = false;
-        } else {
-            settle(to);
-        }
-    });
+    const removeAfterEach = router.afterEach(settle);
 
     const removeOnError = router.onError((_error: unknown, to: RouteLocationNormalized) => {
         settle(to);

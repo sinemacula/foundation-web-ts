@@ -259,7 +259,10 @@ describe('createApplicationRouter', () => {
             };
         }
 
-        /** Build a router whose middleware redirects `/ping` and `/pong` to each other. */
+        /**
+         * Build a router whose middleware redirects `/ping` and `/pong` to each
+         * other, with a `/slow` route that never loads.
+         */
         function pingPongRouter() {
             const router = createApplicationRouter({
                 history: createMemoryHistory(),
@@ -276,6 +279,7 @@ describe('createApplicationRouter', () => {
                     { path: '/', component: EmptyComponent },
                     { path: '/ping', component: EmptyComponent },
                     { path: '/pong', component: EmptyComponent },
+                    { path: '/slow', component: () => new Promise<never>(() => undefined) },
                 ],
             });
 
@@ -325,6 +329,11 @@ describe('createApplicationRouter', () => {
             router.onError(onError);
 
             const progress = createNavigationProgress(router);
+
+            void router.push('/slow');
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+            expect(progress.isNavigating.value).toBe(true);
 
             await router.push('/ping').catch(() => undefined);
 
