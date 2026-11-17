@@ -18,6 +18,7 @@ import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refre
 import { createDefaultSessionApi } from '@sinemacula/foundation/session/default-session-api';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
+import { scheduleOnTimers } from '@sinemacula/web-core/module/module';
 import { installSessionContext } from '@sinemacula/web-core/session/session-context';
 import { useSessionStore } from '@sinemacula/web-core/session/session-store';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
@@ -43,6 +44,7 @@ export function installTestSession(storage: KeyValueStorage): void {
             return hydration;
         },
         clock: () => Date.now(),
+        schedule: scheduleOnTimers,
         refreshSkewMs: 60_000,
         device: () => ({ uuid: 'test-device-uuid', os: 'WEB' }),
         get api(): SessionApi {

@@ -8,8 +8,8 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
+import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
 import { RealtimeError } from '@sinemacula/foundation/realtime/realtime-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { RefreshOutcome, RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
@@ -22,9 +22,10 @@ import { installSessionContext, resetSessionContext } from './session-context';
 import { followSession, sessionReconnectGuard } from './session-realtime';
 import type { SessionStore } from './session-store';
 import { useSessionStore } from './session-store';
-import type { FakeSessionApi, RecordingConnection } from './test-support/session-fixtures';
+import type { FakeSessionApi, ManualScheduler, RecordingConnection } from './test-support/session-fixtures';
 import {
     createFakeSessionApi,
+    createManualScheduler,
     createRecordingConnection,
     createTestSessionContext,
     deferred,
@@ -42,6 +43,7 @@ describe('session realtime policy', () => {
     let storage: MemoryStorage;
     let gateway: FakeSessionApi;
     let connection: RecordingConnection;
+    let scheduler: ManualScheduler;
     let observability: Observability;
 
     /**
@@ -55,6 +57,7 @@ describe('session realtime policy', () => {
                 persistence: new KeyValueSessionPersistence(storage),
                 api: gateway,
                 clock: () => NOW,
+                schedule: scheduler.schedule,
                 refreshSkewMs: SKEW,
                 ...overrides,
             }),
@@ -92,6 +95,7 @@ describe('session realtime policy', () => {
         storage = new MemoryStorage();
         gateway = createFakeSessionApi();
         connection = createRecordingConnection();
+        scheduler = createManualScheduler();
         observability = installObservability();
         setActivePinia(createPinia());
         install();
@@ -99,7 +103,6 @@ describe('session realtime policy', () => {
     });
 
     afterEach(() => {
-        vi.useRealTimers();
         resetSessionContext();
         resetWebCoreServices();
     });
@@ -318,22 +321,26 @@ describe('session realtime policy', () => {
                 .mockResolvedValueOnce(offline)
                 .mockResolvedValueOnce(offline)
                 .mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ expiresAtEpochMs: null }) });
-            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
             follow(store);
 
-            await vi.advanceTimersByTimeAsync(999);
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([1_000]);
+            });
             expect(gateway.refresh).toHaveBeenCalledTimes(1);
 
-            await vi.advanceTimersByTimeAsync(1);
-            expect(gateway.refresh).toHaveBeenCalledTimes(2);
-
-            await vi.advanceTimersByTimeAsync(1_999);
+            scheduler.flush();
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([2_000]);
+            });
             expect(gateway.refresh).toHaveBeenCalledTimes(2);
             expect(connection.calls).toStrictEqual([]);
 
-            await vi.advanceTimersByTimeAsync(1);
+            scheduler.flush();
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
             expect(gateway.refresh).toHaveBeenCalledTimes(3);
-            expect(connection.calls).toStrictEqual(['connect']);
+            expect(scheduler.delays()).toStrictEqual([]);
         });
 
         it('connects a skipped session once a refresh elsewhere renews it', async () => {
@@ -439,14 +446,17 @@ describe('session realtime policy', () => {
             const store = await hydrated(NOW);
 
             gateway.refresh.mockResolvedValue({ kind: 'retryable', error: new NetworkError('offline') });
-            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
             const teardown = follow(store);
 
-            await vi.advanceTimersByTimeAsync(0);
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([1_000]);
+            });
             await end(teardown);
-            await vi.advanceTimersByTimeAsync(60_000);
 
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([]);
+            });
             expect(gateway.refresh).toHaveBeenCalledTimes(1);
         });
 

@@ -15,9 +15,10 @@ import { resetWebCoreServices } from '../app/services';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
 import { resetSessionContext, sessionContext } from './session-context';
-import type { FakeSessionApi } from './test-support/session-fixtures';
+import type { FakeSessionApi, ManualScheduler } from './test-support/session-fixtures';
 import {
     createFakeSessionApi,
+    createManualScheduler,
     createRecordingConnection,
     deferred,
     persistSnapshot,
@@ -73,7 +74,6 @@ describe('session lifecycle', () => {
     });
 
     afterEach(() => {
-        vi.useRealTimers();
         vi.restoreAllMocks();
         resetWebCoreServices();
         resetSessionContext();
@@ -436,18 +436,27 @@ describe('session lifecycle', () => {
     });
 
     describe('proactive refresh', () => {
+        let now: number;
+        let scheduler: ManualScheduler;
+
         /**
-         * Register over a persisted session expiring at the given instant, on
-         * fake timers with the platform clock on fake time.
+         * Register over a persisted session expiring at the given instant, on a
+         * platform clock and scheduler the test drives.
          *
          * @param expiresAtEpochMs - the persisted expiry
          * @param options - module options
+         * @param setup - harness seams
          * @returns the harness
          */
-        function expiring(expiresAtEpochMs: number, options: SessionModuleOptions = {}): SessionHarness {
-            vi.useFakeTimers({ now: 1_000_000 });
+        function expiring(
+            expiresAtEpochMs: number,
+            options: SessionModuleOptions = {},
+            setup: HarnessSetup = {},
+        ): SessionHarness {
+            now = 1_000_000;
+            scheduler = createManualScheduler();
 
-            const target = harness(options, { clock: () => Date.now() });
+            const target = harness(options, { clock: () => now, schedule: scheduler.schedule, ...setup });
 
             persistSnapshot(target.win.localStorage, tokens({ expiresAtEpochMs }));
             gateway.currentUser.mockResolvedValue(user());
@@ -455,38 +464,31 @@ describe('session lifecycle', () => {
             return target;
         }
 
-        it('refreshes the skew ahead of expiry on the platform clock, then follows the new expiry', async () => {
+        it('arms the refresh the skew ahead of expiry on the platform clock, then follows the new expiry', async () => {
             const target = expiring(1_000_000 + 120_000);
 
-            gateway.refresh
-                .mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ expiresAtEpochMs: 1_000_000 + 300_000 }) })
-                .mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
+            gateway.refresh.mockResolvedValueOnce({
+                kind: 'refreshed',
+                tokens: tokens({ expiresAtEpochMs: 1_000_000 + 300_000 }),
+            });
             await target.boot();
 
-            await vi.advanceTimersByTimeAsync(59_999);
+            expect(scheduler.delays()).toStrictEqual([60_000]);
             expect(gateway.refresh).not.toHaveBeenCalled();
 
-            await vi.advanceTimersByTimeAsync(1);
-            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            now += 60_000;
+            scheduler.flush();
 
-            await vi.advanceTimersByTimeAsync(239_999 - 60_000);
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([180_000]);
+            });
             expect(gateway.refresh).toHaveBeenCalledTimes(1);
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(gateway.refresh).toHaveBeenCalledTimes(2);
         });
 
         it('honours a custom skew', async () => {
-            const target = expiring(1_000_000 + 10_000, { refreshSkewMs: 4_000 });
+            await expiring(1_000_000 + 10_000, { refreshSkewMs: 4_000 }).boot();
 
-            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
-            await target.boot();
-
-            await vi.advanceTimersByTimeAsync(5_999);
-            expect(gateway.refresh).not.toHaveBeenCalled();
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            expect(scheduler.delays()).toStrictEqual([6_000]);
         });
 
         it('refreshes at once inside the skew', async () => {
@@ -494,9 +496,14 @@ describe('session lifecycle', () => {
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
             await target.boot();
-            await vi.advanceTimersByTimeAsync(0);
 
-            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            expect(scheduler.delays()).toStrictEqual([0]);
+
+            scheduler.flush();
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            });
         });
 
         it('disarms when the session ends', async () => {
@@ -504,22 +511,23 @@ describe('session lifecycle', () => {
 
             await target.boot();
             await target.store().clearLocal();
-            await vi.advanceTimersByTimeAsync(120_000);
+            await settle();
 
-            expect(gateway.refresh).not.toHaveBeenCalled();
+            expect(scheduler.delays()).toStrictEqual([]);
         });
 
         it('re-evaluates at the longest timer delay instead of overflowing', async () => {
             const target = expiring(1_000_000 + MAX_TIMEOUT_DELAY_MS + 120_000);
 
-            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
             await target.boot();
 
-            await vi.advanceTimersByTimeAsync(MAX_TIMEOUT_DELAY_MS);
-            expect(gateway.refresh).not.toHaveBeenCalled();
+            expect(scheduler.delays()).toStrictEqual([MAX_TIMEOUT_DELAY_MS]);
 
-            await vi.advanceTimersByTimeAsync(60_000);
-            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            now += MAX_TIMEOUT_DELAY_MS;
+            scheduler.flush();
+
+            expect(scheduler.delays()).toStrictEqual([60_000]);
+            expect(gateway.refresh).not.toHaveBeenCalled();
         });
 
         it('redirects when the proactive refresh is refused', async () => {
@@ -527,29 +535,26 @@ describe('session lifecycle', () => {
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
             await target.boot();
-            await vi.advanceTimersByTimeAsync(0);
+            scheduler.flush();
 
+            await vi.waitFor(() => {
+                expect(target.pushes).toStrictEqual([{ name: 'auth.login', query: { redirect: '/dashboard' } }]);
+            });
             expect(target.store().isAuthenticated).toBe(false);
-            expect(target.pushes).toStrictEqual([{ name: 'auth.login', query: { redirect: '/dashboard' } }]);
         });
 
         it('arms nothing when disabled', async () => {
-            const target = expiring(1_000_000 + 1_000, { proactiveRefresh: false });
+            await expiring(1_000_000 + 1_000, { proactiveRefresh: false }).boot();
 
-            await target.boot();
-            await vi.advanceTimersByTimeAsync(120_000);
-
-            expect(gateway.refresh).not.toHaveBeenCalled();
+            expect(scheduler.delays()).toStrictEqual([]);
         });
 
         it('cancels the armed refresh on teardown', async () => {
-            const target = expiring(1_000_000 + 120_000);
-            const teardown = await target.boot();
+            const teardown = await expiring(1_000_000 + 120_000).boot();
 
             teardown();
-            await vi.advanceTimersByTimeAsync(120_000);
 
-            expect(gateway.refresh).not.toHaveBeenCalled();
+            expect(scheduler.delays()).toStrictEqual([]);
         });
     });
 

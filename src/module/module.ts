@@ -44,6 +44,12 @@ export type LocaleMessageLoader = (locale: string) => Promise<LocaleMessages | n
 export type ModuleTeardown = () => void;
 
 /**
+ * Runs a task once after a delay in milliseconds, returning a function that
+ * cancels it; cancelling after it ran does nothing.
+ */
+export type ScheduleTask = (task: () => void, delayMs: number) => () => void;
+
+/**
  * Platform seams resolved once by the application preset and threaded to every
  * module hook.
  */
@@ -59,6 +65,9 @@ export interface ResolvedPlatform {
 
     /** Reads the current time as epoch milliseconds. */
     readonly clock: () => number;
+
+    /** Schedules and cancels delayed work. */
+    readonly schedule: ScheduleTask;
 }
 
 /**
@@ -179,6 +188,21 @@ export interface ModuleDefinition {
 
     /** This module owns the application catch-all; the registry orders it last. At most one module per registry may declare it. Keeping the catch-all last within the module's own routes array remains the module's responsibility. */
     readonly fallback?: boolean;
+}
+
+/**
+ * Schedule a task on the global timers: the browser scheduling seam.
+ *
+ * @param task - the task to run
+ * @param delayMs - the delay before it runs, in milliseconds
+ * @returns a function cancelling the task
+ */
+export function scheduleOnTimers(task: () => void, delayMs: number): () => void {
+    const timer = setTimeout(task, delayMs);
+
+    return () => {
+        clearTimeout(timer);
+    };
 }
 
 /**

@@ -3,8 +3,8 @@
  *
  * Scriptable stand-ins shared by the session unit tests: a gateway whose every
  * method is a mock, an in-memory Web Storage area, a serialising lock manager,
- * a recording realtime connection, deferred promises, and a session context
- * over in-memory persistence.
+ * a recording realtime connection, a scheduler run by hand, deferred promises,
+ * and a session context over in-memory persistence.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -21,6 +21,8 @@ import type { SessionTokens } from '@sinemacula/foundation/session/session-token
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import type { ScheduleTask } from '../../module/module';
+import { scheduleOnTimers } from '../../module/module';
 import type { SessionContext } from '../session-context';
 import { useSessionStore } from '../session-store';
 
@@ -57,6 +59,27 @@ export interface RecordingConnection extends RealtimeConnection {
 
     /** Open after a connect, closed after a disconnect; writable to stage one. */
     state: RealtimeState;
+}
+
+/** A scheduling seam whose tasks run only when flushed. */
+export interface ManualScheduler {
+    /** The scheduling seam. */
+    readonly schedule: ScheduleTask;
+
+    /** The delays of the tasks still pending, in scheduling order. */
+    readonly delays: () => number[];
+
+    /** Run every task pending now. */
+    readonly flush: () => void;
+}
+
+/** A task the manual scheduler holds. */
+interface ScheduledTask {
+    /** The task to run. */
+    readonly task: () => void;
+
+    /** Its delay in milliseconds. */
+    readonly delayMs: number;
 }
 
 /**
@@ -210,6 +233,37 @@ export function createRecordingConnection(): RecordingConnection {
 }
 
 /**
+ * Build a scheduling seam whose tasks run only when flushed.
+ *
+ * @returns the scheduler
+ */
+export function createManualScheduler(): ManualScheduler {
+    const tasks = new Set<ScheduledTask>();
+
+    return {
+        schedule: (task, delayMs) => {
+            const entry = { task, delayMs };
+
+            tasks.add(entry);
+
+            return () => {
+                tasks.delete(entry);
+            };
+        },
+        delays: () => [...tasks].map(entry => entry.delayMs),
+        flush: () => {
+            const due = [...tasks];
+
+            tasks.clear();
+
+            for (const entry of due) {
+                entry.task();
+            }
+        },
+    };
+}
+
+/**
  * Build a session context over in-memory persistence, hydrating the active
  * store on first readiness and refreshing through it.
  *
@@ -232,6 +286,7 @@ export function createTestSessionContext(overrides: Partial<SessionContext> = {}
             return hydration;
         },
         clock: () => 0,
+        schedule: scheduleOnTimers,
         refreshSkewMs: 60_000,
         ...overrides,
     };

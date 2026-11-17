@@ -6,7 +6,8 @@
  * authorization helpers and the realtime reconnect guard: the foundation core
  * slice (persistence, the lazily-built API gateway, the device fingerprint)
  * plus the route identity, the store id, the single refresh authority, the
- * hydration readiness, and the clock and skew expiry is judged by.
+ * hydration readiness, the clock and skew expiry is judged by, and the
+ * scheduler that times refreshes and retries.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -18,6 +19,7 @@ import type { SessionCoreContext } from '@sinemacula/foundation/session/session-
 import type { RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { createServiceHolder } from '@sinemacula/foundation/support/service-holder';
+import type { ScheduleTask } from '../module/module';
 import type { SessionRoutes } from './create-session-module';
 
 /**
@@ -39,6 +41,9 @@ export interface SessionContext<U extends SessionUser = SessionUser, C = Passwor
 
     /** Reads the current time as epoch milliseconds. */
     readonly clock: () => number;
+
+    /** Schedules and cancels the proactive refresh and realtime retries. */
+    readonly schedule: ScheduleTask;
 
     /** How long before expiry a session counts as expiring, in milliseconds. */
     readonly refreshSkewMs: number;

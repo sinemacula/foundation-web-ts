@@ -33,7 +33,14 @@ import type { FeatureFlags } from '@sinemacula/foundation/feature-flags/feature-
 import type { HttpClient, RequestInterceptor, ResponseErrorHandler } from '@sinemacula/foundation/http/http-client';
 import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
 import type { Logger } from '@sinemacula/foundation/logging/logger';
-import type { LocaleMessages, ModuleDefinition, ModuleStoreFactory, ResolvedPlatform } from '../module/module';
+import type {
+    LocaleMessages,
+    ModuleDefinition,
+    ModuleStoreFactory,
+    ResolvedPlatform,
+    ScheduleTask,
+} from '../module/module';
+import { scheduleOnTimers } from '../module/module';
 import type { ModuleRegistry } from '../module/module-registry';
 import { bootModules, createModuleRegistry, registerModules } from '../module/module-registry';
 import { ConfirmService } from '../notifications/confirm-service';
@@ -258,6 +265,9 @@ export interface WebCorePlatformOptions {
 
     /** Resolves the current time; defaults to `Date.now`. */
     readonly clock?: () => number;
+
+    /** Schedules and cancels delayed work; defaults to the global timers. */
+    readonly schedule?: ScheduleTask;
 
     /** The router history implementation; defaults to web history. */
     readonly history?: RouterHistory;
@@ -838,6 +848,7 @@ function resolvePlatform(platform: WebCorePlatformOptions | undefined): Resolved
         targetWindow: platform?.targetWindow ?? globalThis.window,
         targetDocument: platform?.targetDocument ?? globalThis.document,
         clock: platform?.clock ?? ((): number => Date.now()),
+        schedule: platform?.schedule ?? scheduleOnTimers,
     };
 }
 

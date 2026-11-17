@@ -24,7 +24,8 @@ import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtim
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installAnalytics, installApi, installFeatureFlags, installReporting } from '../../app/services';
 import { createApplicationI18n } from '../../i18n/application-i18n';
-import type { ModuleDefinition, ModuleTeardown, ResolvedPlatform } from '../../module/module';
+import type { ModuleDefinition, ModuleTeardown, ResolvedPlatform, ScheduleTask } from '../../module/module';
+import { scheduleOnTimers } from '../../module/module';
 import { registerModules } from '../../module/module-registry';
 import type { SessionStore } from '../session-store';
 import { useSessionStore } from '../session-store';
@@ -119,6 +120,9 @@ export interface SessionHarness {
 export interface HarnessSetup {
     /** The platform clock. Default always 0. */
     readonly clock?: () => number;
+
+    /** The platform scheduling seam. Default the global timers. */
+    readonly schedule?: ScheduleTask;
 
     /** The current route's path. Default '/dashboard'. */
     readonly fullPath?: string;
@@ -243,6 +247,7 @@ export function createSessionHarness(module: ModuleDefinition, setup: HarnessSet
         targetWindow: win as unknown as Window,
         targetDocument: document,
         clock: setup.clock ?? (() => 0),
+        schedule: setup.schedule ?? scheduleOnTimers,
     };
     const contributions = registerModules([module], {
         config: new ConfigRepository({}),

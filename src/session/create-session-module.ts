@@ -252,6 +252,7 @@ function registerSession(
         coordinator,
         ready,
         clock: platform.clock,
+        schedule: platform.schedule,
         refreshSkewMs: options.refreshSkewMs ?? DEFAULT_REFRESH_SKEW_MS,
         device: () => deviceFingerprint(storage, storageKeys.deviceUuid, generateUuid, deviceOs),
         get api(): SessionApi<SessionUser, unknown> {

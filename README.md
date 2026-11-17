@@ -154,17 +154,17 @@ The application's configuration definition must structurally satisfy `WebCoreCon
 Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an
 optional `pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
 
-| Group           | Configures                                                                                     |
-|-----------------|------------------------------------------------------------------------------------------------|
-| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree   |
-| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build |
-| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`                   |
-| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                   |
-| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                     |
-| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose         |
-| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side     |
-| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery     |
-| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `history`, `localeCandidates` |
+| Group           | Configures                                                                                                 |
+|-----------------|------------------------------------------------------------------------------------------------------------|
+| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree               |
+| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build             |
+| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`                               |
+| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                               |
+| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                 |
+| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                     |
+| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side                 |
+| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                 |
+| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates` |
 
 The load-bearing defaults and behaviours:
 
@@ -190,7 +190,8 @@ The load-bearing defaults and behaviours:
   monitor runs and pauses its polling while offline. `monitors.chunkRecovery` is on by default.
 - The `platform` seams thread to every subsystem and to module hooks (as `ResolvedPlatform`), which is how
   tests drive the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed
-  clock and an injected pinia.
+  clock, a hand-run `schedule` (delayed work, cancelled through the function it returns; default the global
+  timers) and an injected pinia.
 
 ### Entry point
 
@@ -316,7 +317,8 @@ an application wanting a prefix sets it in the keys themselves so event keys sti
 With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when
 another session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens),
 retries with backoff a connect skipped while the token could not be refreshed, and disconnects when the session
-is lost, or at teardown when it opened the connection. Pass `sessionReconnectGuard()` from
+is lost, or at teardown when it opened the connection. Proactive refreshes and retries run on the platform
+`schedule`. Pass `sessionReconnectGuard()` from
 `src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
 token first and stops for good when the session ends.
 

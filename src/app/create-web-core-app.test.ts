@@ -18,7 +18,8 @@ import { createWebEnvironment } from '../config/web-environment';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import type { HttpClient, RequestInterceptor, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
 import { NullLogger } from '@sinemacula/foundation/logging/null-logger';
-import type { ModuleBootContext, ModuleDefinition, ModuleRegisterContext } from '../module/module';
+import type { ModuleBootContext, ModuleDefinition, ModuleRegisterContext, ScheduleTask } from '../module/module';
+import { scheduleOnTimers } from '../module/module';
 import { ModuleRegistryError } from '../module/module-registry';
 import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
@@ -220,6 +221,9 @@ interface Seams {
     /** The fixed clock the app reads time from. */
     readonly clock: () => number;
 
+    /** The scheduling seam the app's modules time work with. */
+    readonly schedule: ScheduleTask;
+
     /** The router history the app navigates with. */
     readonly history: RouterHistory;
 
@@ -237,6 +241,7 @@ function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
         targetWindow: makeWindow(),
         targetDocument: document.implementation.createHTMLDocument('t'),
         clock: (): number => 1_000,
+        schedule: () => () => undefined,
         history: createMemoryHistory(),
         localeCandidates: ['en-US'],
     };
@@ -470,6 +475,7 @@ describe('createWebCoreApp', () => {
             expect(contexts[0]?.platform.targetWindow).toBe(seams.targetWindow);
             expect(contexts[0]?.platform.targetDocument).toBe(seams.targetDocument);
             expect(contexts[0]?.platform.clock).toBe(seams.clock);
+            expect(contexts[0]?.platform.schedule).toBe(seams.schedule);
 
             app.dispose();
         });
@@ -1204,6 +1210,7 @@ describe('createWebCoreApp', () => {
 
             try {
                 const clockValues: number[] = [];
+                const schedules: ScheduleTask[] = [];
 
                 const app = await createWebCoreApp<TestConfiguration>({
                     root: makeRoot(),
@@ -1211,6 +1218,7 @@ describe('createWebCoreApp', () => {
                         homeModule({
                             boot: context => {
                                 clockValues.push(context.platform.clock());
+                                schedules.push(context.platform.schedule);
 
                                 return undefined;
                             },
@@ -1239,6 +1247,7 @@ describe('createWebCoreApp', () => {
                 expect(clockValues).toHaveLength(1);
                 expect(clockValues[0]).toBeGreaterThan(0);
                 expect(clockValues[0]).toBeLessThanOrEqual(Date.now());
+                expect(schedules).toStrictEqual([scheduleOnTimers]);
 
                 await app.start();
 

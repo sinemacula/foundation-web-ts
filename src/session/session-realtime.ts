@@ -19,7 +19,7 @@ import { ExponentialBackoff } from '@sinemacula/foundation/realtime/exponential-
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import type { BeforeReconnectHook } from '@sinemacula/foundation/realtime/reconnect';
 import { realtime, reporting } from '../app/services';
-import type { ModuleTeardown } from '../module/module';
+import type { ModuleTeardown, ScheduleTask } from '../module/module';
 import { sessionContext } from './session-context';
 import type { SessionStore } from './session-store';
 import { useSessionStore } from './session-store';
@@ -80,7 +80,7 @@ export function sessionReconnectGuard(connection: () => RealtimeConnection = rea
  * this follower opened
  */
 export function followSession(connection: RealtimeConnection, store: SessionStore): ModuleTeardown {
-    const follower = new SessionFollower(connection, store);
+    const follower = new SessionFollower(connection, store, sessionContext().schedule);
 
     if (store.isAuthenticated) {
         void follower.reconcile();
@@ -106,11 +106,16 @@ class SessionFollower {
     /** The hydrated session store followed. */
     readonly #store: SessionStore;
 
+    /** Schedules the retries of a skipped connect. */
+    readonly #schedule: ScheduleTask;
+
     /** Bumped by every reconciliation and the disposal; only the latest acts. */
     #generation = 0;
 
-    /** The pending retry of a skipped connect, or undefined when none. */
-    #retry: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * Cancels the pending retry of a skipped connect, if any.
+     */
+    #cancelRetry = (): void => undefined;
 
     /** How many retries of a skipped connect have been scheduled in a row. */
     #attempt = 0;
@@ -126,10 +131,12 @@ class SessionFollower {
      *
      * @param connection - the realtime connection to drive
      * @param store - the hydrated session store
+     * @param schedule - schedules the retries of a skipped connect
      */
-    constructor(connection: RealtimeConnection, store: SessionStore) {
+    constructor(connection: RealtimeConnection, store: SessionStore, schedule: ScheduleTask) {
         this.#connection = connection;
         this.#store = store;
+        this.#schedule = schedule;
     }
 
     /**
@@ -159,8 +166,7 @@ class SessionFollower {
      * backoff
      */
     async reconcile(retrying = false): Promise<void> {
-        this.#generation += 1;
-        clearTimeout(this.#retry);
+        this.#abandon();
         this.#skipped = false;
         this.#attempt = retrying ? this.#attempt : 0;
 
@@ -184,8 +190,7 @@ class SessionFollower {
      * Abandon pending work and disconnect the connection this follower opened.
      */
     dispose(): void {
-        this.#generation += 1;
-        clearTimeout(this.#retry);
+        this.#abandon();
 
         if (this.#owned) {
             this.#disconnect();
@@ -193,11 +198,19 @@ class SessionFollower {
     }
 
     /**
+     * Invalidate pending reconciliations and cancel the pending retry.
+     */
+    #abandon(): void {
+        this.#generation += 1;
+        this.#cancelRetry();
+    }
+
+    /**
      * Schedule the next retry of a skipped connect.
      */
     #skip(): void {
         this.#skipped = true;
-        this.#retry = setTimeout(() => {
+        this.#cancelRetry = this.#schedule(() => {
             void this.reconcile(true);
         }, RETRY_BACKOFF.delayFor(this.#attempt));
         this.#attempt += 1;

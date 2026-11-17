@@ -65,6 +65,7 @@ function createPlatform(): ResolvedPlatform {
         targetWindow: window,
         targetDocument: document,
         clock: () => 0,
+        schedule: () => () => undefined,
     };
 }
 

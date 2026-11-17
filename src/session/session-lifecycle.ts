@@ -199,12 +199,16 @@ function wireIdentityFanOut(
  * authority so it never races a 401 refresh. A transient failure is left to the
  * 401 path and a refusal clears the session, which the loss watcher redirects.
  *
- * @param session - the session context, carrying the clock, skew and authority
+ * @param session - the session context, carrying the clock, scheduler, skew
+ * and authority
  * @param store - the session store
- * @returns a teardown stopping the watcher and cancelling the timer
+ * @returns a teardown stopping the watcher and cancelling the armed refresh
  */
 function wireProactiveRefresh(session: SessionContext, store: SessionStore): ModuleTeardown {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * Cancel the armed refresh, if any.
+     */
+    let cancel = (): void => undefined;
 
     /**
      * Arm the refresh ahead of the expiry, replacing any armed one.
@@ -212,7 +216,7 @@ function wireProactiveRefresh(session: SessionContext, store: SessionStore): Mod
      * @param expiresAtEpochMs - the expiry, or null to leave none armed
      */
     const schedule = (expiresAtEpochMs: number | null): void => {
-        clearTimeout(timer);
+        cancel();
 
         if (expiresAtEpochMs === null) {
             return;
@@ -220,13 +224,13 @@ function wireProactiveRefresh(session: SessionContext, store: SessionStore): Mod
 
         const delay = Math.max(0, expiresAtEpochMs - session.clock() - session.refreshSkewMs);
 
-        timer =
+        cancel =
             delay > MAX_TIMEOUT_DELAY_MS
                 ? // Longer delays overflow and fire at once; re-evaluate at the horizon.
-                  setTimeout(() => {
+                  session.schedule(() => {
                       schedule(expiresAtEpochMs);
                   }, MAX_TIMEOUT_DELAY_MS)
-                : setTimeout(() => {
+                : session.schedule(() => {
                       void session.coordinator.refresh();
                   }, delay);
     };
@@ -235,7 +239,7 @@ function wireProactiveRefresh(session: SessionContext, store: SessionStore): Mod
 
     return () => {
         stop();
-        clearTimeout(timer);
+        cancel();
     };
 }
 
