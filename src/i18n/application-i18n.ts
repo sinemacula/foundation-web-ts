@@ -82,21 +82,13 @@ export interface ActivateLocaleOptions {
 
 /**
  * Install the messages for `locale`, and for `fallbackLocale` when it differs,
- * then activate `locale` and set the document `lang`/`dir`.
+ * loading both concurrently, then activate `locale` and set the document
+ * `lang`/`dir`.
  */
 export async function activateLocale(options: ActivateLocaleOptions): Promise<void> {
-    await installLocaleMessages(options, options.locale);
+    await Promise.all(localesToLoad(options).map(locale => installLocaleMessages(options, locale)));
 
-    if (options.fallbackLocale !== undefined && options.fallbackLocale !== options.locale) {
-        await installLocaleMessages(options, options.fallbackLocale);
-    }
-
-    options.i18n.global.locale.value = options.locale;
-
-    const target = options.targetDocument ?? globalThis.document;
-
-    target.documentElement.setAttribute('lang', options.locale);
-    target.documentElement.setAttribute('dir', options.direction);
+    applyLocale(options);
 }
 
 /**
@@ -147,7 +139,10 @@ export interface LocaleSwitcher {
     readonly current: ComputedRef<string>;
 
     /**
-     * Match `locale` against the enabled locales, then persist and activate it.
+     * Match `locale` against the enabled locales, load its messages, then
+     * activate and persist it; a call superseded by a later one before its
+     * messages load applies and persists nothing, and still rejects if its
+     * own load fails.
      *
      * @throws {@link I18nError} when `locale` does not match any enabled locale
      */
@@ -155,11 +150,38 @@ export interface LocaleSwitcher {
 }
 
 /**
- * Build a runtime locale switcher that activates through
- * {@link activateLocale}, the same path as boot.
+ * Build a runtime locale switcher that activates through the same path as
+ * boot; locales already installed on the instance, and each locale it loads,
+ * are not loaded again.
  */
 export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher {
     const current = computed(() => options.i18n.global.locale.value);
+    const installed = new Set<string>(options.i18n.global.availableLocales);
+    const loading = new Map<string, Promise<void>>();
+    let generation = 0;
+
+    /**
+     * Install `locale`'s messages once, sharing a load already in flight.
+     */
+    const ensureInstalled = (activation: ActivateLocaleOptions, locale: string): Promise<void> => {
+        if (installed.has(locale)) {
+            return Promise.resolve();
+        }
+
+        const pending =
+            loading.get(locale) ??
+            installLocaleMessages(activation, locale)
+                .then(() => {
+                    installed.add(locale);
+                })
+                .finally(() => {
+                    loading.delete(locale);
+                });
+
+        loading.set(locale, pending);
+
+        return pending;
+    };
 
     return {
         current,
@@ -170,9 +192,8 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
                 throw new I18nError(`Cannot switch to locale "${locale}": it is not an enabled locale.`);
             }
 
-            options.localeService.persist(matched);
-
-            await activateLocale({
+            const ticket = ++generation;
+            const activation: ActivateLocaleOptions = {
                 i18n: options.i18n,
                 modules: options.modules,
                 ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
@@ -184,9 +205,39 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
                 ...(options.onNamespaceCollision === undefined
                     ? {}
                     : { onNamespaceCollision: options.onNamespaceCollision }),
-            });
+            };
+
+            await Promise.all(localesToLoad(activation).map(target => ensureInstalled(activation, target)));
+
+            if (ticket !== generation) {
+                return;
+            }
+
+            applyLocale(activation);
+            options.localeService.persist(matched);
         },
     };
+}
+
+/**
+ * The locale to activate, plus the fallback locale when it differs.
+ */
+function localesToLoad(options: ActivateLocaleOptions): string[] {
+    const fallback = options.fallbackLocale;
+
+    return fallback === undefined || fallback === options.locale ? [options.locale] : [options.locale, fallback];
+}
+
+/**
+ * Activate the locale on the instance and set the document `lang`/`dir`.
+ */
+function applyLocale(options: ActivateLocaleOptions): void {
+    options.i18n.global.locale.value = options.locale;
+
+    const target = options.targetDocument ?? globalThis.document;
+
+    target.documentElement.setAttribute('lang', options.locale);
+    target.documentElement.setAttribute('dir', options.direction);
 }
 
 /**
@@ -196,11 +247,12 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
  */
 async function installLocaleMessages(options: ActivateLocaleOptions, locale: string): Promise<void> {
     const sharedLoader = options.sharedLoaders?.[locale];
-    const shared = sharedLoader === undefined ? {} : await sharedLoader();
-    const moduleMessages =
+    const [shared, moduleMessages] = await Promise.all([
+        sharedLoader === undefined ? {} : sharedLoader(),
         options.messageSource === undefined
-            ? await collectModuleMessages(options.modules, locale)
-            : await options.messageSource.messages(locale);
+            ? collectModuleMessages(options.modules, locale)
+            : options.messageSource.messages(locale),
+    ]);
 
     const collision =
         options.onNamespaceCollision === 'error'
