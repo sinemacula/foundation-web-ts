@@ -1,15 +1,5 @@
 /**
- * Package build.
- *
- * Transforms the kernel source tree file-by-file into the published `dist/`:
- * every module keeps its path so a subpath import resolves to a single file
- * with no barrel and no bundler chunks. Runtime files and their declarations
- * both carry explicit relative extensions so the output resolves cleanly under
- * every module-resolution mode, not only a bundler's.
- *
- * mkdist extensions `from` specifiers but leaves bare side-effect imports
- * (`import './x'`, used here for module augmentation) untouched, which strict
- * ESM resolvers reject. The post-pass closes that gap.
+ * Build `src/` file-by-file into `dist/` with explicit relative extensions.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -31,6 +21,7 @@ const { writtenFiles } = await mkdist({
     addRelativeDeclarationExtensions: true,
 });
 
+// mkdist leaves bare side-effect imports unextended; strict ESM rejects them.
 const BARE_IMPORT = /(\bimport\s+(['"]))(\.\.?\/[^'"]*)(\2)/g;
 
 let patched = 0;

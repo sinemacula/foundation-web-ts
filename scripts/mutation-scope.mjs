@@ -1,14 +1,5 @@
 /**
- * List the mutable source files changed against a base ref, for scoped
- * mutation.
- *
- * The reusable quality-gates workflow feeds this list to Stryker's `--mutate`
- * on pull requests so only the touched files are mutated; the full suite runs
- * on a schedule. The predicate below MUST mirror the `mutate` array in
- * `stryker.config.json`, or the scoped gate and the full run would disagree.
- *
- * Usage: `node scripts/mutation-scope.mjs --base <ref>` prints the changed
- * mutable files, one per line; empty output means nothing to mutate.
+ * Print the mutable files changed since `--base <ref>`, one per line.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -16,7 +7,7 @@
 
 import { execFileSync } from 'node:child_process';
 
-/** Paths that are never mutated: tests, test support, barrels, the playground entry point and translations. */
+/** Paths that are never mutated. */
 const EXCLUDED = [
     path => path.endsWith('.test.ts'),
     path => path.includes('/test-support/'),
@@ -25,7 +16,7 @@ const EXCLUDED = [
     path => path.includes('/locales/'),
 ];
 
-/** Whether a repo-relative POSIX path is in scope for mutation. */
+/** Whether a repo-relative POSIX path matches the `mutate` globs in stryker.config.json. */
 function isMutable(path) {
     const included = (path.startsWith('src/') || path.startsWith('playground/src/')) && path.endsWith('.ts');
 

@@ -1,9 +1,4 @@
 # Reference: https://qlty.sh/d/qlty-toml
-#
-# Code-quality configuration for both the Qlty CLI and Qlty Cloud. Lint and
-# format rules come from the shared sinemacula/coding-standards source; this
-# file wires that source in and selects the plugins relevant to a TypeScript
-# repository.
 config_version = "0"
 
 exclude_patterns = [
@@ -84,9 +79,6 @@ name = "biome"
 version = "2.5.6"
 mode = "comment"
 
-# ESLint runs the shared @sinemacula/coding-standards flat config alongside
-# Biome, adding the structural custom rules Biome cannot express. Both the
-# config and its tooling live under .qlty so the repo root stays clean;
 # package_filters carries the shared config and its peers into the eslint
 # sandbox, which otherwise installs only eslint/jest/prettier.
 [plugins.definitions.eslint]
@@ -98,23 +90,14 @@ mode = "comment"
 package_file = ".qlty/configs/eslint/package.json"
 package_filters = ["eslint", "typescript", "typescript-eslint", "@typescript-eslint", "eslint-plugin-jsdoc", "eslint-plugin-vue", "eslint-plugin-check-file", "vue-eslint-parser", "yaml-eslint-parser", "@sinemacula/coding-standards"]
 
-# The eslint config lives under .qlty; do not lint .qlty with eslint (it would
-# otherwise flag its own config file).
+# Keeps eslint off its own config file.
 [[exclude]]
 plugins = ["eslint"]
 file_patterns = [".qlty/**"]
 
-# Knip deliberately runs OUTSIDE qlty: the workspace-aware configuration
-# (knip.ts) needs a Vue SFC compiler function that JSON configs cannot express,
-# and qlty stages the shared source's default knip.json into the workspace root,
-# which outranks knip.ts in knip's own config resolution. Dead-code detection is
-# enforced as a blocking CI gate instead - see `npm run deadcode` in
-# .github/workflows/quality-gates.yml.
+# Knip runs as a CI gate (`npm run deadcode`), not here: qlty stages a default
+# knip.json that outranks knip.ts, whose Vue compiler JSON cannot express.
 
-# qlty Cloud does a bare checkout with no node_modules, so type-aware ESLint
-# (projectService) resolved no project types and posted false positives (e.g.
-# dot-notation on index-signature brackets). Installing before the lint run
-# restores type resolution; vendor-added support for prepare_script on the
-# version-matched eslint driver ships this.
+# qlty Cloud checks out without node_modules; type-aware ESLint needs them.
 [plugins.definitions.eslint.drivers.lint]
 prepare_script = "npm ci"
