@@ -7,7 +7,7 @@
 
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
-import type { Router } from 'vue-router';
+import type { RouteLocation, RouteLocationNormalized, Router } from 'vue-router';
 
 /**
  * The reactive navigation-progress state returned by
@@ -24,22 +24,33 @@ export interface NavigationProgress {
 }
 
 /**
- * Track whether `router` has a navigation in flight; inside an active effect
- * scope, `stop()` also runs when the scope is disposed.
+ * Track whether `router` has a navigation in flight, ignoring the settling of
+ * navigations a newer one superseded; inside an active effect scope, `stop()`
+ * also runs when the scope is disposed.
  */
 export function createNavigationProgress(router: Router): NavigationProgress {
     const isNavigating = ref(false);
+    let latest: RouteLocation | RouteLocationNormalized | null = null;
 
-    const removeBeforeEach = router.beforeEach(() => {
+    /**
+     * Clear the flag when `to` belongs to the latest tracked navigation.
+     */
+    const settle = (to: RouteLocationNormalized): void => {
+        if (navigationOf(to) === latest) {
+            latest = null;
+            isNavigating.value = false;
+        }
+    };
+
+    const removeBeforeEach = router.beforeEach(to => {
+        latest = navigationOf(to);
         isNavigating.value = true;
     });
 
-    const removeAfterEach = router.afterEach(() => {
-        isNavigating.value = false;
-    });
+    const removeAfterEach = router.afterEach(settle);
 
-    const removeOnError = router.onError(() => {
-        isNavigating.value = false;
+    const removeOnError = router.onError((_error: unknown, to: RouteLocationNormalized) => {
+        settle(to);
     });
 
     /**
@@ -57,4 +68,11 @@ export function createNavigationProgress(router: Router): NavigationProgress {
     }
 
     return { isNavigating, stop };
+}
+
+/**
+ * The location that started `to`'s redirect chain, shared by every hop.
+ */
+function navigationOf(to: RouteLocationNormalized): RouteLocation | RouteLocationNormalized {
+    return to.redirectedFrom ?? to;
 }
