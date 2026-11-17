@@ -18,7 +18,7 @@ interface RecordedCall {
     readonly body: unknown;
 
     /** The request options, if any. */
-    readonly options?: HttpRequestOptions;
+    readonly options: HttpRequestOptions | undefined;
 }
 
 type QueuedResult =
