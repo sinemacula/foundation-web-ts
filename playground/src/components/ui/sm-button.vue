@@ -74,7 +74,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 .sm-button--secondary {
     background: var(--sm-accent-secondary);
-    color: var(--sm-on-accent);
+    color: var(--sm-on-accent-secondary);
 }
 
 .sm-button--secondary:hover:not(:disabled) {
