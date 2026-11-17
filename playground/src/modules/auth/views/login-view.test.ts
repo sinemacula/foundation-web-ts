@@ -49,6 +49,7 @@ function mountLoginView(): MountedLoginView {
         routes: [
             { path: '/', component: { template: '<div />' } },
             { path: '/login', name: AUTH_ROUTE_NAMES.login, component: LoginView },
+            { path: '/:pathMatch(.*)*', component: { template: '<div />' } },
         ],
     });
 
@@ -70,6 +71,27 @@ function mountLoginView(): MountedLoginView {
             container.remove();
         },
     };
+}
+
+/**
+ * Queue the sign-in and current-user responses of a successful login.
+ */
+function queueSuccessfulLogin(fake: FakeHttpClient): void {
+    fake.queueResponse({
+        data: wire([
+            ['access_token', 'tok'],
+            ['refresh_token', 'ref'],
+            ['expires_in', 3600],
+        ]),
+    });
+    fake.queueResponse({
+        data: wire([
+            ['id', 'u1'],
+            ['first_name', 'Alice'],
+            ['last_name', 'Smith'],
+            ['email', 'alice@example.com'],
+        ]),
+    });
 }
 
 /**
@@ -179,22 +201,7 @@ describe('LoginView', () => {
     it('redirects to / on a successful login', async () => {
         const fake = new FakeHttpClient();
 
-        fake.queueResponse({
-            data: wire([
-                ['access_token', 'tok'],
-                ['refresh_token', 'ref'],
-                ['expires_in', 3600],
-            ]),
-        });
-        fake.queueResponse({
-            data: wire([
-                ['id', 'u1'],
-                ['first_name', 'Alice'],
-                ['last_name', 'Smith'],
-                ['email', 'alice@example.com'],
-            ]),
-        });
-
+        queueSuccessfulLogin(fake);
         initialiseApi(fake);
 
         const { container, router, unmount } = mountLoginView();
@@ -209,6 +216,34 @@ describe('LoginView', () => {
         await new Promise<void>(resolve => setTimeout(resolve, 50));
 
         expect(pushSpy).toHaveBeenCalledWith('/');
+
+        unmount();
+    });
+
+    it.each([
+        ['an in-app path with its query', '/users?page=2', '/users?page=2'],
+        ['a protocol-relative URL', '/', '//evil.example'],
+        ['an absolute URL', '/', 'https://evil.example'],
+        ['a backslash path', '/', '/\\evil.example'],
+        ['the login route itself', '/', '/login?redirect=/users'],
+    ])('sends a sign-in redirected to %s on to %s', async (_case, expected, target) => {
+        const fake = new FakeHttpClient();
+
+        queueSuccessfulLogin(fake);
+        initialiseApi(fake);
+
+        const { container, router, unmount } = mountLoginView();
+
+        await router.push({ path: '/login', query: { redirect: target } });
+
+        const pushSpy = vi.spyOn(router, 'push');
+
+        fillCredentials(container, 'correct-password');
+        submitForm(container);
+
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+
+        expect(pushSpy).toHaveBeenCalledWith(expected);
 
         unmount();
     });
