@@ -1,4 +1,9 @@
 # Reference: https://qlty.sh/d/qlty-toml
+#
+# Code-quality configuration for both the Qlty CLI and Qlty Cloud. Lint and
+# format rules come from the shared sinemacula/coding-standards source; this
+# file wires that source in and selects the plugins relevant to a TypeScript
+# repository.
 config_version = "0"
 
 exclude_patterns = [
