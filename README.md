@@ -180,7 +180,14 @@ Defaults and behaviours worth knowing:
 - `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an
   application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with neither throws a
   `FoundationBootError` at boot. `monitors.connectivity` defaults to on exactly when the update monitor runs and pauses
-  its polling while offline. `monitors.chunkRecovery` is on by default.
+  its polling while offline. `monitors.chunkRecovery` is on by default: a chunk-load or stylesheet-preload failure
+  reloads the tab once per window (default 60s) at the router's URL for the target, guarded in that tab's
+  `sessionStorage`; when that storage is unavailable it reports instead of reloading.
+- Inline `createColorSchemeBootScript({ storageKey, defaultPreference })` (`./theme/color-scheme-boot`) in the host
+  page's `<head>`, with the same values passed to `colorScheme`, so the first paint matches the stored scheme. It
+  reads `localStorage`, so a custom `platform.storage` is not visible to it.
+- A navigation redirected by middleware more than ten times fails with a `RedirectLoopError`
+  (`./router/redirect-loop-error`) through the router's error flow instead of looping.
 - The `platform` seams thread to every subsystem and to module hooks (as `ResolvedPlatform`), which is how tests drive
   the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed clock, a hand-run
   `schedule` (delayed work, cancelled through the function it returns; defaults to the global timers) and an injected
@@ -188,8 +195,8 @@ Defaults and behaviours worth knowing:
 
 #### Entry point
 
-The whole composition root is one call. The canonical example is the playground's entry (`playground/src/main.ts`),
-shown here with its imports de-aliased:
+The whole composition root is one call. The canonical example is the playground's (`playground/src/boot.ts`, called
+from `playground/src/main.ts`), shown here as a single entry file with its imports de-aliased:
 
 ```ts
 import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
@@ -235,15 +242,18 @@ it. The two translation keys are application copy passed as options.
 
 #### start() and dispose()
 
-`createWebCoreApp` resolves once every phase has run; nothing is mounted yet. `start(selector?)` awaits
-`router.isReady()` and then mounts (default `#app`), so initialisation completes before any component renders. The
-handle also exposes the assembled `app`, `router`, `pinia` and `i18n`, the frozen `config` tree, typed references to
-every installed service under `services`, and the started `monitors`, so tests never need ambient access.
+`createWebCoreApp` resolves once every phase has run; nothing is mounted yet. When a phase fails, everything installed
+so far is torn down and the original error rejects. `start(selector?)` awaits `router.isReady()` and then mounts
+(default `#app`), so initialisation completes before any component renders. A handle starts once: a second `start()`
+rejects, and so does a `start()` after, or racing, `dispose()`. The handle also exposes the assembled `app`, `router`,
+`pinia` and `i18n`, the frozen `config` tree, typed references to every installed service under `services`, and the
+started `monitors`, so tests never need ambient access.
 
-`dispose()` idempotently tears down everything the boot installed, in reverse: monitors, realtime disconnect, chunk
-recovery, module boot teardowns, store disposals, the page-tracking, global-error-handling and title-sync uninstalls,
-and finally the colour-scheme listener. Service holders are left installed; `resetWebCoreServices()` clears them
-between tests.
+`dispose()` idempotently unmounts the root and tears down everything the boot installed, in reverse: the monitors,
+chunk recovery, module boot teardowns, realtime disconnect, the page-tracking, global-error-handling and title-sync
+uninstalls, the router history, store disposals, pending toasts and finally the colour-scheme listener. Every step runs
+even when one throws, and `dispose()` then rethrows the failure. Service holders are left installed;
+`resetWebCoreServices()` clears them between tests and before booting a replacement application.
 
 #### Service accessors
 
@@ -281,8 +291,10 @@ session context and contributes the bearer-token interceptor plus the single una
 At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor, refreshes and
 the boot hook all wait for that hydration, so the first navigation never sees a half-loaded session. At boot it wires
 the session-loss redirect (login route plus the sanitised current path under the `redirect` query key), cross-tab
-mirroring, identity fan-out to the reporting, analytics and feature-flag holders, proactive refresh ahead of expiry,
-and the realtime connection's session binding.
+mirroring, identity fan-out to the reporting, analytics and feature-flag holders (touching only the channels whose
+mapped value changed, and clearing them on sign-out), proactive refresh ahead of expiry (each tab at its own random
+point in the earlier half of the `refreshSkewMs` window, so tabs do not refresh together), and the realtime
+connection's session binding.
 
 The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`, `interactionRequired`
 with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A refused or pending refresh clears
@@ -324,16 +336,47 @@ loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set toge
 What stays application-side: the login route and view, the credential form, all locale copy, and the user field
 mapping when the wire shape diverges (`mapUser` on the foundation default gateway). Applications guard routes with
 `authenticated()`, `guestOnly()` and `authorize()` from `src/session/middleware.ts`, check permissions with
-`can()`/`useCan()` from `src/session/authorization.ts`, and read session state through `useSessionStore()`.
+`can()`/`useCan()` from `src/session/authorization.ts`, and read session state through `useSessionStore()`. When a
+signed-in user cannot be loaded, `authorize()` fails the navigation with a `SessionError` rather than reporting the
+permission as missing.
 
 ## ESLint preset
 
 `@sinemacula/web-core/eslint` is a flat-config layer that enforces the feature-module contract, enabled alongside the
-shared `@sinemacula/coding-standards` presets. On TypeScript and Vue source (tests exempt) it forbids snake_case
-object-literal keys and keeps imports on other modules' public surfaces (`@/modules/<name>`) and on kernel subpaths
-rather than package barrels. Under `modules/` it also checks that a module's name matches its folder, that
-`module.ts`, `routes.ts` and `route-names.ts` export their canonical names, and that route names are namespaced and
-referenced through constants.
+shared `@sinemacula/coding-standards` presets. The first two rules below apply to all TypeScript and Vue source except
+test code (`*.test.*`, `*.spec.*`, `*.test-d.*`, and anything under `__tests__/`, `__mocks__/` or `test-support/`); the
+other four apply to TypeScript under `modules/`. The contract files `module.ts`, `routes.ts` and `route-names.ts` (or
+`.tsx`) are matched anywhere beneath `modules/<name>/`, and a nested module tree belongs to its innermost folder. Paths
+are read relative to the working directory, so run ESLint from the project root.
+
+### `no-snake-case-keys`
+
+Forbids snake_case object-literal keys, computed string keys included; map wire fields through `wire()` instead.
+
+### `module-import-boundary`
+
+Forbids the `@sinemacula/web-core` and `@sinemacula/foundation` barrels in favour of subpaths, and imports of another
+module's internals by alias or relative path. A module's public surface is `@/modules/<name>` or its explicit `index`;
+code outside any module, such as the registry, may also import a module's `module.ts` definition.
+
+### `module-name-matches-folder`
+
+Requires the `name` of a `ModuleDefinition` declared in `module.ts` to equal its folder, as it is also the module's
+translation namespace.
+
+### `module-export-names`
+
+Requires `module.ts`, `routes.ts` and `route-names.ts` to export `<folder>Module`, `<folder>Routes` and
+`<FOLDER>_ROUTE_NAMES`, with the folder in camelCase or UPPER_SNAKE_CASE.
+
+### `route-name-namespacing`
+
+Requires every string in a `_ROUTE_NAMES` map, nested groups and `Object.freeze` included, to read `<folder>.<kebab>`.
+
+### `route-name-via-constant`
+
+Requires route names in `routes.ts`, `redirect` locations included, to reference a `_ROUTE_NAMES` constant rather than
+an inline string.
 
 ## Requirements
 

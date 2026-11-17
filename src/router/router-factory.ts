@@ -5,11 +5,21 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { RouteLocationNormalized, RouteRecordRaw, Router, RouterHistory, RouterScrollBehavior } from 'vue-router';
+import type {
+    RouteLocation,
+    RouteLocationNormalized,
+    RouteRecordRaw,
+    Router,
+    RouterHistory,
+    RouterScrollBehavior,
+} from 'vue-router';
 import { createRouter, createWebHistory } from 'vue-router';
 
 import type { RouteMiddleware } from './middleware';
+import { RedirectLoopError } from './redirect-loop-error';
 import { runMiddlewarePipeline } from '@sinemacula/foundation/router/middleware';
+
+const MAX_MIDDLEWARE_REDIRECTS = 10;
 
 /**
  * Options for building the application router.
@@ -27,10 +37,13 @@ export interface RouterFactoryOptions {
 
 /**
  * Build the application router, running global middleware before the middleware
- * declared on the matched records.
+ * declared on the matched records; a navigation redirected by middleware more
+ * than ten times fails with a {@link RedirectLoopError} through the router's
+ * error flow.
  */
 export function createApplicationRouter(options: RouterFactoryOptions): Router {
     const globalMiddleware = options.globalMiddleware ?? [];
+    const redirectCounts = new WeakMap<RouteLocation | RouteLocationNormalized, number>();
 
     const router = createRouter({
         history: options.history ?? createWebHistory(),
@@ -41,7 +54,20 @@ export function createApplicationRouter(options: RouterFactoryOptions): Router {
     router.beforeEach(async (to, from) => {
         const result = await runMiddlewarePipeline([...globalMiddleware, ...collectRouteMiddleware(to)], { to, from });
 
-        return result.kind === 'redirect' ? result.to : true;
+        if (result.kind !== 'redirect') {
+            return true;
+        }
+
+        const origin = to.redirectedFrom ?? to;
+        const redirects = (redirectCounts.get(origin) ?? 0) + 1;
+
+        if (redirects > MAX_MIDDLEWARE_REDIRECTS) {
+            throw new RedirectLoopError(origin.fullPath, router.resolve(result.to).fullPath, MAX_MIDDLEWARE_REDIRECTS);
+        }
+
+        redirectCounts.set(origin, redirects);
+
+        return result.to;
     });
 
     return router;

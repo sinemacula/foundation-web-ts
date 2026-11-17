@@ -73,6 +73,16 @@ describe('createWebEnvironment in development', () => {
         expect(environment.string('API_URL')).toBe('https://build.example.com');
     });
 
+    it.each(['', '  '])('falls through to the build-time value when the runtime value is blank %j', value => {
+        const environment = createWebEnvironment({
+            runtime: wire([['API_URL', value]]),
+            dev: true,
+            buildTimeEnv: wire([['VITE_API_URL', 'https://build.example.com']]),
+        });
+
+        expect(environment.string('API_URL')).toBe('https://build.example.com');
+    });
+
     it('applies the default VITE_ prefix to build-time keys', () => {
         const environment = createWebEnvironment({
             runtime: {},
@@ -212,11 +222,11 @@ describe('createWebEnvironment in production', () => {
         );
     });
 
-    it('treats an empty-string value as missing', () => {
+    it.each(['', ' \t'])('treats a blank value %j as missing', value => {
         const thrown = capture(() => {
             createWebEnvironment({
                 runtime: wire([
-                    ['API_URL', ''],
+                    ['API_URL', value],
                     ['APP_VERSION', '1.0.0'],
                 ]),
                 dev: false,

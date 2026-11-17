@@ -206,6 +206,94 @@ describe('IdleMonitor', () => {
         expect(fake.listenerCount('pointerdown')).toBe(0);
     });
 
+    it('arms a single countdown when started twice', () => {
+        const fake = fakeWindow();
+        const monitor = new IdleMonitor({ timeoutMs: 1_000, targetWindow: fake.window });
+        const handler = vi.fn();
+
+        monitor.onIdle(handler);
+        monitor.start();
+        monitor.start();
+
+        expect(vi.getTimerCount()).toBe(1);
+
+        vi.advanceTimersByTime(1_000);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        monitor.stop();
+        vi.advanceTimersByTime(5_000);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('notifies again after a stop and restart', () => {
+        const fake = fakeWindow();
+        const monitor = new IdleMonitor({ timeoutMs: 1_000, targetWindow: fake.window });
+        const handler = vi.fn();
+
+        monitor.onIdle(handler);
+        monitor.start();
+        monitor.stop();
+        monitor.start();
+        vi.advanceTimersByTime(600);
+        fake.emit('keydown');
+        vi.advanceTimersByTime(600);
+
+        expect(handler).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(400);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        monitor.stop();
+    });
+
+    it('isolates a throwing subscriber and reports its error', () => {
+        const failure = new Error('subscriber failure');
+        const fake = fakeWindow();
+        const onError = vi.fn();
+        const monitor = new IdleMonitor({ timeoutMs: 1_000, targetWindow: fake.window, onError });
+        const handler = vi.fn();
+
+        monitor.onIdle(() => {
+            throw failure;
+        });
+        monitor.onIdle(handler);
+        monitor.start();
+        vi.advanceTimersByTime(1_000);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(failure);
+
+        monitor.stop();
+    });
+
+    it('reports subscriber errors globally by default and survives a throwing sink', () => {
+        const failure = new Error('subscriber failure');
+        const reportError = vi.fn(() => {
+            throw new Error('sink failure');
+        });
+        const fake = fakeWindow();
+        const handler = vi.fn();
+
+        vi.stubGlobal('reportError', reportError);
+
+        const monitor = new IdleMonitor({ timeoutMs: 1_000, targetWindow: fake.window });
+
+        monitor.onIdle(() => {
+            throw failure;
+        });
+        monitor.onIdle(handler);
+        monitor.start();
+        vi.advanceTimersByTime(1_000);
+
+        expect(reportError).toHaveBeenCalledWith(failure);
+        expect(handler).toHaveBeenCalledTimes(1);
+
+        monitor.stop();
+    });
+
     it('supports a custom activity events list', () => {
         const fake = fakeWindow();
         const monitor = new IdleMonitor({ timeoutMs: 1_000, events: ['scroll'], targetWindow: fake.window });

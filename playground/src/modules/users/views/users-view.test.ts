@@ -9,6 +9,7 @@ import { installColorScheme } from '@sinemacula/web-core/app/services';
 import { Environment } from '@sinemacula/foundation/config/environment';
 import { ObjectEnvironmentSource } from '@sinemacula/foundation/config/object-environment-source';
 import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +22,7 @@ import { initialiseApi, resetApi } from '@/services/api';
 import { initialiseConfiguration, resetConfiguration } from '@/services/config';
 import { initialiseLocaleSwitcher, resetLocaleSwitcher } from '@/services/locale';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
+import { installTestSession, resetSessionContext } from '@/test-support/install-test-session';
 
 /** No-op locale switcher for DefaultLayout's locale switcher. */
 const stubLocaleSwitcher: LocaleSwitcher = {
@@ -53,6 +55,43 @@ function userRow(id: string, fullName: string): Record<string, unknown> {
     ]);
 }
 
+/** A page-1 response for a 27-row list paged 25 at a time. */
+function firstOfTwoPages(): Record<string, unknown> {
+    return {
+        data: [userRow('u1', 'Alice Smith')],
+        meta: wire([
+            ['total', 27],
+            ['count', 25],
+            ['continue', true],
+        ]),
+    };
+}
+
+/** A response that never settles, leaving its request in flight. */
+const IN_FLIGHT = new Promise<never>(() => undefined);
+
+/**
+ * Find a button by its trimmed label.
+ */
+function button(container: HTMLElement, label: string): HTMLButtonElement {
+    const found = Array.from(container.querySelectorAll('button')).find(
+        candidate => candidate.textContent?.trim() === label,
+    );
+
+    if (found === undefined) {
+        throw new Error(`button "${label}" not found`);
+    }
+
+    return found;
+}
+
+/**
+ * Read the trimmed text of the list's state message.
+ */
+function stateText(container: HTMLElement): string | undefined {
+    return container.querySelector('.users-view__state p, p.users-view__state')?.textContent?.trim();
+}
+
 /** Flushes pending microtasks so an in-flight fetch and DOM update settle. */
 async function flushAll(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -72,7 +111,7 @@ function mountUsersView(): MountedUsersView {
     const i18n = createI18n({
         legacy: false,
         locale: 'en-US',
-        messages: {},
+        messages: { 'en-US': { users: { index: { pagination: 'Page {current} of {last}' } } } },
         // Fixed UTC so the formatted date does not depend on the host timezone.
         datetimeFormats: {
             'en-US': { short: { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC' } },
@@ -117,6 +156,7 @@ describe('UsersView', () => {
         initialiseConfiguration(new Environment(new ObjectEnvironmentSource(wireEnv([['APP_NAME', 'TestApp']]))));
         initialiseLocaleSwitcher(stubLocaleSwitcher);
         installColorScheme(stubColorScheme);
+        installTestSession(new MemoryStorage());
         setActivePinia(createPinia());
     });
 
@@ -124,6 +164,7 @@ describe('UsersView', () => {
         resetApi();
         resetConfiguration();
         resetLocaleSwitcher();
+        resetSessionContext();
     });
 
     it('renders the heading', async () => {
@@ -173,6 +214,22 @@ describe('UsersView', () => {
         unmount();
     });
 
+    it('renders the loading state until the first page settles', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse(IN_FLIGHT);
+        initialiseApi(fake);
+
+        const { container, unmount } = mountUsersView();
+
+        await flushAll();
+
+        expect(stateText(container)).toBe('common.states.loading');
+        expect(container.querySelector('table')).toBeNull();
+
+        unmount();
+    });
+
     it('renders the empty state when there are no rows', async () => {
         const fake = new FakeHttpClient();
 
@@ -183,7 +240,7 @@ describe('UsersView', () => {
 
         await flushAll();
 
-        expect(container.querySelector('.users-view__state')).not.toBeNull();
+        expect(stateText(container)).toBe('common.states.empty');
         expect(container.querySelector('table')).toBeNull();
 
         unmount();
@@ -199,18 +256,123 @@ describe('UsersView', () => {
 
         await flushAll();
 
-        const retryButton = container.querySelector('.sm-button');
-
-        if (retryButton === null) {
-            throw new Error('retry button not found');
-        }
+        expect(stateText(container)).toBe('common.states.error');
 
         fake.queueResponse({ data: [userRow('u1', 'Alice Smith')] });
-        retryButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        button(container, 'users.index.actions.retry').click();
 
         await flushAll();
 
         expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
+
+        unmount();
+    });
+
+    it('renders the error state for a row with a malformed timestamp', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse({
+            data: [{ ...userRow('u1', 'Alice Smith'), ...wire([['created_at', '2026-01-01T00:00:00Z']]) }],
+        });
+        initialiseApi(fake);
+
+        const { container, unmount } = mountUsersView();
+
+        await flushAll();
+
+        expect(stateText(container)).toBe('common.states.error');
+        expect(container.querySelector('table')).toBeNull();
+
+        unmount();
+    });
+
+    it('retries the failed page when a later page fails', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse(firstOfTwoPages());
+        fake.queueError(new Error('boom'));
+        initialiseApi(fake);
+
+        const { container, unmount } = mountUsersView();
+
+        await flushAll();
+        button(container, 'users.index.actions.nextPage').click();
+        await flushAll();
+
+        expect(stateText(container)).toBe('common.states.error');
+        expect(container.querySelector('table')).toBeNull();
+
+        fake.queueResponse(firstOfTwoPages());
+        button(container, 'users.index.actions.retry').click();
+        await flushAll();
+
+        expect(fake.calls.map(call => call.options?.query?.['page'])).toEqual([1, 2, 2]);
+        expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
+
+        unmount();
+    });
+
+    it('labels the current and last page', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse(firstOfTwoPages());
+        initialiseApi(fake);
+
+        const { container, unmount } = mountUsersView();
+
+        await flushAll();
+
+        expect(container.querySelector('.users-view__pagination-text')?.textContent).toBe('Page 1 of 2');
+
+        unmount();
+    });
+
+    it('disables Previous on the first page and Next on the last', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse(firstOfTwoPages());
+        fake.queueResponse({
+            data: [userRow('u26', 'Zed Last')],
+            meta: wire([
+                ['total', 27],
+                ['count', 2],
+                ['continue', false],
+            ]),
+        });
+        initialiseApi(fake);
+
+        const { container, unmount } = mountUsersView();
+
+        await flushAll();
+
+        expect(button(container, 'users.index.actions.previousPage').disabled).toBe(true);
+        expect(button(container, 'users.index.actions.nextPage').disabled).toBe(false);
+
+        button(container, 'users.index.actions.nextPage').click();
+        await flushAll();
+
+        expect(container.querySelector('.users-view__pagination-text')?.textContent).toBe('Page 2 of 2');
+        expect(button(container, 'users.index.actions.previousPage').disabled).toBe(false);
+        expect(button(container, 'users.index.actions.nextPage').disabled).toBe(true);
+
+        unmount();
+    });
+
+    it('disables paging while the next page is in flight', async () => {
+        const fake = new FakeHttpClient();
+
+        fake.queueResponse(firstOfTwoPages());
+        fake.queueResponse(IN_FLIGHT);
+        initialiseApi(fake);
+
+        const { container, unmount } = mountUsersView();
+
+        await flushAll();
+        button(container, 'users.index.actions.nextPage').click();
+        await flushAll();
+
+        expect(button(container, 'users.index.actions.previousPage').disabled).toBe(true);
+        expect(button(container, 'users.index.actions.nextPage').disabled).toBe(true);
 
         unmount();
     });

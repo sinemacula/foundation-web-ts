@@ -17,8 +17,8 @@ import type {
     ModuleDefinition,
     ModuleHttpRegistrar,
     ModuleRegisterContext,
-    ModuleTeardown,
 } from './module';
+import type { TeardownStack } from './teardown-stack';
 
 /**
  * A module list failed registry validation or lifecycle execution.
@@ -81,91 +81,150 @@ export function createModuleRegistry(modules: readonly ModuleDefinition[]): Modu
 }
 
 /**
+ * The HTTP contributions collected across the register hooks.
+ */
+interface CollectedContributions {
+    /** Request interceptors in registration order. */
+    readonly requestInterceptors: RequestInterceptor[];
+
+    /** Response error handlers in registration order. */
+    readonly responseErrorHandlers: ResponseErrorHandler[];
+
+    /** The single unauthorized handler and the module that set it, if any. */
+    unauthorized: UnauthorizedClaim | null;
+}
+
+/**
+ * The unauthorized handler and the module that claimed it.
+ */
+interface UnauthorizedClaim {
+    /** The module's unauthorized handler. */
+    readonly handler: UnauthorizedHandler;
+
+    /** The name of the module that set it. */
+    readonly owner: string;
+}
+
+/**
  * Run every module's register hook in registry order and return their HTTP
- * contributions, frozen.
+ * contributions, frozen. Each hook's registrar closes when the hook returns.
  *
  * @throws {@link ModuleRegistryError} when the unauthorized handler is set more
- * than once
+ * than once, a register hook returns a promise, or a registrar is used after
+ * its hook returned
  */
 export function registerModules(
     modules: readonly ModuleDefinition[],
     context: Omit<ModuleRegisterContext, 'http'>,
 ): ModuleHttpContributions {
-    const requestInterceptors: RequestInterceptor[] = [];
-    const responseErrorHandlers: ResponseErrorHandler[] = [];
-
-    let onUnauthorized: UnauthorizedHandler | null = null;
-    let unauthorizedOwner: string | null = null;
+    const collected: CollectedContributions = {
+        requestInterceptors: [],
+        responseErrorHandlers: [],
+        unauthorized: null,
+    };
 
     for (const definition of modules) {
-        if (definition.register === undefined) {
-            continue;
-        }
-
-        const http: ModuleHttpRegistrar = {
-            addRequestInterceptor: interceptor => {
-                requestInterceptors.push(interceptor);
-            },
-            setUnauthorizedHandler: handler => {
-                if (unauthorizedOwner !== null) {
-                    throw new ModuleRegistryError(
-                        `Modules "${unauthorizedOwner}" and "${definition.name}" both set the unauthorized handler; ` +
-                            'only one refresh authority is allowed.',
-                    );
-                }
-
-                onUnauthorized = handler;
-                unauthorizedOwner = definition.name;
-            },
-            addResponseErrorHandler: handler => {
-                responseErrorHandlers.push(handler);
-            },
-        };
-
-        definition.register({ ...context, http });
+        runRegisterHook(definition, context, collected);
     }
 
     return Object.freeze({
-        requestInterceptors: Object.freeze(requestInterceptors),
-        onUnauthorized,
-        responseErrorHandlers: Object.freeze(responseErrorHandlers),
+        requestInterceptors: Object.freeze(collected.requestInterceptors),
+        onUnauthorized: collected.unauthorized?.handler ?? null,
+        responseErrorHandlers: Object.freeze(collected.responseErrorHandlers),
     });
 }
 
 /**
- * Run every module's boot hook in registry order and return one teardown that
- * disposes them LIFO; a failed boot disposes the modules already booted, then
- * rethrows.
+ * Run one module's register hook against a registrar that closes when the hook
+ * returns.
+ *
+ * @throws {@link ModuleRegistryError} when the hook returns a promise
+ */
+function runRegisterHook(
+    definition: ModuleDefinition,
+    context: Omit<ModuleRegisterContext, 'http'>,
+    collected: CollectedContributions,
+): void {
+    if (definition.register === undefined) {
+        return;
+    }
+
+    let open = true;
+    let result: unknown;
+
+    try {
+        result = definition.register({ ...context, http: createRegistrar(definition.name, collected, () => open) });
+    } finally {
+        open = false;
+    }
+
+    if (isThenable(result)) {
+        // Boot fails below; the hook's own rejection adds nothing.
+        Promise.resolve(result).catch(() => undefined);
+
+        throw new ModuleRegistryError(
+            `Module "${definition.name}" has an async register hook; register hooks must contribute synchronously.`,
+        );
+    }
+}
+
+/**
+ * Build the HTTP registrar handed to one module's register hook.
+ */
+function createRegistrar(name: string, collected: CollectedContributions, isOpen: () => boolean): ModuleHttpRegistrar {
+    /**
+     * Reject a contribution made after the register hook returned.
+     */
+    const ensureOpen = (): void => {
+        if (!isOpen()) {
+            throw new ModuleRegistryError(
+                `Module "${name}" contributed after its register hook returned; ` +
+                    'register hooks must contribute synchronously.',
+            );
+        }
+    };
+
+    return {
+        addRequestInterceptor: interceptor => {
+            ensureOpen();
+            collected.requestInterceptors.push(interceptor);
+        },
+        setUnauthorizedHandler: handler => {
+            ensureOpen();
+
+            if (collected.unauthorized !== null) {
+                throw new ModuleRegistryError(
+                    `Modules "${collected.unauthorized.owner}" and "${name}" both set the unauthorized handler; ` +
+                        'only one refresh authority is allowed.',
+                );
+            }
+
+            collected.unauthorized = { handler, owner: name };
+        },
+        addResponseErrorHandler: handler => {
+            ensureOpen();
+            collected.responseErrorHandlers.push(handler);
+        },
+    };
+}
+
+/**
+ * Run every module's boot hook in registry order, pushing each returned
+ * teardown onto the caller's stack as soon as its module has booted, so a
+ * failed boot leaves the already-booted modules for the caller to roll back.
  */
 export async function bootModules(
     modules: readonly ModuleDefinition[],
     context: ModuleBootContext,
-): Promise<ModuleTeardown> {
-    const teardowns: ModuleTeardown[] = [];
-
+    teardowns: TeardownStack,
+): Promise<void> {
     for (const definition of modules) {
-        if (definition.boot === undefined) {
-            continue;
-        }
-
-        let teardown: ModuleTeardown | undefined;
-
-        try {
-            teardown = await definition.boot(context);
-        } catch (error) {
-            disposeLifo(teardowns);
-
-            throw error;
-        }
+        const teardown = await definition.boot?.(context);
 
         if (teardown !== undefined) {
             teardowns.push(teardown);
         }
     }
-
-    return () => {
-        disposeLifo(teardowns);
-    };
 }
 
 /**
@@ -180,7 +239,8 @@ export interface ModuleMessageSource {
 
 /**
  * Build a {@link ModuleMessageSource} that runs module loaders in parallel, at
- * most once per locale, with the same results as `collectModuleMessages`.
+ * most once per locale, with the same results as `collectModuleMessages`; a
+ * rejected load is forgotten so the next request retries it.
  */
 export function createModuleMessageSource(modules: readonly ModuleDefinition[]): ModuleMessageSource {
     const cache = new Map<string, Promise<Record<string, LocaleMessages>>>();
@@ -197,18 +257,20 @@ export function createModuleMessageSource(modules: readonly ModuleDefinition[]):
 
             cache.set(locale, loading);
 
+            loading.catch(() => {
+                cache.delete(locale);
+            });
+
             return loading;
         },
     };
 }
 
 /**
- * Run the teardowns in reverse installation order.
+ * Determine whether a register hook handed back a promise-like value.
  */
-function disposeLifo(teardowns: readonly ModuleTeardown[]): void {
-    for (const teardown of [...teardowns].reverse()) {
-        teardown();
-    }
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+    return typeof (value as Partial<PromiseLike<unknown>> | null | undefined)?.then === 'function';
 }
 
 /**

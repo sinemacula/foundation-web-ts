@@ -29,19 +29,19 @@ interface FakeMql {
     addEventListener(event: string, cb: () => void): void;
 
     /**
-     * Record a listener removal and drop the handler.
+     * Record a listener removal and drop that exact handler.
      */
     removeEventListener(event: string, cb: () => void): void;
 
     /**
-     * Invoke the held change handler, if any.
+     * Invoke every held change handler.
      */
     fireChange(): void;
 }
 
 /** Build a fake media query list with the given match state. */
 function makeMql(matches: boolean): FakeMql {
-    let handler: (() => void) | null = null;
+    const handlers = new Set<() => void>();
 
     const mql: FakeMql = {
         matches,
@@ -50,14 +50,16 @@ function makeMql(matches: boolean): FakeMql {
         removeEvents: [],
         addEventListener(event, cb) {
             mql.addEvents.push(event);
-            handler = cb;
+            handlers.add(cb);
         },
-        removeEventListener(event, _cb) {
+        removeEventListener(event, cb) {
             mql.removeEvents.push(event);
-            handler = null;
+            handlers.delete(cb);
         },
         fireChange() {
-            handler?.();
+            for (const handler of handlers) {
+                handler();
+            }
         },
     };
 
@@ -116,6 +118,24 @@ describe('MatchMediaColorSchemeSource', () => {
 
         expect(mql.removeEvents).toEqual(['change']);
         expect(fired).toBe(0);
+    });
+
+    it('detaches only the unsubscribed listener', () => {
+        const mql = makeMql(false);
+        const source = new MatchMediaColorSchemeSource(windowOf(mql));
+        const fired: string[] = [];
+
+        const unsubscribeFirst = source.subscribe(() => {
+            fired.push('first');
+        });
+
+        source.subscribe(() => {
+            fired.push('second');
+        });
+        unsubscribeFirst();
+        mql.fireChange();
+
+        expect(fired).toStrictEqual(['second']);
     });
 
     it('falls back to the ambient window when none is given', () => {

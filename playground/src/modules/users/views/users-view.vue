@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 
 import DefaultLayout from '@/layouts/default-layout.vue';
 
-import { parseWireTimestamp, useUsersList } from '../composables/use-users-list';
+import { useUsersList } from '../composables/use-users-list';
 
 const { t, d } = useI18n();
 const usersList = useUsersList();
@@ -86,21 +86,21 @@ function ariaSortFor(column: string): 'ascending' | 'descending' | 'none' {
                     <tr v-for="row in usersList.rows.value" :key="row.id">
                         <td>{{ row.fullName }}</td>
                         <td>{{ row.email }}</td>
-                        <td>{{ d(parseWireTimestamp(row.createdAt), 'short') }}</td>
+                        <td>{{ d(row.createdAt, 'short') }}</td>
                     </tr>
                 </tbody>
             </table>
 
             <footer class="users-view__pagination">
-                <SmButton variant="ghost" :disabled="usersList.page.value <= 1" @click="usersList.previous">
+                <SmButton
+                    variant="ghost"
+                    :disabled="usersList.page.value <= 1 || usersList.isLoading.value"
+                    @click="usersList.previous"
+                >
                     {{ t('users.index.actions.previousPage') }}
                 </SmButton>
                 <span class="users-view__pagination-text">{{ paginationLabel }}</span>
-                <SmButton
-                    variant="ghost"
-                    :disabled="usersList.meta.value !== null && !usersList.meta.value.hasMore"
-                    @click="usersList.next"
-                >
+                <SmButton variant="ghost" :disabled="!usersList.hasNextPage.value" @click="usersList.next">
                     {{ t('users.index.actions.nextPage') }}
                 </SmButton>
             </footer>

@@ -33,7 +33,8 @@ export interface DomColorSchemeApplierOptions {
 }
 
 /**
- * A {@link ColorSchemeApplier} that stamps the DOM and the theme-color meta.
+ * A {@link ColorSchemeApplier} that stamps the DOM and owns every `theme-color`
+ * meta tag.
  */
 export class DomColorSchemeApplier implements ColorSchemeApplier {
     /** The document whose root and head receive the applied scheme. */
@@ -62,17 +63,24 @@ export class DomColorSchemeApplier implements ColorSchemeApplier {
     }
 
     /**
-     * Point the `theme-color` meta tag at the resolved surface colour.
+     * Point every `theme-color` meta tag at the resolved surface colour and
+     * drop their `media` conditions, so a host's light/dark pair cannot
+     * override an explicit choice.
      */
     #syncMeta(resolved: ResolvedColorScheme): void {
-        let meta = this.#document.querySelector('meta[name="theme-color"]');
+        const metas = [...this.#document.querySelectorAll('meta[name="theme-color"]')];
 
-        if (meta === null) {
-            meta = this.#document.createElement('meta');
+        if (metas.length === 0) {
+            const meta = this.#document.createElement('meta');
+
             meta.setAttribute('name', 'theme-color');
             this.#document.head.appendChild(meta);
+            metas.push(meta);
         }
 
-        meta.setAttribute('content', this.#themeColors[resolved]);
+        for (const meta of metas) {
+            meta.removeAttribute('media');
+            meta.setAttribute('content', this.#themeColors[resolved]);
+        }
     }
 }

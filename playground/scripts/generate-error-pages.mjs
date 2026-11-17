@@ -1,18 +1,19 @@
 /**
- * Writes localised static HTTP error pages into `dist/errors/` after a build.
+ * Writes localised static HTTP error pages into `dist/errors/` after a build,
+ * or into the directory given as the first argument.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const appRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const localesDir = join(appRoot, 'src', 'locales');
 const themeStylesheet = join(appRoot, 'src', 'assets', 'styles', 'theme.css');
-const outputDir = join(appRoot, 'dist', 'errors');
+const outputDir = resolve(process.argv[2] ?? join(appRoot, 'dist', 'errors'));
 
 const defaultLocale = 'en-US';
 
@@ -32,7 +33,7 @@ const errorKeys = {
 };
 
 /** Verbatim copy of the kernel's first-paint colour-scheme boot script. */
-const bootScript = `try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}`;
+const bootScript = `(function(){var t=null;try{t=localStorage.getItem("theme")}catch(e){}if(t!=='light'&&t!=='dark'&&t!=='system'){t="system"}if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}})()`;
 
 /** The layout layer, built on the inlined design tokens. */
 const layoutStyles = `

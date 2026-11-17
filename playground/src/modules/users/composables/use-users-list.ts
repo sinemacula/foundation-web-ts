@@ -5,14 +5,14 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { PaginationMeta } from '@sinemacula/foundation/query/envelope';
+import type { ApiQuery } from '@sinemacula/foundation/query/api-query';
+import type { ListResult, PaginationMeta } from '@sinemacula/foundation/query/envelope';
 import type { SortDefault } from '@sinemacula/foundation/query/list-query-definition';
 import { useListQuery } from '@sinemacula/web-core/query/use-list-query';
 import { useResource } from '@sinemacula/web-core/query/use-resource';
 import type { ComputedRef, Ref } from 'vue';
-import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue';
+import { computed, onScopeDispose, ref, toRaw, watch } from 'vue';
 
-import { PlaygroundError } from '@/errors/playground-error';
 import { api } from '@/services/api';
 
 import { USERS_PAGE_SIZE, userList } from '../queries/user-list';
@@ -21,21 +21,6 @@ import { createUsersClient } from '../services/users-api';
 
 /** Debounce window applied to free-text search input, in milliseconds. */
 const SEARCH_DEBOUNCE_MS = 300;
-
-/**
- * Parse the API's `YYYY-MM-DD HH:MM:SS` wire timestamp as a UTC instant.
- *
- * @throws PlaygroundError when the timestamp cannot be parsed
- */
-export function parseWireTimestamp(wireTimestamp: string): Date {
-    const parsed = Date.parse(`${wireTimestamp.replace(' ', 'T')}Z`);
-
-    if (Number.isNaN(parsed)) {
-        throw new PlaygroundError(`The wire timestamp "${wireTimestamp}" could not be parsed.`);
-    }
-
-    return new Date(parsed);
-}
 
 /**
  * Reactive state and controls for the users list screen.
@@ -81,8 +66,11 @@ export interface UsersList {
     /** The current 1-based page number. */
     readonly page: ComputedRef<number>;
 
+    /** True when the current query's page has settled and `meta` does not report it as the last. */
+    readonly hasNextPage: ComputedRef<boolean>;
+
     /**
-     * Advance to the next page; a no-op once `meta` reports the last page.
+     * Advance to the next page; a no-op while `hasNextPage` is false.
      */
     next(): void;
 
@@ -105,37 +93,24 @@ function useSearchDebounce(commit: (term: string) => void, initial: string): Ref
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
     watch(searchInput, value => {
-        if (debounceTimer !== undefined) {
-            clearTimeout(debounceTimer);
-        }
-
+        clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => commit(value), SEARCH_DEBOUNCE_MS);
     });
 
-    if (getCurrentScope() !== undefined) {
-        onScopeDispose(() => {
-            if (debounceTimer !== undefined) {
-                clearTimeout(debounceTimer);
-            }
-        });
-    }
+    onScopeDispose(() => clearTimeout(debounceTimer), true);
 
     return searchInput;
 }
 
 /**
- * Build a `next()` control that is a no-op once `meta` reports no further page.
+ * A settled page of users and the query it was fetched with.
  */
-function createGuardedNext(meta: ComputedRef<PaginationMeta | null>, advance: () => void): () => void {
-    return (): void => {
-        const currentMeta = meta.value;
+interface UsersPage {
+    /** The query the page was fetched with. */
+    readonly query: ApiQuery;
 
-        if (currentMeta !== null && !currentMeta.hasMore) {
-            return;
-        }
-
-        advance();
-    };
+    /** The mapped page of users. */
+    readonly result: ListResult<UserListItem>;
 }
 
 /**
@@ -145,13 +120,22 @@ export function useUsersList(): UsersList {
     const list = useListQuery(userList);
     const client = createUsersClient(api());
 
-    const resource = useResource({
-        fetcher: signal => client.list(list.query.value, { signal }),
+    const resource = useResource<UsersPage>({
+        fetcher: async signal => {
+            const query = list.query.value;
+
+            return { query, result: await client.list(query, { signal }) };
+        },
         watch: list.parameters,
     });
 
-    const rows = computed<readonly UserListItem[]>(() => resource.data.value?.items ?? []);
-    const meta = computed<PaginationMeta | null>(() => resource.data.value?.meta ?? null);
+    const rows = computed<readonly UserListItem[]>(() => resource.data.value?.result.items ?? []);
+    const meta = computed<PaginationMeta | null>(() => resource.data.value?.result.meta ?? null);
+    const hasNextPage = computed<boolean>(() => {
+        const settled = resource.data.value;
+
+        return settled !== null && toRaw(settled.query) === list.query.value && settled.result.meta?.hasMore !== false;
+    });
     const lastPage = computed<number | null>(() =>
         meta.value?.mode === 'length-aware' ? Math.max(1, Math.ceil(meta.value.total / USERS_PAGE_SIZE)) : null,
     );
@@ -170,7 +154,12 @@ export function useUsersList(): UsersList {
         sort: list.sort,
         sortBy: list.sortBy,
         page: list.page,
-        next: createGuardedNext(meta, list.next),
+        hasNextPage,
+        next: (): void => {
+            if (hasNextPage.value) {
+                list.next();
+            }
+        },
         previous: list.previous,
         refetch: resource.refetch,
     };

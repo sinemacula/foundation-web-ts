@@ -64,6 +64,10 @@
             "types": "./dist/router/navigation-progress.d.ts",
             "import": "./dist/router/navigation-progress.js"
         },
+        "./router/redirect-loop-error": {
+            "types": "./dist/router/redirect-loop-error.d.ts",
+            "import": "./dist/router/redirect-loop-error.js"
+        },
         "./session/authorization": {
             "types": "./dist/session/authorization.d.ts",
             "import": "./dist/session/authorization.js"
@@ -103,6 +107,10 @@
         "./storage/web-locks-session-lock": {
             "types": "./dist/storage/web-locks-session-lock.d.ts",
             "import": "./dist/storage/web-locks-session-lock.js"
+        },
+        "./theme/color-scheme-boot": {
+            "types": "./dist/theme/color-scheme-boot.d.ts",
+            "import": "./dist/theme/color-scheme-boot.js"
         }
     },
     "files": [

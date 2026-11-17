@@ -18,6 +18,17 @@ export interface ActiveConfirm extends ConfirmRequest {
     readonly id: string;
 }
 
+/**
+ * The active confirmation's id and the resolver for its promise.
+ */
+interface CurrentEntry {
+    /** The id of the active confirmation. */
+    readonly id: string;
+
+    /** Settles the active confirmation's promise with the outcome. */
+    readonly resolve: (outcome: boolean) => void;
+}
+
 interface PendingEntry {
     /** The confirmation content awaiting display. */
     readonly request: ConfirmRequest;
@@ -40,8 +51,8 @@ export class ConfirmService implements Confirmer {
     /** Monotonic counter backing generated confirmation ids. */
     #sequence = 0;
 
-    /** Resolver for the active confirmation's promise, or null. */
-    #currentResolve: ((outcome: boolean) => void) | null = null;
+    /** The active confirmation's id and the resolver for its promise, or null. */
+    #current: CurrentEntry | null = null;
 
     /** The reactive, read-only currently-active confirmation request. */
     readonly active: ComputedRef<ActiveConfirm | null>;
@@ -57,7 +68,7 @@ export class ConfirmService implements Confirmer {
      */
     confirm(request: ConfirmRequest): Promise<boolean> {
         return new Promise<boolean>(resolve => {
-            if (this.#active.value === null) {
+            if (this.#current === null) {
                 this.#surface({ request, resolve });
             } else {
                 this.#queue.push({ request, resolve });
@@ -67,19 +78,20 @@ export class ConfirmService implements Confirmer {
 
     /**
      * Resolve the active request with the outcome and surface the next queued
-     * one; no-op when none is active.
+     * one; no-op when none is active or when `id` names a request that is no
+     * longer active, so a stale or repeated answer never reaches the next one.
      */
-    settle(outcome: boolean): void {
-        if (this.#active.value === null || this.#currentResolve === null) {
+    settle(outcome: boolean, id?: string): void {
+        const current = this.#current;
+
+        if (current === null || (id !== undefined && id !== current.id)) {
             return;
         }
 
-        const resolve = this.#currentResolve;
-
+        this.#current = null;
         this.#active.value = null;
-        this.#currentResolve = null;
 
-        resolve(outcome);
+        current.resolve(outcome);
 
         const next = this.#queue.shift();
 
@@ -89,12 +101,29 @@ export class ConfirmService implements Confirmer {
     }
 
     /**
+     * Cancel the active request and every queued one, resolving each `false`.
+     */
+    cancelAll(): void {
+        const pending = this.#queue.splice(0);
+        const current = this.#current;
+
+        this.#current = null;
+        this.#active.value = null;
+
+        current?.resolve(false);
+
+        for (const entry of pending) {
+            entry.resolve(false);
+        }
+    }
+
+    /**
      * Make an entry the active confirmation request.
      */
     #surface(entry: PendingEntry): void {
         const id = `confirm-${++this.#sequence}`;
 
-        this.#currentResolve = entry.resolve;
+        this.#current = { id, resolve: entry.resolve };
         this.#active.value = { ...entry.request, id };
     }
 }

@@ -8,7 +8,7 @@
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <title>Web Core</title>
         <script>
-            try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}
+            (function(){var t=null;try{t=localStorage.getItem("theme")}catch(e){}if(t!=='light'&&t!=='dark'&&t!=='system'){t="system"}if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}})()
         </script>
     </head>
     <body>

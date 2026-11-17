@@ -5,9 +5,14 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { effectScope, getCurrentScope, ref } from 'vue';
 
+import type { QueryParameters } from '@sinemacula/foundation/http/http-client';
+import { filter } from '@sinemacula/foundation/query/list-filter';
+import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
+import type { ListQuery } from './use-list-query';
+import { useListQuery } from './use-list-query';
 import type { ResourceFetcher } from './use-resource';
 import { useResource } from './use-resource';
 
@@ -219,6 +224,29 @@ describe('useResource', () => {
 
             await firstRun;
         });
+        it.each([
+            ['resolves', (deferred?: Deferred<number>): void => deferred?.resolve(100)],
+            ['rejects', (deferred?: Deferred<number>): void => deferred?.reject(new Error('late failure'))],
+        ])('stays loading when a superseded run %s before the newer run settles', async (_, settle) => {
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const resource = useResource({ fetcher, immediate: false });
+
+            const firstRun = resource.refetch();
+            const secondRun = resource.refetch();
+
+            settle(calls.at(0)?.deferred);
+            await firstRun;
+
+            expect(resource.isLoading.value).toBe(true);
+            expect(resource.data.value).toBeNull();
+            expect(resource.error.value).toBeNull();
+
+            calls.at(1)?.deferred.resolve(200);
+            await secondRun;
+
+            expect(resource.isLoading.value).toBe(false);
+            expect(resource.data.value).toBe(200);
+        });
     });
 
     describe('abort swallowed', () => {
@@ -359,6 +387,68 @@ describe('useResource', () => {
             expect(calls).toHaveLength(1);
         });
 
+        it('discards a result that resolves after stop', async () => {
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const resource = useResource({ fetcher });
+
+            resource.stop();
+
+            expect(resource.isLoading.value).toBe(false);
+
+            calls.at(0)?.deferred.resolve(5);
+            await flushAll();
+
+            expect(resource.data.value).toBeNull();
+            expect(resource.hasLoaded.value).toBe(false);
+            expect(resource.isLoading.value).toBe(false);
+        });
+
+        it('discards a failure that rejects after stop', async () => {
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const resource = useResource({ fetcher });
+
+            resource.stop();
+            calls.at(0)?.deferred.reject(new Error('late failure'));
+            await flushAll();
+
+            expect(resource.error.value).toBeNull();
+            expect(resource.isLoading.value).toBe(false);
+        });
+
+        it('ignores refetch after stop', async () => {
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const resource = useResource({ fetcher, immediate: false });
+
+            resource.stop();
+            await resource.refetch();
+
+            expect(calls).toHaveLength(0);
+            expect(resource.isLoading.value).toBe(false);
+        });
+
+        it('starts no run when an abort listener stops the resource', async () => {
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const resource = useResource({ fetcher });
+
+            calls.at(0)?.signal.addEventListener('abort', () => resource.stop());
+            await resource.refetch();
+
+            expect(calls).toHaveLength(1);
+            expect(resource.isLoading.value).toBe(false);
+        });
+
+        it('keeps only the inner run when an abort listener refetches', () => {
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const resource = useResource({ fetcher });
+
+            calls.at(0)?.signal.addEventListener('abort', () => void resource.refetch(), { once: true });
+            void resource.refetch();
+
+            expect(calls).toHaveLength(2);
+            expect(calls.at(1)?.signal.aborted).toBe(false);
+            expect(resource.isLoading.value).toBe(true);
+        });
+
         it('is a no-op abort when called before any run has started', () => {
             const { fetcher } = createFetcherQueue<number>();
             const resource = useResource({ fetcher, immediate: false });
@@ -388,9 +478,10 @@ describe('useResource', () => {
             expect(calls).toHaveLength(1);
         });
 
-        it('works when created outside any effect scope', async () => {
+        it('works without a warning when created outside any effect scope', async () => {
             expect(getCurrentScope()).toBeUndefined();
 
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
             const { fetcher, calls } = createFetcherQueue<number>();
             const resource = useResource({ fetcher });
 
@@ -398,6 +489,150 @@ describe('useResource', () => {
             await flushAll();
 
             expect(resource.data.value).toBe(7);
+            expect(warn).not.toHaveBeenCalled();
+
+            warn.mockRestore();
+        });
+    });
+
+    describe('paired with useListQuery', () => {
+        const definition = defineListQuery({
+            filters: { status: filter.equals('status'), ids: filter.anyOf('id') },
+            search: filter.search(),
+            sortable: ['name', 'createdAt'],
+            defaultSort: { column: 'name', direction: 'asc' },
+            pageSize: 10,
+        });
+
+        /** The list query shape the paired tests drive. */
+        type PairedList = ListQuery<NonNullable<(typeof definition)['filters']>>;
+
+        /**
+         * Compose a list query with a resource that records each request.
+         */
+        function createListResource(): {
+            /** The list query driving the resource. */
+            readonly list: PairedList;
+
+            /** Every fetcher call, in order. */
+            readonly calls: FetcherCall<number>[];
+
+            /** The parameters each fetcher call was made with, in order. */
+            readonly requests: QueryParameters[];
+
+            /** Dispose the effect scope holding both composables. */
+            readonly dispose: () => void;
+        } {
+            const scope = effectScope();
+            const { fetcher, calls } = createFetcherQueue<number>();
+            const requests: QueryParameters[] = [];
+            const list = scope.run(() => {
+                const created = useListQuery(definition);
+
+                useResource({
+                    fetcher: signal => {
+                        requests.push(created.parameters.value);
+
+                        return fetcher(signal);
+                    },
+                    watch: created.parameters,
+                });
+
+                return created;
+            });
+
+            if (list === undefined) {
+                throw new Error('The effect scope did not run.');
+            }
+
+            return { list, calls, requests, dispose: () => scope.stop() };
+        }
+
+        it('makes one request with the final parameters for a burst of changes in one tick', async () => {
+            const { list, calls, requests, dispose } = createListResource();
+
+            list.setFilter('status', 'active');
+            list.search('alice');
+            list.sortBy('createdAt', 'desc');
+            list.goTo(3);
+            await flushAll();
+
+            expect(calls).toHaveLength(2);
+            expect(requests.at(1)).toEqual(list.parameters.value);
+            expect(requests.at(1)).toMatchObject({ search: 'alice', order: 'createdAt:desc', page: 3 });
+            expect(calls.at(0)?.signal.aborted).toBe(true);
+            expect(calls.at(1)?.signal.aborted).toBe(false);
+
+            dispose();
+        });
+
+        it.each([
+            ['setting a filter to its current value', (list: PairedList): void => list.setFilter('status', 'active')],
+            ['setting a filter to an equal array', (list: PairedList): void => list.setFilter('ids', [1, 2])],
+            ['adding trailing whitespace to the search', (list: PairedList): void => list.search('alice ')],
+            ['re-applying the default sort', (list: PairedList): void => list.sortBy('name', 'asc')],
+        ])('neither refetches nor resets the page when %s', async (_, mutate) => {
+            const { list, calls, dispose } = createListResource();
+
+            list.setFilter('status', 'active');
+            list.setFilter('ids', [1, 2]);
+            list.search('alice');
+            list.goTo(3);
+            await flushAll();
+
+            const page = list.page.value;
+            const made = calls.length;
+
+            mutate(list);
+            await flushAll();
+
+            expect(calls).toHaveLength(made);
+            expect(list.page.value).toBe(page);
+
+            dispose();
+        });
+
+        it('does not refetch when reset leaves the query at its defaults', async () => {
+            const { list, calls, dispose } = createListResource();
+
+            list.reset();
+            await flushAll();
+
+            expect(calls).toHaveLength(1);
+
+            dispose();
+        });
+
+        it('does not refetch when a filter is cleared and restored in one tick', async () => {
+            const { list, calls, dispose } = createListResource();
+
+            list.setFilter('status', 'active');
+            await flushAll();
+
+            list.clearFilter('status');
+            list.setFilter('status', 'active');
+            await flushAll();
+
+            expect(calls).toHaveLength(2);
+
+            dispose();
+        });
+
+        it('aborts the in-flight request when the parameters change again', async () => {
+            const { list, calls, requests, dispose } = createListResource();
+
+            calls.at(0)?.deferred.resolve(1);
+            list.next();
+            await flushAll();
+
+            list.setFilter('status', 'active');
+            await flushAll();
+
+            expect(calls).toHaveLength(3);
+            expect(calls.at(1)?.signal.aborted).toBe(true);
+            expect(requests.at(2)).toMatchObject({ page: 1 });
+
+            dispose();
         });
     });
 });

@@ -8,13 +8,17 @@
 import type { Pinia } from 'pinia';
 import { createPinia } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defineComponent, h, onMounted } from 'vue';
-import type { RouterHistory } from 'vue-router';
-import { createMemoryHistory } from 'vue-router';
+import { defineComponent, h, onMounted, onUnmounted } from 'vue';
+import type { RouteRecordRaw, RouterHistory } from 'vue-router';
+import { createMemoryHistory, createWebHistory } from 'vue-router';
 
+import type * as PageTracking from '@sinemacula/foundation/analytics/install-page-tracking';
 import { NullAnalyticsTracker } from '@sinemacula/foundation/analytics/null-analytics-tracker';
 import type { Environment } from '@sinemacula/foundation/config/environment';
+import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
+import type { UpdateMonitor } from '../updates/update-monitor';
 import { createWebEnvironment } from '../config/web-environment';
+import type * as DocumentTitle from '../i18n/document-title';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import type { HttpClient, RequestInterceptor, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
 import { NullLogger } from '@sinemacula/foundation/logging/null-logger';
@@ -25,12 +29,14 @@ import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
+import type * as GlobalErrorHandling from '../reporting/install-global-error-handling';
+import type * as ChunkErrorRecovery from '../router/chunk-error-recovery';
 import type { RouteMiddleware } from '../router/middleware';
 import { next } from '@sinemacula/foundation/router/middleware';
 import { BrowserStorage } from '../storage/browser-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { WebCoreApp, WebCoreAppOptions } from './create-web-core-app';
-import { createWebCoreApp, observeBootPhases } from './create-web-core-app';
+import { WebCoreAppError, createWebCoreApp, observeBootPhases } from './create-web-core-app';
 import {
     analytics,
     api,
@@ -48,6 +54,61 @@ import {
 } from './services';
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
 import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
+
+/**
+ * Hoisted log that the mocked installers below record their teardowns into.
+ */
+const teardownLog = vi.hoisted(() => {
+    const log = { order: null as string[] | null };
+
+    return {
+        log,
+
+        /**
+         * Wrap an installer so its teardown records the step.
+         */
+        recorded<A extends unknown[]>(step: string, install: (...args: A) => () => void) {
+            return (...args: A): (() => void) => {
+                const teardown = install(...args);
+
+                return () => {
+                    log.order?.push(step);
+                    teardown();
+                };
+            };
+        },
+    };
+});
+
+vi.mock('../reporting/install-global-error-handling', async importOriginal => {
+    const actual = await importOriginal<typeof GlobalErrorHandling>();
+
+    return {
+        ...actual,
+        installGlobalErrorHandling: teardownLog.recorded('error-handling', actual.installGlobalErrorHandling),
+    };
+});
+
+vi.mock('@sinemacula/foundation/analytics/install-page-tracking', async importOriginal => {
+    const actual = await importOriginal<typeof PageTracking>();
+
+    return { ...actual, installPageTracking: teardownLog.recorded('page-tracking', actual.installPageTracking) };
+});
+
+vi.mock('../i18n/document-title', async importOriginal => {
+    const actual = await importOriginal<typeof DocumentTitle>();
+
+    return { ...actual, installDocumentTitleSync: teardownLog.recorded('title-sync', actual.installDocumentTitleSync) };
+});
+
+vi.mock('../router/chunk-error-recovery', async importOriginal => {
+    const actual = await importOriginal<typeof ChunkErrorRecovery>();
+
+    return {
+        ...actual,
+        installChunkErrorRecovery: teardownLog.recorded('chunk-recovery', actual.installChunkErrorRecovery),
+    };
+});
 
 const BOOT_PHASE_ORDER = [
     'module-registry',
@@ -120,32 +181,65 @@ type TestWindow = Window & {
 };
 
 /**
- * Build a window stub that records its event listeners.
+ * Build a map-backed stand-in for a Web Storage area.
  */
-function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
-    const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+function makeWebStorage(): Storage {
+    const values = new Map<string, string>();
 
     return {
-        navigator: { onLine: true, languages },
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+            values.set(key, value);
+        },
+        removeItem: (key: string) => {
+            values.delete(key);
+        },
+    } as unknown as Storage;
+}
+
+/**
+ * Build a window stub that records its event listeners, counting media-query
+ * listeners under a `media:` prefix.
+ */
+function makeWindow(languages: readonly string[] = ['en-US'], onLine = true): TestWindow {
+    const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+
+    /**
+     * Record a listener under its event type.
+     */
+    const add = (type: string, listener: EventListenerOrEventListenerObject): void => {
+        const existing = listeners.get(type) ?? [];
+
+        existing.push(listener);
+        listeners.set(type, existing);
+    };
+
+    /**
+     * Forget a previously recorded listener.
+     */
+    const remove = (type: string, listener: EventListenerOrEventListenerObject): void => {
+        const existing = listeners.get(type) ?? [];
+        const index = existing.indexOf(listener);
+
+        if (index !== -1) {
+            existing.splice(index, 1);
+        }
+    };
+
+    return {
+        navigator: { onLine, languages },
+        sessionStorage: makeWebStorage(),
         matchMedia: () => ({
             matches: false,
-            addEventListener: () => undefined,
-            removeEventListener: () => undefined,
+            addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+                add(`media:${type}`, listener);
+            },
+            removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+                remove(`media:${type}`, listener);
+            },
         }),
-        addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-            const existing = listeners.get(type) ?? [];
-
-            existing.push(listener);
-            listeners.set(type, existing);
-        },
-        removeEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-            const existing = listeners.get(type) ?? [];
-            const index = existing.indexOf(listener);
-
-            if (index !== -1) {
-                existing.splice(index, 1);
-            }
-        },
+        addEventListener: add,
+        removeEventListener: remove,
         listenerCount(type: string) {
             return (listeners.get(type) ?? []).length;
         },
@@ -285,6 +379,51 @@ function makeRealtime(order: string[]): RealtimeConnection {
             // No subscriptions are made by these tests.
         },
     };
+}
+
+/**
+ * Push the step into the order whenever the method runs, then run it.
+ */
+function recordStep<T extends object>(order: string[], step: string, target: T, method: keyof T & string): void {
+    const original = (target[method] as () => void).bind(target);
+
+    vi.spyOn(target, method as never).mockImplementation((() => {
+        order.push(step);
+        original();
+    }) as never);
+}
+
+/**
+ * Build a lazy route whose chunk always fails to load.
+ */
+function lazyRoute(): RouteRecordRaw {
+    return {
+        path: '/lazy',
+        name: 'home.lazy',
+        component: () => Promise.reject(new Error('Failed to fetch dynamically imported module: /assets/lazy.js')),
+    };
+}
+
+/** A promise paired with the callbacks that settle it. */
+interface Deferred<T> {
+    /** The promise the callbacks settle. */
+    readonly promise: Promise<T>;
+
+    /** Fulfil the promise with a value. */
+    readonly resolve: (value: T) => void;
+}
+
+/**
+ * Create a promise the test settles on demand.
+ */
+function deferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+
+    const promise = new Promise<T>(settle => {
+        resolve = settle;
+    });
+
+    return { promise, resolve };
 }
 
 /**
@@ -806,6 +945,50 @@ describe('createWebCoreApp', () => {
 
             app.dispose();
         });
+
+        it('lets module messages shadow a shared key when the strategy is module-wins', async () => {
+            const app = await bootApp({
+                modules: [homeModule({ locales: async () => ({ title: 'Module' }) })],
+                i18n: {
+                    sharedLoaders: { 'en-US': async () => ({ home: { title: 'Shared' } }) },
+                    duplicateNamespaceStrategy: 'module-wins',
+                },
+            });
+
+            expect(app.i18n.global.t('home.title')).toBe('Module');
+
+            app.dispose();
+        });
+
+        it('switches to a locale whose first load failed once its translations load again', async () => {
+            const failure = new Error('chunk failed');
+            let offline = true;
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        locales: locale => {
+                            if (locale === 'fr-FR' && offline) {
+                                offline = false;
+
+                                return Promise.reject(failure);
+                            }
+
+                            return Promise.resolve({ greeting: `hello-${locale}` });
+                        },
+                    }),
+                ],
+            });
+
+            await expect(localeSwitcher().switchTo('fr-FR')).rejects.toBe(failure);
+
+            await localeSwitcher().switchTo('fr-FR');
+
+            expect(app.i18n.global.locale.value).toBe('fr-FR');
+            expect(app.i18n.global.t('home.greeting')).toBe('hello-fr-FR');
+
+            app.dispose();
+        });
     });
 
     describe('colour-scheme wiring', () => {
@@ -958,6 +1141,7 @@ describe('createWebCoreApp', () => {
             expect(fetchFn).toHaveBeenLastCalledWith('/custom-env.json', {
                 cache: 'no-store',
                 headers: { accept: 'application/json' },
+                signal: expect.any(AbortSignal),
             });
             expect(toastService.toasts.value).toHaveLength(1);
             expect(toastService.toasts.value[0]?.message).toBe('app.updates.available');
@@ -979,26 +1163,27 @@ describe('createWebCoreApp', () => {
     });
 
     describe('chunk recovery', () => {
+        /** Build a home module whose `/lazy` route fails to load its chunk. */
+        function staleChunkModule(): ModuleDefinition {
+            return homeModule({
+                routes: [
+                    { path: '/', name: 'home.index', component: EmptyComponent },
+                    {
+                        path: '/lazy',
+                        name: 'home.lazy',
+                        component: () =>
+                            Promise.reject(new Error('Failed to fetch dynamically imported module: /assets/lazy.js')),
+                    },
+                ],
+            });
+        }
+
         it('recovers stale-deploy chunk failures through the injected reload and clock seams', async () => {
             const reload = vi.fn();
             const seams = makeSeams();
 
             const app = await bootApp({
-                modules: [
-                    homeModule({
-                        routes: [
-                            { path: '/', name: 'home.index', component: EmptyComponent },
-                            {
-                                path: '/lazy',
-                                name: 'home.lazy',
-                                component: () =>
-                                    Promise.reject(
-                                        new Error('Failed to fetch dynamically imported module: /assets/lazy.js'),
-                                    ),
-                            },
-                        ],
-                    }),
-                ],
+                modules: [staleChunkModule()],
                 monitors: { chunkRecovery: { enabled: true, reload, windowMs: 30_000 } },
                 platform: seams,
             });
@@ -1009,7 +1194,55 @@ describe('createWebCoreApp', () => {
 
             expect(reload).toHaveBeenCalledTimes(1);
             expect(reload).toHaveBeenCalledWith('/lazy');
-            expect(seams.storage.get('chunk-recovery./lazy')).toBe('1000');
+            expect(seams.targetWindow.sessionStorage.getItem('chunk-recovery.reloaded-at')).toBe('1000');
+            expect(seams.storage.get('chunk-recovery.reloaded-at')).toBeNull();
+
+            app.dispose();
+        });
+
+        it('applies the configured reload-loop window instead of the default', async () => {
+            const reload = vi.fn();
+            let now = 1_000;
+            const seams = { ...makeSeams(), clock: (): number => now };
+
+            const app = await bootApp({
+                modules: [staleChunkModule()],
+                monitors: { chunkRecovery: { reload, windowMs: 30_000 } },
+                platform: seams,
+            });
+
+            await app.router.push('/lazy').catch(() => undefined);
+            now += 40_000;
+            await app.router.push('/lazy').catch(() => undefined);
+
+            expect(reload).toHaveBeenCalledTimes(2);
+
+            app.dispose();
+        });
+
+        it('boots and reports chunk failures without reloading when session storage is refused', async () => {
+            const reload = vi.fn();
+            const reporter = new NullErrorReporter();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const targetWindow = makeWindow();
+
+            Object.defineProperty(targetWindow, 'sessionStorage', {
+                get: () => {
+                    throw new DOMException('denied', 'SecurityError');
+                },
+            });
+
+            const app = await bootApp({
+                modules: [staleChunkModule()],
+                monitors: { chunkRecovery: { reload } },
+                observability: { reporter: () => reporter },
+                platform: { ...makeSeams(), targetWindow },
+            });
+
+            await app.router.push('/lazy').catch(() => undefined);
+
+            expect(reload).not.toHaveBeenCalled();
+            expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), { source: 'router', path: '/lazy' });
 
             app.dispose();
         });
@@ -1018,21 +1251,7 @@ describe('createWebCoreApp', () => {
             const reload = vi.fn();
 
             const app = await bootApp({
-                modules: [
-                    homeModule({
-                        routes: [
-                            { path: '/', name: 'home.index', component: EmptyComponent },
-                            {
-                                path: '/lazy',
-                                name: 'home.lazy',
-                                component: () =>
-                                    Promise.reject(
-                                        new Error('Failed to fetch dynamically imported module: /assets/lazy.js'),
-                                    ),
-                            },
-                        ],
-                    }),
-                ],
+                modules: [staleChunkModule()],
                 monitors: { chunkRecovery: { enabled: false, reload }, connectivity: { enabled: true } },
             });
 
@@ -1099,11 +1318,31 @@ describe('createWebCoreApp', () => {
     });
 
     describe('dispose', () => {
+        afterEach(() => {
+            teardownLog.log.order = null;
+        });
+
         it('disposes everything the boot installed in reverse order', async () => {
             const order: string[] = [];
             const fetchFn = makeFetch(wire([['APP_VERSION', '1.0.0']]));
+            const seams = makeSeams(fetchFn);
+            const toastService = new ToastService();
+            const confirmService = new ConfirmService();
+            const host = seams.targetDocument.createElement('div');
+
+            teardownLog.log.order = order;
 
             const app = await bootApp({
+                root: defineComponent({
+                    setup() {
+                        onUnmounted(() => {
+                            order.push('unmount');
+                        });
+
+                        return () => h('div', 'root');
+                    },
+                }),
+                notifications: { toasts: toastService, confirm: confirmService },
                 modules: [
                     homeModule({
                         name: 'alpha',
@@ -1134,46 +1373,141 @@ describe('createWebCoreApp', () => {
                 ],
                 realtime: () => makeRealtime(order),
                 monitors: { updates: { toastKey: 'app.updates.available' } },
-                platform: makeSeams(fetchFn),
+                platform: seams,
             });
 
-            const updates = app.monitors.updates;
-            const connectivity = app.monitors.connectivity;
+            await app.start(host);
 
-            expect(updates).not.toBeNull();
-            expect(connectivity).not.toBeNull();
-
-            if (updates === null || connectivity === null) {
-                return;
-            }
-
-            const updatesStop = updates.stop.bind(updates);
-            const connectivityStop = connectivity.stop.bind(connectivity);
-
-            vi.spyOn(updates, 'stop').mockImplementation(() => {
-                order.push('updates.stop');
-                updatesStop();
-            });
-            vi.spyOn(connectivity, 'stop').mockImplementation(() => {
-                order.push('connectivity.stop');
-                connectivityStop();
-            });
+            recordStep(order, 'updates.stop', app.monitors.updates as UpdateMonitor, 'stop');
+            recordStep(order, 'connectivity.stop', app.monitors.connectivity as ConnectivityMonitor, 'stop');
+            recordStep(order, 'history.destroy', seams.history, 'destroy');
+            recordStep(order, 'toasts.clear', toastService, 'clear');
+            recordStep(order, 'confirm.cancelAll', confirmService, 'cancelAll');
+            recordStep(order, 'color-scheme', app.services.colorScheme, 'dispose');
 
             app.dispose();
 
             expect(order).toEqual([
+                'unmount',
                 'connectivity.stop',
                 'updates.stop',
-                'realtime.disconnect',
+                'chunk-recovery',
                 'teardown:errors',
                 'teardown:alpha',
+                'realtime.disconnect',
+                'page-tracking',
+                'error-handling',
+                'title-sync',
+                'history.destroy',
                 'dispose:store-2',
                 'dispose:store-1',
+                'confirm.cancelAll',
+                'toasts.clear',
+                'color-scheme',
             ]);
+            expect(host.innerHTML).toBe('');
 
             app.dispose();
 
-            expect(order).toHaveLength(7);
+            expect(order).toHaveLength(16);
+        });
+
+        it('no longer recovers chunk failures once disposed', async () => {
+            const reload = vi.fn();
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({ routes: [{ path: '/', name: 'home.index', component: EmptyComponent }, lazyRoute()] }),
+                ],
+                monitors: { chunkRecovery: { reload } },
+            });
+
+            app.dispose();
+
+            await app.router.push('/lazy').catch(() => {
+                // The failed navigation rejection is expected.
+            });
+
+            expect(reload).not.toHaveBeenCalled();
+        });
+
+        it('runs every teardown when one throws, then rethrows that failure', async () => {
+            const failure = new Error('teardown failed');
+            const order: string[] = [];
+            const seams = makeSeams();
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({ name: 'alpha', boot: () => () => order.push('teardown:alpha') }),
+                    homeModule({
+                        name: 'beta',
+                        routes: [{ path: '/beta', name: 'beta.index', component: EmptyComponent }],
+                        boot: () => () => {
+                            throw failure;
+                        },
+                    }),
+                ],
+                realtime: () => makeRealtime(order),
+                platform: seams,
+            });
+
+            expect(() => {
+                app.dispose();
+            }).toThrow(failure);
+            expect(order).toEqual(['teardown:alpha', 'realtime.disconnect']);
+            expect(seams.targetWindow.listenerCount('error')).toBe(0);
+            expect(seams.targetWindow.listenerCount('unhandledrejection')).toBe(0);
+            expect(seams.targetWindow.listenerCount('media:change')).toBe(0);
+
+            expect(() => {
+                app.dispose();
+            }).not.toThrow();
+        });
+
+        it('declines every pending confirmation and clears timed toasts', async () => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+            try {
+                const toastService = new ToastService();
+                const confirmService = new ConfirmService();
+                const app = await bootApp({ notifications: { toasts: toastService, confirm: confirmService } });
+
+                toastService.success('saved');
+
+                const active = confirmService.confirm({ title: 'Delete?', message: 'This cannot be undone.' });
+                const queued = confirmService.confirm({ title: 'Archive?', message: 'Move it to the archive.' });
+
+                app.dispose();
+
+                expect(await active).toBe(false);
+                expect(await queued).toBe(false);
+                expect(toastService.toasts.value).toHaveLength(0);
+                expect(vi.getTimerCount()).toBe(0);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('silences an update check still in flight', async () => {
+            const response = deferred<Response>();
+            const toastService = new ToastService();
+            const fetchFn = makeFetch(wire([['APP_VERSION', '1.0.0']]));
+
+            const app = await bootApp({
+                notifications: { toasts: toastService },
+                monitors: { updates: { toastKey: 'app.updates.available' } },
+                platform: makeSeams(fetchFn),
+            });
+
+            fetchFn.mockImplementationOnce(() => response.promise);
+
+            const check = app.monitors.updates?.checkNow();
+
+            app.dispose();
+            response.resolve(jsonResponse(wire([['APP_VERSION', '2.0.0']])));
+            await check;
+
+            expect(toastService.toasts.value).toHaveLength(0);
         });
 
         it('leaves service holders installed after dispose until resetWebCoreServices', async () => {
@@ -1188,6 +1522,588 @@ describe('createWebCoreApp', () => {
 
             expect(() => api()).toThrow('http client accessed before initialisation');
             expect(() => toasts()).toThrow('toast service accessed before initialisation');
+        });
+    });
+
+    describe('boot rollback', () => {
+        const failure = new Error('boot step failed');
+
+        /**
+         * Build a module whose store, boot teardown and failures are recorded.
+         */
+        function recordedModule(order: string[], overrides: Partial<ModuleDefinition> = {}): ModuleDefinition {
+            return homeModule({
+                name: 'alpha',
+                stores: [
+                    () => ({
+                        $dispose() {
+                            order.push('dispose:store');
+                        },
+                    }),
+                ],
+                boot: () => () => {
+                    order.push('teardown:alpha');
+                },
+                ...overrides,
+            });
+        }
+
+        /**
+         * Build a module whose boot always rejects with the shared failure.
+         */
+        function failingModule(): ModuleDefinition {
+            return homeModule({
+                name: 'beta',
+                routes: [{ path: '/beta', name: 'beta.index', component: EmptyComponent }],
+                boot: () => Promise.reject(failure),
+            });
+        }
+
+        /**
+         * Assert that nothing the boot attached to the window is left behind.
+         */
+        function expectWindowReleased(targetWindow: TestWindow): void {
+            expect(targetWindow.listenerCount('error')).toBe(0);
+            expect(targetWindow.listenerCount('unhandledrejection')).toBe(0);
+            expect(targetWindow.listenerCount('media:change')).toBe(0);
+            expect(targetWindow.listenerCount('online')).toBe(0);
+        }
+
+        it.each<[string, (order: string[]) => Partial<WebCoreAppOptions<TestConfiguration>>, string[]]>([
+            [
+                'the environment cannot be built',
+                order => ({
+                    modules: [recordedModule(order)],
+                    config: {
+                        createEnvironment: () => {
+                            throw failure;
+                        },
+                        define: defineTestConfiguration,
+                    },
+                }),
+                [],
+            ],
+            [
+                'a register hook throws',
+                order => ({
+                    modules: [
+                        recordedModule(order, {
+                            register: () => {
+                                throw failure;
+                            },
+                        }),
+                    ],
+                }),
+                [],
+            ],
+            [
+                'a store factory throws',
+                order => ({
+                    modules: [
+                        recordedModule(order),
+                        homeModule({
+                            name: 'beta',
+                            routes: [],
+                            stores: [
+                                () => {
+                                    throw failure;
+                                },
+                            ],
+                        }),
+                    ],
+                }),
+                ['dispose:store'],
+            ],
+            [
+                'a locale loader rejects',
+                order => ({ modules: [recordedModule(order, { locales: () => Promise.reject(failure) })] }),
+                ['dispose:store'],
+            ],
+            [
+                'a module boot rejects',
+                order => ({ modules: [recordedModule(order), failingModule()] }),
+                ['teardown:alpha', 'realtime.disconnect', 'dispose:store'],
+            ],
+        ])('tears down what was installed when %s', async (_label, failingOptions, expected) => {
+            const order: string[] = [];
+            const seams = makeSeams();
+
+            await expect(
+                bootApp({ realtime: () => makeRealtime(order), platform: seams, ...failingOptions(order) }),
+            ).rejects.toBe(failure);
+
+            expect(order).toEqual(expected);
+            expectWindowReleased(seams.targetWindow);
+        });
+
+        it('tears down every booted module when update monitoring is enabled only in production without a handler', async () => {
+            const order: string[] = [];
+            const seams = makeSeams(makeFetch(wire([['APP_ENV', 'production']])));
+
+            await expect(
+                bootApp({
+                    modules: [recordedModule(order)],
+                    realtime: () => makeRealtime(order),
+                    monitors: { updates: { enabled: settings => settings.app.environment === 'production' } },
+                    platform: seams,
+                }),
+            ).rejects.toBeInstanceOf(FoundationBootError);
+
+            expect(order).toEqual(['teardown:alpha', 'realtime.disconnect', 'dispose:store']);
+            expectWindowReleased(seams.targetWindow);
+        });
+
+        it('reports teardown failures and still rejects with the boot error', async () => {
+            const teardownFailure = new Error('teardown failed');
+            const reporter = new NullErrorReporter();
+            const capture = vi.spyOn(reporter, 'captureError');
+            const seams = makeSeams();
+
+            await expect(
+                bootApp({
+                    modules: [
+                        homeModule({
+                            name: 'alpha',
+                            boot: () => () => {
+                                throw teardownFailure;
+                            },
+                        }),
+                        failingModule(),
+                    ],
+                    observability: { reporter: () => reporter },
+                    platform: seams,
+                }),
+            ).rejects.toBe(failure);
+
+            expect(capture).toHaveBeenCalledTimes(1);
+            expect(capture).toHaveBeenCalledWith(teardownFailure, { source: 'boot-rollback' });
+            expectWindowReleased(seams.targetWindow);
+        });
+
+        it('releases the default browser history when the routes cannot be compiled', async () => {
+            const adds = vi.spyOn(window, 'addEventListener');
+            const removes = vi.spyOn(window, 'removeEventListener');
+            const seams = makeSeams();
+
+            try {
+                await expect(
+                    bootApp({
+                        modules: [homeModule({ routes: [{ path: '/:id(\\d+', component: EmptyComponent }] })],
+                        platform: {
+                            fetchFn: seams.fetchFn,
+                            storage: seams.storage,
+                            targetWindow: seams.targetWindow,
+                            targetDocument: seams.targetDocument,
+                            localeCandidates: seams.localeCandidates,
+                        },
+                    }),
+                ).rejects.toThrow();
+
+                expect(adds.mock.calls.map(([type]) => type)).toContain('popstate');
+                expect(removes.mock.calls.map(([type]) => type).sort()).toEqual(
+                    adds.mock.calls.map(([type]) => type).sort(),
+                );
+            } finally {
+                adds.mockRestore();
+                removes.mockRestore();
+            }
+        });
+
+        it('declines a confirmation a module opened before the boot failed', async () => {
+            const confirmService = new ConfirmService();
+            const opened: Array<Promise<boolean>> = [];
+
+            await expect(
+                bootApp({
+                    modules: [
+                        homeModule({
+                            name: 'alpha',
+                            boot: () => {
+                                opened.push(
+                                    confirmService.confirm({
+                                        title: 'Resume?',
+                                        message: 'Pick up where you left off.',
+                                    }),
+                                );
+
+                                return undefined;
+                            },
+                        }),
+                        failingModule(),
+                    ],
+                    notifications: { confirm: confirmService },
+                }),
+            ).rejects.toBe(failure);
+
+            expect(opened).toHaveLength(1);
+            expect(await opened[0]).toBe(false);
+        });
+
+        it('keeps the boot error when the reporter itself throws', async () => {
+            const reporter = new NullErrorReporter();
+
+            vi.spyOn(reporter, 'captureError').mockImplementation(() => {
+                throw new Error('reporter failed');
+            });
+
+            await expect(
+                bootApp({
+                    modules: [
+                        homeModule({
+                            name: 'alpha',
+                            boot: () => () => {
+                                throw new Error('teardown failed');
+                            },
+                        }),
+                        failingModule(),
+                    ],
+                    observability: { reporter: () => reporter },
+                }),
+            ).rejects.toBe(failure);
+        });
+
+        it('boots cleanly on the same window after a failed boot', async () => {
+            const seams = makeSeams();
+
+            await expect(bootApp({ modules: [homeModule(), failingModule()], platform: seams })).rejects.toBe(failure);
+
+            resetWebCoreServices();
+
+            const app = await bootApp({ platform: { ...seams, history: createMemoryHistory() } });
+
+            expect(seams.targetWindow.listenerCount('error')).toBe(1);
+            expect(seams.targetWindow.listenerCount('media:change')).toBe(1);
+
+            app.dispose();
+
+            expectWindowReleased(seams.targetWindow);
+        });
+    });
+
+    describe('handle lifecycle', () => {
+        it('unmounts the root on dispose', async () => {
+            const events: string[] = [];
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            const app = await bootApp({
+                root: defineComponent({
+                    setup() {
+                        onUnmounted(() => {
+                            events.push('unmounted');
+                        });
+
+                        return () => h('div', 'root');
+                    },
+                }),
+                platform: seams,
+            });
+
+            await app.start(host);
+            app.dispose();
+
+            expect(events).toEqual(['unmounted']);
+            expect(host.innerHTML).toBe('');
+        });
+
+        it('rejects and never mounts when disposed while the initial navigation is pending', async () => {
+            const gate = deferred<undefined>();
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        guards: [
+                            {
+                                handle: async () => {
+                                    await gate.promise;
+
+                                    return next();
+                                },
+                            },
+                        ],
+                    }),
+                ],
+                platform: seams,
+            });
+
+            const starting = app.start(host);
+
+            app.dispose();
+
+            await expect(starting).rejects.toThrow('The application has been disposed.');
+
+            gate.resolve(undefined);
+            await app.router.isReady().catch(() => undefined);
+
+            expect(host.innerHTML).toBe('');
+        });
+
+        it('rejects and leaves nothing mounted when a component disposes the handle while mounting', async () => {
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            let mounting: WebCoreApp<TestConfiguration> | null = null;
+
+            const app = await bootApp({
+                root: defineComponent({
+                    setup() {
+                        onMounted(() => {
+                            mounting?.dispose();
+                        });
+
+                        return () => h('div', 'root');
+                    },
+                }),
+                platform: seams,
+            });
+
+            mounting = app;
+
+            await expect(app.start(host)).rejects.toThrow('The application has been disposed.');
+            expect(host.innerHTML).toBe('');
+        });
+
+        it('drops a navigation still waiting on a guard when disposed', async () => {
+            const gate = deferred<undefined>();
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        routes: [
+                            { path: '/', name: 'home.index', component: EmptyComponent },
+                            { path: '/other', name: 'home.other', component: EmptyComponent },
+                        ],
+                        guards: [
+                            {
+                                handle: async context => {
+                                    if (context.to.path === '/other') {
+                                        await gate.promise;
+                                    }
+
+                                    return next();
+                                },
+                            },
+                        ],
+                    }),
+                ],
+            });
+
+            await app.router.isReady();
+
+            const navigating = app.router.push('/other');
+
+            app.dispose();
+            gate.resolve(undefined);
+            await navigating;
+
+            expect(app.router.currentRoute.value.path).toBe('/');
+        });
+
+        it('rejects a start after dispose', async () => {
+            const app = await bootApp();
+
+            app.dispose();
+
+            const starting = app.start(document.createElement('div'));
+
+            await expect(starting).rejects.toBeInstanceOf(WebCoreAppError);
+            await expect(starting).rejects.toThrow('The application has been disposed.');
+            await expect(starting).rejects.toHaveProperty('name', 'WebCoreAppError');
+        });
+
+        it('reports disposal rather than a repeat start once a started handle is disposed', async () => {
+            const seams = makeSeams();
+            const app = await bootApp({ platform: seams });
+
+            await app.start(seams.targetDocument.createElement('div'));
+            app.dispose();
+
+            await expect(app.start(seams.targetDocument.createElement('div'))).rejects.toThrow(
+                'The application has been disposed.',
+            );
+        });
+
+        it('waits for a pending initial navigation before mounting', async () => {
+            const gate = deferred<undefined>();
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        guards: [
+                            {
+                                handle: async () => {
+                                    await gate.promise;
+
+                                    return next();
+                                },
+                            },
+                        ],
+                    }),
+                ],
+                platform: seams,
+            });
+
+            const starting = app.start(host);
+
+            await new Promise(resolve => {
+                setTimeout(resolve, 0);
+            });
+
+            expect(host.innerHTML).toBe('');
+
+            gate.resolve(undefined);
+            await starting;
+
+            expect(host.innerHTML).toContain('root');
+
+            app.dispose();
+        });
+
+        it('rejects a second start and keeps the first mount', async () => {
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            const app = await bootApp({ platform: seams });
+
+            await app.start(host);
+
+            await expect(app.start(host)).rejects.toThrow('The application has already been started.');
+            expect(host.querySelectorAll('.root')).toHaveLength(1);
+
+            app.dispose();
+        });
+
+        it('disposes without unmounting when the mount target was missing', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+            try {
+                const app = await bootApp();
+
+                await app.start('#missing-mount-target');
+                app.dispose();
+
+                expect(warn.mock.calls.flat().join(' ')).not.toContain('Cannot unmount');
+            } finally {
+                warn.mockRestore();
+            }
+        });
+
+        it('returns listeners, timers and the mounted root to baseline across repeated boots', async () => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+
+            const globalAdds = vi.spyOn(window, 'addEventListener');
+            const globalRemoves = vi.spyOn(window, 'removeEventListener');
+            const documentAdds = vi.spyOn(document, 'addEventListener');
+            const documentRemoves = vi.spyOn(document, 'removeEventListener');
+            const seams = makeSeams(makeFetch(wire([['APP_VERSION', '1.0.0']])));
+            const targetAdds = vi.spyOn(seams.targetDocument, 'addEventListener');
+            const targetRemoves = vi.spyOn(seams.targetDocument, 'removeEventListener');
+            const host = seams.targetDocument.createElement('div');
+            const events: string[] = [];
+
+            try {
+                for (let cycle = 0; cycle < 20; cycle += 1) {
+                    const app = await bootApp({
+                        root: makeRoot(events),
+                        realtime: () => makeRealtime([]),
+                        monitors: { updates: { toastKey: 'app.updates.available' } },
+                        platform: { ...seams, history: createWebHistory() },
+                    });
+
+                    await app.start(host);
+
+                    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+                    app.dispose();
+                    resetWebCoreServices();
+
+                    expect(host.innerHTML).toBe('');
+                    expect(vi.getTimerCount()).toBe(0);
+                }
+
+                expect(events).toHaveLength(20);
+                expect(globalRemoves.mock.calls.length).toBe(globalAdds.mock.calls.length);
+                expect(documentRemoves.mock.calls.length).toBe(documentAdds.mock.calls.length);
+                expect(targetRemoves.mock.calls.length).toBe(targetAdds.mock.calls.length);
+
+                for (const type of ['error', 'unhandledrejection', 'online', 'offline', 'media:change']) {
+                    expect(seams.targetWindow.listenerCount(type)).toBe(0);
+                }
+            } finally {
+                vi.restoreAllMocks();
+                vi.useRealTimers();
+            }
+        });
+    });
+
+    describe('storage', () => {
+        it('falls back to in-memory storage when the browser blocks local storage', async () => {
+            const seams = makeSeams();
+
+            Object.defineProperty(seams.targetWindow, 'localStorage', {
+                get: () => {
+                    throw new DOMException('Access is denied for this document.', 'SecurityError');
+                },
+            });
+
+            const app = await bootApp({
+                platform: {
+                    fetchFn: seams.fetchFn,
+                    targetWindow: seams.targetWindow,
+                    targetDocument: seams.targetDocument,
+                    history: seams.history,
+                    localeCandidates: seams.localeCandidates,
+                },
+            });
+
+            expect(app.services.storage).toBeInstanceOf(MemoryStorage);
+            expect(appStorage()).toBe(app.services.storage);
+
+            app.dispose();
+        });
+    });
+
+    describe('connectivity', () => {
+        it('holds update polling while booted offline until the window comes back online', async () => {
+            vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+            try {
+                const seams = {
+                    ...makeSeams(makeFetch(wire([['APP_VERSION', '1.0.0']]))),
+                    targetWindow: makeWindow(['en-US'], false),
+                };
+                const app = await bootApp({
+                    monitors: { updates: { toastKey: 'app.updates.available' } },
+                    platform: seams,
+                });
+
+                expect(vi.getTimerCount()).toBe(0);
+
+                seams.targetWindow.dispatchToListeners('online', new Event('online'));
+
+                expect(vi.getTimerCount()).toBe(1);
+
+                seams.targetWindow.dispatchToListeners('offline', new Event('offline'));
+
+                expect(vi.getTimerCount()).toBe(0);
+
+                app.dispose();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
+    describe('service holders', () => {
+        it('leaves no realtime connection for a replacement application booted after a reset', async () => {
+            const first = await bootApp({ realtime: () => makeRealtime([]) });
+
+            first.dispose();
+            resetWebCoreServices();
+
+            const second = await bootApp();
+
+            expect(() => realtime()).toThrow('realtime connection accessed before initialisation');
+
+            second.dispose();
         });
     });
 

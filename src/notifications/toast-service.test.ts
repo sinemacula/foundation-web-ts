@@ -171,6 +171,7 @@ describe('ToastService', () => {
             service.dismiss(id);
 
             expect(service.toasts.value).toHaveLength(0);
+            expect(vi.getTimerCount()).toBe(0);
 
             vi.advanceTimersByTime(2_000);
 
@@ -206,6 +207,8 @@ describe('ToastService', () => {
             service.show('error', 'b', { duration: 2_000 });
 
             service.clear();
+
+            expect(vi.getTimerCount()).toBe(0);
 
             vi.advanceTimersByTime(5_000);
 

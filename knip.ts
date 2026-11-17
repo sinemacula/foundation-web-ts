@@ -33,7 +33,13 @@ const config: KnipConfig = {
             vitest: false,
         },
         playground: {
-            entry: ['src/main.ts', 'src/**/*.test.ts', 'src/test-support/setup-network-guard.ts', 'vite.config.ts'],
+            entry: [
+                'src/main.ts',
+                'src/**/*.test.ts',
+                'scripts/**/*.test.ts',
+                'src/test-support/setup-network-guard.ts',
+                'vite.config.ts',
+            ],
             project: ['src/**/*.ts', 'src/**/*.vue'],
             vite: false,
         },

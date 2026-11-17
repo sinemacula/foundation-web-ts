@@ -41,6 +41,9 @@ ruleTester.run('module-export-names', rule, {
             filename: 'src/modules/module.ts',
             code: 'export const anyModule = {};',
         },
+        // A contract basename outside a module tree, or with no module folder.
+        { filename: 'src/routes.ts', code: 'export const anything = 1;' },
+        { filename: 'modules/module.ts', code: 'export const anything = 1;' },
         // A type-only re-export alongside the runtime value export is fine.
         {
             filename: 'src/modules/auth/module.ts',
@@ -68,6 +71,24 @@ ruleTester.run('module-export-names', rule, {
             filename: 'src\\modules\\user-settings\\module.ts',
             code: 'export const wrong = 1;',
             errors: [{ messageId: 'missing', data: { name: 'userSettingsModule', file: 'module.ts' } }],
+        },
+        // `.tsx` contract files carry the same obligation.
+        {
+            filename: 'src/modules/auth/routes.tsx',
+            code: 'export const routes = [];',
+            errors: [{ messageId: 'missing', data: { name: 'authRoutes', file: 'routes.tsx' } }],
+        },
+        // A module tree at the path root.
+        {
+            filename: 'modules/auth/module.ts',
+            code: 'export const wrong = 1;',
+            errors: [{ messageId: 'missing', data: { name: 'authModule', file: 'module.ts' } }],
+        },
+        // Contract basenames are matched anywhere beneath the module folder.
+        {
+            filename: 'src/modules/auth/locales/routes.ts',
+            code: 'export default {};',
+            errors: [{ messageId: 'missing', data: { name: 'authRoutes', file: 'routes.ts' } }],
         },
         // A destructured export does not bind a plain name.
         {
