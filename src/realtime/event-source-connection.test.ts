@@ -31,6 +31,9 @@ class FakeEventSource {
     /** How many times close() was called. */
     closeCalls: number = 0;
 
+    /** The ready state the source reports. */
+    readyState: number = 0;
+
     /** The listeners registered per event name. */
     readonly #listeners: Map<string, Array<(event: MessageEvent) => void>> = new Map();
 
@@ -93,6 +96,14 @@ class FakeEventSource {
     }
 
     /**
+     * Simulate the source failing in the given ready state.
+     */
+    fail(readyState: number): void {
+        this.readyState = readyState;
+        this.emitError();
+    }
+
+    /**
      * Dispatch a data-less transport event to its handler property and
      * listeners.
      */
@@ -133,8 +144,8 @@ interface RecordingFactory {
     /** The factory to inject into the connection. */
     readonly factory: EventSourceFactory;
 
-    /** While true, the factory throws instead of creating a source. */
-    failing: boolean;
+    /** While set, the factory throws this error instead of creating a source. */
+    failure: Error | null;
 }
 
 /**
@@ -145,8 +156,8 @@ function makeFactory(): RecordingFactory {
     const recording: RecordingFactory = {
         sources: [],
         factory: (url, init) => {
-            if (recording.failing) {
-                throw new Error('factory failed');
+            if (recording.failure !== null) {
+                throw recording.failure;
             }
 
             const source = new FakeEventSource(url, init);
@@ -155,7 +166,7 @@ function makeFactory(): RecordingFactory {
 
             return source as unknown as EventSource;
         },
-        failing: false,
+        failure: null,
     };
 
     return recording;
@@ -174,8 +185,9 @@ function fixedBackoff(delay: number): ExponentialBackoff {
 function makeSseContractHarness(): RealtimeContractHarness {
     return {
         create(options) {
-            const { sources, factory } = makeFactory();
-            const connection = new EventSourceConnection({ ...options, eventSourceFactory: factory });
+            const recording = makeFactory();
+            const { sources } = recording;
+            const connection = new EventSourceConnection({ ...options, eventSourceFactory: recording.factory });
 
             return {
                 connection,
@@ -202,6 +214,9 @@ function makeSseContractHarness(): RealtimeContractHarness {
                             message: (event, data) => source.emitMessage(event, data),
                         };
                     },
+                },
+                setFactoryError: error => {
+                    recording.failure = error;
                 },
             };
         },
@@ -290,38 +305,6 @@ describe('EventSourceConnection', () => {
             sources.at(0)?.emitMessage('late', 'hi');
 
             expect(received).toEqual(['a:hi', 'b:hi']);
-        });
-
-        it('keeps delivering to remaining subscribers when one throws', () => {
-            const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
-
-            const received: string[] = [];
-
-            conn.on('update', () => {
-                throw new Error('subscriber exploded');
-            });
-            conn.on('update', msg => received.push(msg.data));
-            conn.connect();
-            sources.at(0)?.emitMessage('update', 'payload');
-
-            expect(received).toEqual(['payload']);
-        });
-
-        it('keeps notifying remaining state subscribers when one throws', () => {
-            const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
-
-            const states: string[] = [];
-
-            conn.onStateChange(() => {
-                throw new Error('subscriber exploded');
-            });
-            conn.onStateChange(state => states.push(state));
-            conn.connect();
-            sources.at(0)?.emitOpen();
-
-            expect(states).toEqual(['connecting', 'open']);
         });
     });
 
@@ -531,188 +514,58 @@ describe('EventSourceConnection', () => {
             expect(sources).toHaveLength(1);
             expect(conn.state).toBe('closed');
         });
-
-        it('ignores events from a source it has released', () => {
-            const received: string[] = [];
-            const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
-
-            conn.on('update', msg => received.push(msg.data));
-            conn.connect();
-            conn.disconnect();
-            conn.connect();
-
-            sources.at(0)?.emitOpen();
-            sources.at(0)?.emitMessage('update', 'stale');
-            sources.at(0)?.emitError();
-
-            expect(conn.state).toBe('connecting');
-            expect(received).toEqual([]);
-            expect(vi.getTimerCount()).toBe(0);
-            expect(sources.at(0)?.closeCalls).toBe(1);
-
-            sources.at(1)?.emitOpen();
-            sources.at(1)?.emitMessage('update', 'fresh');
-
-            expect(conn.state).toBe('open');
-            expect(received).toEqual(['fresh']);
-        });
     });
 
-    describe('open failures', () => {
-        it('wraps a throwing EventSource factory in a RealtimeError on connect()', () => {
-            const recording = makeFactory();
-            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: recording.factory });
-
-            recording.failing = true;
-
-            expect(() => conn.connect()).toThrow(
-                expect.objectContaining({
-                    name: 'RealtimeError',
-                    message: 'Cannot connect: the EventSource could not be opened.',
-                    cause: new Error('factory failed'),
-                }),
-            );
-            expect(conn.state).toBe('idle');
-        });
-
-        it('leaves the state closed when the url builder throws on a connect() after disconnect()', () => {
-            const cause = new Error('no token');
-            let fail = false;
+    describe('reconnect policy', () => {
+        it.each([
+            ['retrying on its own', 0],
+            ['closed', 2],
+        ])('closes and reconnects through the backoff a source that errors while %s', async (_case, readyState) => {
             const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({
-                url: () => {
-                    if (fail) {
-                        throw cause;
-                    }
-
-                    return 'http://sse';
-                },
-                eventSourceFactory: factory,
-            });
-
-            conn.connect();
-            conn.disconnect();
-            fail = true;
-
-            expect(() => conn.connect()).toThrow(expect.objectContaining({ name: 'RealtimeError', cause }));
-            expect(conn.state).toBe('closed');
-            expect(sources).toHaveLength(1);
-        });
-
-        it('reschedules with backoff and reports the error when the factory throws on a reconnect', async () => {
-            const errors: unknown[] = [];
-            const recording = makeFactory();
-            const { sources } = recording;
             const conn = new EventSourceConnection({
                 url: 'http://sse',
-                backoff: new ExponentialBackoff({ initialDelay: 100, multiplier: 2, maxDelay: 10_000 }),
-                eventSourceFactory: recording.factory,
-                onError: error => errors.push(error),
-            });
-
-            conn.connect();
-            sources.at(0)?.emitError();
-            recording.failing = true;
-
-            await vi.advanceTimersByTimeAsync(100);
-
-            expect(errors).toEqual([new Error('factory failed')]);
-            expect(conn.state).toBe('connecting');
-            expect(vi.getTimerCount()).toBe(1);
-
-            recording.failing = false;
-
-            // Attempt 1 waits 200 ms: the failed attempt advanced the backoff.
-            await vi.advanceTimersByTimeAsync(199);
-            expect(sources).toHaveLength(1);
-
-            await vi.advanceTimersByTimeAsync(1);
-            expect(sources).toHaveLength(2);
-
-            sources.at(1)?.emitOpen();
-            expect(conn.state).toBe('open');
-        });
-
-        it('reschedules without an onError sink when the url builder throws on a reconnect', async () => {
-            let calls = 0;
-            const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({
-                url: () => {
-                    if (++calls === 2) {
-                        throw new Error('no token');
-                    }
-
-                    return 'http://sse';
-                },
                 backoff: fixedBackoff(100),
                 eventSourceFactory: factory,
             });
 
             conn.connect();
-            sources.at(0)?.emitError();
+            sources.at(0)?.emitOpen();
+            sources.at(0)?.fail(readyState);
 
-            await vi.advanceTimersByTimeAsync(100);
-
-            expect(sources).toHaveLength(1);
+            expect(sources.at(0)?.closeCalls).toBe(1);
             expect(conn.state).toBe('connecting');
 
             await vi.advanceTimersByTimeAsync(100);
 
             expect(sources).toHaveLength(2);
         });
-    });
 
-    describe('onError', () => {
-        it('receives errors thrown by message and state subscribers', () => {
-            const errors: unknown[] = [];
-            const messageError = new Error('message subscriber');
-            const stateError = new Error('state subscriber');
+        it('waits half the first backoff delay at the low end of the default equal jitter', async () => {
+            vi.spyOn(Math, 'random').mockReturnValue(0);
+
             const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({
-                url: 'http://sse',
-                eventSourceFactory: factory,
-                onError: error => errors.push(error),
-            });
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
 
-            conn.on('update', () => {
-                throw messageError;
-            });
-            conn.onStateChange(() => {
-                throw stateError;
-            });
             conn.connect();
-            sources.at(0)?.emitMessage('update', 'hello');
+            sources.at(0)?.emitError();
+            await vi.advanceTimersByTimeAsync(499);
 
-            expect(errors).toEqual([stateError, messageError]);
+            expect(sources).toHaveLength(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+
+            expect(sources).toHaveLength(2);
         });
 
-        it('keeps delivering to remaining subscribers when the sink itself throws', () => {
-            const received: string[] = [];
-            const states: string[] = [];
+        it('detaches every listener from a released source', () => {
             const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({
-                url: 'http://sse',
-                eventSourceFactory: factory,
-                onError: () => {
-                    throw new Error('sink exploded');
-                },
-            });
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
 
-            conn.on('update', () => {
-                throw new Error('subscriber exploded');
-            });
-            conn.on('update', msg => received.push(msg.data));
-            conn.onStateChange(() => {
-                throw new Error('subscriber exploded');
-            });
-            conn.onStateChange(state => states.push(state));
+            conn.on('tick', () => undefined);
             conn.connect();
-            sources.at(0)?.emitOpen();
-            sources.at(0)?.emitMessage('update', 'hello');
+            conn.disconnect();
 
-            expect(received).toEqual(['hello']);
-            expect(states).toEqual(['connecting', 'open']);
+            expect(sources.at(0)?.listenerCount('tick')).toBe(0);
         });
     });
 });
