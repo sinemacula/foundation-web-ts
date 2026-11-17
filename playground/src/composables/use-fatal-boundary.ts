@@ -1,10 +1,5 @@
 /**
- * Application-level fatal error boundary composable.
- *
- * Catches errors thrown by any descendant component so the application can fall
- * back to a minimal panel instead of a blank screen. The error is reported and
- * propagation is stopped so the global Vue error handler does not also capture
- * it a second time.
+ * Fatal error boundary that reports a descendant's error and swaps in a panel.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -29,12 +24,8 @@ export interface FatalBoundary {
 }
 
 /**
- * Install an error boundary around the calling component's descendants.
- *
- * Must be called from a component's `setup()` (or `<script setup>`), since it
- * registers Vue's `onErrorCaptured` lifecycle hook.
- *
- * @returns the reactive fatal state and a reset() to clear it
+ * Install an error boundary around the calling component's descendants; call
+ * from `setup()`.
  */
 export function useFatalBoundary(): FatalBoundary {
     const fatal = ref(false);
@@ -43,11 +34,12 @@ export function useFatalBoundary(): FatalBoundary {
         reporting().captureError(error, { source: 'fatal-boundary', info });
         fatal.value = true;
 
+        // Stop propagation so the global handler does not report it again.
         return false;
     });
 
     /**
-     * Clear the fatal state so the guarded content renders again.
+     * Clear the fatal state.
      */
     function reset(): void {
         fatal.value = false;

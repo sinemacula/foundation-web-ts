@@ -1,8 +1,5 @@
 /**
- * Shared application translations - English (United States).
- *
- * Module-specific translations live with their module; only genuinely
- * cross-cutting strings belong here.
+ * Shared cross-module translations - English (United States).
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

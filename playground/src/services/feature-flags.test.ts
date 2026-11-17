@@ -10,9 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { featureFlags, initialiseFeatureFlags, resetFeatureFlags } from '@/services/feature-flags';
 
-/**
- * Minimal no-op stub that satisfies the {@link FeatureFlags} interface.
- */
+/** No-op feature-flag adapter. */
 const stubFlags: FeatureFlags = {
     isEnabled: () => false,
     variant: (_key, fallback) => fallback,

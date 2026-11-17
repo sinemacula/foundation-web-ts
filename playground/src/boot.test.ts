@@ -1,11 +1,5 @@
 /**
- * Boot tests for the application composition.
- *
- * The kernel preset's behaviour is covered by its own suite; these tests pin
- * what is application-specific about the composition the entry point feeds it:
- * the configuration registry resolving the fetched runtime document, the
- * session module guarding the app routes, and the errors module owning the
- * catch-all through its fallback marker.
+ * Boot tests for the app-specific parts of the entry point's composition.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -32,21 +26,15 @@ import { ERRORS_ROUTE_NAMES } from '@/modules/errors/route-names';
 import { modules } from '@/modules';
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping non-camelCase environment keys out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a record from pairs, keeping env-style keys out of object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
 }
 
-/** A complete runtime environment document. */
+/**
+ * A complete runtime environment document.
+ */
 function runtimeDocument(overrides: Record<string, string> = {}): Record<string, string> {
     return {
         ...wire([
@@ -75,11 +63,7 @@ describe('application boot', () => {
     let booted: WebCoreApp<Configuration> | null = null;
 
     /**
-     * Boot the application with the entry point's composition through the
-     * platform seams.
-     *
-     * @param options - the dev flag and runtime document for this boot
-     * @returns the assembled application handle
+     * Boot the entry point's composition through the platform seams.
      */
     async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
         const body = JSON.stringify(options.runtime ?? runtimeDocument());

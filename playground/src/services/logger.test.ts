@@ -9,9 +9,7 @@ import type { Logger } from '@sinemacula/foundation/logging/logger';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initialiseLogger, logger, resetLogger } from '@/services/logger';
 
-/**
- * Minimal no-op stub that satisfies the {@link Logger} interface.
- */
+/** No-op logger. */
 const stubLogger: Logger = {
     debug: () => undefined,
     info: () => undefined,

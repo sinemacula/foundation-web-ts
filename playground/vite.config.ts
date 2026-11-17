@@ -1,14 +1,5 @@
 /**
- * Vite build configuration.
- *
- * The application builds to a static, environment-agnostic artifact: no
- * environment variable is baked into the bundle at build time. Runtime
- * configuration is delivered through `runtime-env.json`, rendered at deploy
- * time by `scripts/generate-runtime-env.mjs` and uploaded alongside the
- * artifact.
- *
- * Kernel subpath imports resolve to source, so the playground runs and builds
- * without a package build.
+ * Vite configuration; kernel subpaths resolve to source, so no package build.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

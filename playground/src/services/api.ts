@@ -1,9 +1,5 @@
 /**
- * Application API service.
- *
- * Thin delegating re-export of the kernel HTTP client holder under the
- * application's established accessor names. `resetApi` clears every kernel
- * service holder between tests.
+ * HTTP client accessors; `resetApi` clears every kernel service holder.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

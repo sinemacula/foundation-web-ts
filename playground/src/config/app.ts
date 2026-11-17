@@ -38,9 +38,6 @@ export interface AppConfig {
 
 /**
  * Resolve the application configuration from the environment.
- *
- * @param env - the typed environment reader
- * @returns the resolved application configuration
  */
 export function appConfig(env: Environment): AppConfig {
     const api = env.string('API_URL', 'http://localhost:8000');

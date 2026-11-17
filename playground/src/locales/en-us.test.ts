@@ -15,17 +15,17 @@ describe('en-us locale messages', () => {
         expect(typeof messages).toBe('object');
     });
 
-    it('contains common.actions keys as non-empty strings', () => {
-        const actions = (messages as Record<string, unknown>)['common'] as Record<string, unknown>;
-        const actionsMap = actions['actions'] as Record<string, unknown>;
+    it('contains common.actions keys as strings', () => {
+        const common = (messages as Record<string, unknown>)['common'] as Record<string, unknown>;
+        const actions = common['actions'] as Record<string, unknown>;
 
-        expect(typeof actionsMap['cancel']).toBe('string');
-        expect(typeof actionsMap['confirm']).toBe('string');
-        expect(typeof actionsMap['save']).toBe('string');
-        expect(typeof actionsMap['signOut']).toBe('string');
+        expect(typeof actions['cancel']).toBe('string');
+        expect(typeof actions['confirm']).toBe('string');
+        expect(typeof actions['save']).toBe('string');
+        expect(typeof actions['signOut']).toBe('string');
     });
 
-    it('contains common.states keys as non-empty strings', () => {
+    it('contains common.states keys as strings', () => {
         const common = (messages as Record<string, unknown>)['common'] as Record<string, unknown>;
         const states = common['states'] as Record<string, unknown>;
 

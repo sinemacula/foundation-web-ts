@@ -1,9 +1,5 @@
 /**
- * Application stylesheet.
- *
- * Imports the shared design tokens and applies a minimal base layer. All
- * component styling lives in scoped SFC styles built on the tokens - no utility
- * framework.
+ * Base layer over the shared design tokens; components use scoped styles.
  */
 
 @import "./theme.css";

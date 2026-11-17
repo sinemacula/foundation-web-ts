@@ -1,11 +1,5 @@
 /**
- * Zod-to-vee-validate schema bridge.
- *
- * vee-validate 4.15 does not implement the Standard Schema contract, so a zod
- * object schema cannot be handed to `useForm`'s `validationSchema` option
- * directly. This module is the minimal inline adapter that bridges a zod object
- * schema to vee-validate's `TypedSchema` contract, so every form composable in
- * the app validates against zod without a third-party bridge package.
+ * Zod adapter for vee-validate 4, which cannot take a zod schema directly.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -15,12 +9,8 @@ import type { TypedSchema, TypedSchemaError } from 'vee-validate';
 import type * as z from 'zod';
 
 /**
- * Wrap a zod 4 object schema in the `TypedSchema` contract expected by
- * vee-validate 4. Runs validation via `safeParse`; the first issue per path is
- * forwarded as the field error so the message string is the translation key.
- *
- * @param schema - the zod object schema to adapt
- * @returns a vee-validate `TypedSchema` backed by the given zod schema
+ * Wrap a zod object schema as a vee-validate `TypedSchema`; each path's first
+ * issue message becomes its field error (a translation key).
  */
 export function zodToTypedSchema<T extends z.ZodObject<z.ZodRawShape>>(
     schema: T,
@@ -41,9 +31,7 @@ export function zodToTypedSchema<T extends z.ZodObject<z.ZodRawShape>>(
                 return Promise.resolve({ value: result.data, errors: [] });
             }
 
-            // Collect only the first error per dotted path to avoid duplicate
-            // entries for the same field (zod 4 can emit multiple issues for a
-            // single field when multiple checks fail).
+            // zod emits one issue per failed check; keep the first per path.
             const seen = new Set<string>();
             const errors: TypedSchemaError[] = [];
 
@@ -52,8 +40,8 @@ export function zodToTypedSchema<T extends z.ZodObject<z.ZodRawShape>>(
 
                 if (!seen.has(dotPath)) {
                     seen.add(dotPath);
-                    // exactOptionalPropertyTypes: include `path` only when
-                    // non-empty.
+                    // exactOptionalPropertyTypes forbids `path: undefined`,
+                    // so root issues omit the key.
                     const entry: TypedSchemaError = dotPath
                         ? { path: dotPath, errors: [issue.message] }
                         : { errors: [issue.message] };

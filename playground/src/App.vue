@@ -1,6 +1,5 @@
 <!--
-    Application root: the router outlet, navigation progress indicator, the
-    fatal-error fallback panel, and the global notification hosts.
+    Application root: router outlet, fatal-error panel and notification hosts.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

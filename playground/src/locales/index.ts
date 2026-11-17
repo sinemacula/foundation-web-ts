@@ -1,9 +1,5 @@
 /**
- * Shared translation loaders.
- *
- * Locales load lazily: only the active locale's messages enter the bundle graph
- * at runtime. Add a locale by creating a sibling file and registering its
- * importer here.
+ * Shared translation loaders; each locale is a lazily imported chunk.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

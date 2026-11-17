@@ -15,7 +15,7 @@ describe('fr-fr locale messages', () => {
         expect(typeof messages).toBe('object');
     });
 
-    it('contains common.actions keys as non-empty strings', () => {
+    it('contains common.actions keys as strings', () => {
         const common = (messages as Record<string, unknown>)['common'] as Record<string, unknown>;
         const actions = common['actions'] as Record<string, unknown>;
 
@@ -25,7 +25,7 @@ describe('fr-fr locale messages', () => {
         expect(typeof actions['signOut']).toBe('string');
     });
 
-    it('contains common.states keys as non-empty strings', () => {
+    it('contains common.states keys as strings', () => {
         const common = (messages as Record<string, unknown>)['common'] as Record<string, unknown>;
         const states = common['states'] as Record<string, unknown>;
 

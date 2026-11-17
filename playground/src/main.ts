@@ -1,16 +1,10 @@
 /**
- * Application entry point.
- *
- * Boots the application through the kernel preset: the module list, the
- * configuration registry and the locale loaders are the only application
- * inputs; everything else is kernel-owned wiring.
+ * Application entry point: boots the kernel preset with this app's inputs.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
-// Side-effect import: registers the Tailwind layer and theme tokens with the
-// bundler.
 import '@/assets/styles/app.css';
 
 import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';

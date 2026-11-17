@@ -9,9 +9,7 @@ import type { AnalyticsTracker } from '@sinemacula/foundation/analytics/analytic
 import { afterEach, describe, expect, it } from 'vitest';
 import { analytics, initialiseAnalytics, resetAnalytics } from '@/services/analytics';
 
-/**
- * Minimal no-op stub that satisfies the {@link AnalyticsTracker} interface.
- */
+/** No-op analytics tracker. */
 const stubTracker: AnalyticsTracker = {
     track: () => undefined,
     page: () => undefined,

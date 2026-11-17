@@ -12,15 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { featureFlagsConfig } from '@/config/feature-flags';
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping non-camelCase environment keys out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a record from pairs, keeping env-style keys out of object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
