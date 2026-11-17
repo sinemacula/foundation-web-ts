@@ -16,7 +16,7 @@
         "src",
         "test-results"
     ],
-    "mutate": ["eslint/rules/**/*.js", "!**/__tests__/**"],
+    "mutate": ["eslint/**/*.js", "!**/__tests__/**", "!eslint/**/*.test.js"],
     "thresholds": {
         "high": 90,
         "low": 85,

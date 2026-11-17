@@ -25,7 +25,8 @@ import type { ModuleDefinition, ModuleRegisterContext, ResolvedPlatform } from '
 import { StrictWebStorage } from '../storage/strict-web-storage';
 import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
 import { installSessionContext, sessionContext } from './session-context';
-import { bootSessionLifecycle } from './session-lifecycle';
+import type { HydrationReporter } from './session-lifecycle';
+import { accessLocalStorage, bootSessionLifecycle } from './session-lifecycle';
 import { SessionRefreshCoordinator } from './session-refresh-coordinator';
 import { useSessionStore } from './session-store';
 
@@ -87,7 +88,7 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given. Cross-tab sync only observes that localStorage key, so with another persistence disable `crossTabSync` and call the store's `hydrate()` on its own change notifications. */
     readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
 
-    /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed proactively and before a realtime reconnect. Default 60 seconds. */
+    /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed before a realtime reconnect; each tab refreshes proactively at a random point in the earlier half of that window. Default 60 seconds. */
     readonly refreshSkewMs?: number;
 
     /** The operating-system label reported in the device fingerprint. Default 'WEB'. */
@@ -173,12 +174,13 @@ export function createSessionModule<U extends SessionUser = SessionUser, C = Pas
 export function createSessionModule(options: AnySessionModuleOptions = {}): ModuleDefinition {
     const storageKeys: SessionStorageKeys = { ...DEFAULT_SESSION_STORAGE_KEYS, ...options.storageKeys };
     const routes: SessionRoutes = { ...DEFAULT_ROUTES, ...options.routes };
+    const reportHydration = createHydrationReporter();
 
     return {
         name: options.name ?? 'session',
         routes: [],
         register: context => {
-            registerSession(context, options, storageKeys, routes);
+            registerSession(context, options, storageKeys, routes, reportHydration);
         },
         stores: [
             pinia => {
@@ -196,6 +198,8 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
                 sessionLossRedirect: options.sessionLossRedirect ?? true,
                 realtimeFollowsSession: options.realtimeFollowsSession ?? true,
                 identity: options.identity ?? {},
+                reportHydration,
+                random: Math.random,
             }),
     };
 }
@@ -210,13 +214,14 @@ function registerSession(
     options: AnySessionModuleOptions,
     storageKeys: SessionStorageKeys,
     routes: SessionRoutes,
+    reportHydration: HydrationReporter,
 ): void {
     const { pinia, platform, storage } = context;
     const apiFactory = options.api ?? (http => createDefaultSessionApi<unknown>(http, { now: platform.clock }));
     const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
     const deviceOs = options.deviceOs ?? 'WEB';
 
-    const ready = createReadiness(pinia);
+    const ready = createReadiness(pinia, reportHydration);
     const coordinator = createRefreshAuthority(pinia, ready);
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
@@ -254,18 +259,42 @@ function registerSession(
  * Build the session readiness: hydrate the persisted session once, on first
  * call, reporting a failure instead of rejecting.
  */
-function createReadiness(pinia: Pinia): () => Promise<void> {
+function createReadiness(pinia: Pinia, reportHydration: HydrationReporter): () => Promise<void> {
     let hydration: Promise<void> | null = null;
 
     return () => {
-        hydration ??= useSessionStore(pinia)
-            .hydrate()
-            .catch((error: unknown) => {
-                reporting().captureError(error);
-            });
+        hydration ??= reportHydration(useSessionStore(pinia).hydrate()).then(() => undefined);
 
         return hydration;
     };
+}
+
+/**
+ * Build the reporter of failed hydrations, resolving whether each succeeded. A
+ * failure identical to the one last reported is not reported again until a
+ * hydration succeeds.
+ */
+function createHydrationReporter(): HydrationReporter {
+    let reported: string | null = null;
+
+    return hydration =>
+        hydration.then(
+            () => {
+                reported = null;
+
+                return true;
+            },
+            (error: unknown) => {
+                const signature = String(error);
+
+                if (signature !== reported) {
+                    reported = signature;
+                    reporting().captureError(error);
+                }
+
+                return false;
+            },
+        );
 }
 
 /**
@@ -291,7 +320,8 @@ function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): Sessi
  * Persist the session snapshot in the target window's localStorage, failing
  * loudly, under a Web Locks lock every tab shares.
  *
- * @throws {@link SessionError} when the Web Locks API is unavailable
+ * @throws {@link SessionError} when the Web Locks API or localStorage is
+ * unavailable
  */
 function createDefaultPersistence(platform: ResolvedPlatform, key: string): SessionPersistence {
     const locks: LockManager | undefined = platform.targetWindow.navigator.locks;
@@ -303,7 +333,13 @@ function createDefaultPersistence(platform: ResolvedPlatform, key: string): Sess
         );
     }
 
-    return new KeyValueSessionPersistence(new StrictWebStorage(platform.targetWindow.localStorage), {
+    const area = accessLocalStorage(
+        platform.targetWindow,
+        'The session module persists the session in the window localStorage, which is inaccessible; ' +
+            'pass the persistence option where it is blocked.',
+    );
+
+    return new KeyValueSessionPersistence(new StrictWebStorage(area), {
         key,
         lock: new WebLocksSessionLock(locks, `${key}:lock`),
     });

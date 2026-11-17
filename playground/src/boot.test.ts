@@ -52,6 +52,9 @@ interface BootOptions {
     /** The runtime document the fetch seam serves. */
     readonly runtime?: Record<string, string>;
 
+    /** The raw response the fetch seam serves instead of the runtime document. */
+    readonly response?: () => Response;
+
     /** The build-time env chained behind the runtime document in development. */
     readonly buildTimeEnv?: Record<string, string>;
 
@@ -106,7 +109,7 @@ describe('application boot', () => {
             const url = String(input);
 
             if (url.endsWith('/runtime-env.json')) {
-                return Promise.resolve(json(runtime));
+                return Promise.resolve(options.response?.() ?? json(runtime));
             }
 
             return Promise.resolve(
@@ -250,6 +253,26 @@ describe('application boot', () => {
 
         await expect(boot({ dev: false, runtime })).rejects.toBeInstanceOf(ConfigurationError);
         await expect(boot({ dev: false, runtime })).rejects.toThrow('API_URL');
+    });
+
+    it.each([
+        ['is missing', (): Response => new Response('Not Found', { status: 404 })],
+        [
+            'carries non-string values',
+            (): Response =>
+                Response.json(
+                    Object.fromEntries([
+                        ['API_URL', 8000],
+                        ['APP_ENV', true],
+                    ]),
+                ),
+        ],
+    ])('fails closed in production naming every required key when the runtime document %s', async (_, response) => {
+        await expect(boot({ dev: false, response })).rejects.toStrictEqual(
+            new ConfigurationError(
+                'Runtime configuration is missing required keys: API_URL, APP_URL, APP_ENV, APP_VERSION.',
+            ),
+        );
     });
 });
 

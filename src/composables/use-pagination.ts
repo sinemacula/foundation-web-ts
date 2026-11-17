@@ -18,7 +18,7 @@ export interface UsePaginationOptions {
     /** Items shown per page; defaults to 25. */
     readonly perPage?: number;
 
-    /** Page to start on; defaults to the first page. */
+    /** Page to start on, truncated to an integer of at least one; defaults to the first page. */
     readonly initialPage?: number;
 }
 
@@ -55,7 +55,8 @@ export interface Pagination {
     previous(): void;
 
     /**
-     * Jump to a page, clamped into `[1, pageCount]`.
+     * Jump to a page, truncated to an integer and clamped into
+     * `[1, pageCount]`; a non-finite page is ignored.
      */
     goTo(page: number): void;
 }
@@ -64,10 +65,18 @@ const DEFAULT_PER_PAGE = 25;
 
 /**
  * Create reactive pagination state for a data set with a known total.
+ *
+ * @throws {RangeError} when `perPage` is not a positive integer
  */
 export function usePagination(options: UsePaginationOptions): Pagination {
     const perPage = options.perPage ?? DEFAULT_PER_PAGE;
-    const page = ref(options.initialPage ?? 1);
+
+    if (!Number.isInteger(perPage) || perPage < 1) {
+        throw new RangeError(`perPage must be a positive integer, received ${perPage}.`);
+    }
+
+    const initialPage = options.initialPage ?? 1;
+    const page = ref(Number.isFinite(initialPage) ? Math.max(1, Math.trunc(initialPage)) : 1);
 
     const pageCount = computed(() => Math.max(1, Math.ceil(options.total.value / perPage)));
     const hasPrevious = computed(() => page.value > 1);
@@ -75,10 +84,13 @@ export function usePagination(options: UsePaginationOptions): Pagination {
     const offset = computed(() => (page.value - 1) * perPage);
 
     /**
-     * Jump to a page, clamped into `[1, pageCount]`.
+     * Jump to a page, truncated and clamped into `[1, pageCount]`; a non-finite
+     * page is ignored.
      */
     function goTo(target: number): void {
-        page.value = Math.min(Math.max(1, target), pageCount.value);
+        if (Number.isFinite(target)) {
+            page.value = Math.min(Math.max(1, Math.trunc(target)), pageCount.value);
+        }
     }
 
     /**

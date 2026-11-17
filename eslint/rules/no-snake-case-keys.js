@@ -7,27 +7,9 @@
 
 // biome-ignore-all lint/style/useNamingConvention: ESLint AST visitor keys
 
-import { createRule, isTestPath } from './lib.js';
+import { createRule, isTestPath, projectPath, propertyName } from './lib.js';
 
 const SNAKE_CASE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
-
-/** The static name of a property key (including a computed string literal), or null. */
-function keyName(property) {
-    // `{ ['refresh_token']: 1 }` still writes a snake_case key.
-    if (property.computed) {
-        return property.key.type === 'Literal' && typeof property.key.value === 'string' ? property.key.value : null;
-    }
-
-    if (property.key.type === 'Identifier') {
-        return property.key.name;
-    }
-
-    if (property.key.type === 'Literal' && typeof property.key.value === 'string') {
-        return property.key.value;
-    }
-
-    return null;
-}
 
 // Stryker disable all: declarative rule metadata
 export default createRule({
@@ -45,19 +27,17 @@ export default createRule({
     defaultOptions: [],
     // Stryker restore all
     create(context) {
-        const filename = context.filename.replace(/\\/g, '/');
-
-        if (isTestPath(filename)) {
+        if (isTestPath(projectPath(context))) {
             return {};
         }
 
         return {
             Property(node) {
-                if (node.parent?.type !== 'ObjectExpression') {
+                if (node.parent.type !== 'ObjectExpression') {
                     return;
                 }
 
-                const name = keyName(node);
+                const name = propertyName(node);
 
                 if (name !== null && SNAKE_CASE.test(name)) {
                     context.report({ node: node.key, messageId: 'snake', data: { key: name } });

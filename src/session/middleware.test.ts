@@ -8,8 +8,9 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { HttpError } from '@sinemacula/foundation/http/http-error';
+import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import { SessionError } from '@sinemacula/foundation/session/session-error';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { MiddlewareContext, RouteMiddleware } from '../router/middleware';
 import type { SessionRoutes } from './create-session-module';
@@ -236,6 +237,37 @@ describe('session guards', () => {
                 to: { name: 'auth.login', query: { redirect: '/settings/billing' } },
             });
             expect(useSessionStore().isAuthenticated).toBe(false);
+        });
+
+        it.each([
+            ['a server error', new HttpError(500, 'unavailable')],
+            ['a network failure', new NetworkError('offline')],
+        ])('fails the navigation when the user cannot be loaded for %s', async (_label, failure) => {
+            signIn(['users.view']);
+            gateway.currentUser.mockReset();
+            gateway.currentUser.mockRejectedValueOnce(failure);
+
+            await expect(run(authorize('users.view'))).rejects.toThrowError(
+                new SessionError('The signed-in user could not be loaded to check a permission.'),
+            );
+            expect(useSessionStore().isAuthenticated).toBe(true);
+            expect(gateway.currentUser).toHaveBeenCalledTimes(1);
+        });
+
+        it('loads the user of a session that replaced the held one during the load', async () => {
+            signIn([]);
+            gateway.currentUser.mockReset();
+            gateway.currentUser
+                .mockImplementationOnce(async () => {
+                    persistSnapshot(storage, tokens({ accessToken: 'replaced' }), 2);
+                    await useSessionStore().hydrate();
+
+                    return user();
+                })
+                .mockResolvedValueOnce(user({ permissions: ['users.view'] }));
+
+            await expect(run(authorize('users.view'))).resolves.toStrictEqual({ kind: 'next' });
+            expect(useSessionStore().accessToken).toBe('replaced');
         });
 
         it('reuses an already loaded user', async () => {

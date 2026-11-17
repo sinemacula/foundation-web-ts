@@ -7,24 +7,14 @@
 
 // biome-ignore-all lint/style/useNamingConvention: ESLint AST visitor keys
 
-import { createRule, moduleFolder, toCamelCase, toUpperSnakeCase } from './lib.js';
+import { contractFile, createRule, moduleFolder, projectPath, toCamelCase, toUpperSnakeCase } from './lib.js';
 
-/** The canonical export name a module file must declare, or null. */
-function expectedExport(filename, folder) {
-    if (/(?:^|\/)module\.ts$/.test(filename)) {
-        return { name: `${toCamelCase(folder)}Module`, file: 'module.ts' };
-    }
-
-    if (/(?:^|\/)routes\.ts$/.test(filename)) {
-        return { name: `${toCamelCase(folder)}Routes`, file: 'routes.ts' };
-    }
-
-    if (/(?:^|\/)route-names\.ts$/.test(filename)) {
-        return { name: `${toUpperSnakeCase(folder)}_ROUTE_NAMES`, file: 'route-names.ts' };
-    }
-
-    return null;
-}
+/** Canonical export name builders, keyed by contract basename. */
+const EXPORT_NAMES = {
+    module: folder => `${toCamelCase(folder)}Module`,
+    routes: folder => `${toCamelCase(folder)}Routes`,
+    'route-names': folder => `${toUpperSnakeCase(folder)}_ROUTE_NAMES`,
+};
 
 /** Names bound by an `export const` declaration. */
 function declaredNames(node) {
@@ -77,18 +67,15 @@ export default createRule({
     defaultOptions: [],
     // Stryker restore all
     create(context) {
-        const filename = context.filename.replace(/\\/g, '/');
+        const filename = projectPath(context);
         const folder = moduleFolder(filename);
+        const contract = contractFile(filename);
 
-        if (folder === null) {
+        if (folder === null || contract === null) {
             return {};
         }
 
-        const expected = expectedExport(filename, folder);
-
-        if (expected === null) {
-            return {};
-        }
+        const expected = { name: EXPORT_NAMES[contract.kind](folder), file: contract.file };
 
         return {
             Program(node) {

@@ -33,7 +33,7 @@ const errorKeys = {
 };
 
 /** Verbatim copy of the kernel's first-paint colour-scheme boot script. */
-const bootScript = `try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}`;
+const bootScript = `(function(){var t=null;try{t=localStorage.getItem("theme")}catch(e){}if(t!=='light'&&t!=='dark'&&t!=='system'){t="system"}if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}})()`;
 
 /** The layout layer, built on the inlined design tokens. */
 const layoutStyles = `

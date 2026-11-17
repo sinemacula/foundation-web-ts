@@ -15,6 +15,7 @@ import type { RefreshOutcome, RefreshResult } from '@sinemacula/foundation/sessi
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installRealtime, resetWebCoreServices } from '../app/services';
+import { EventSourceConnection } from '../realtime/event-source-connection';
 import type { ModuleTeardown } from '../module/module';
 import type { SessionContext } from './session-context';
 import { installSessionContext, resetSessionContext, sessionContext } from './session-context';
@@ -382,6 +383,64 @@ describe('session realtime policy', () => {
             expect(connection.calls).toStrictEqual(['connect']);
         });
 
+        it('leaves a connection it opened that has since closed alone through a rotation', async () => {
+            const store = await hydrated(null);
+
+            follow(store);
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            connection.state = 'closed';
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'rotated' }) });
+            await store.refresh();
+            await settle();
+
+            expect(connection.calls).toStrictEqual(['connect']);
+        });
+
+        it('restarts the backoff for a new session after earlier skips', async () => {
+            const store = await hydrated(NOW);
+
+            gateway.refresh.mockResolvedValue({ kind: 'retryable', error: new NetworkError('offline') });
+            follow(store);
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([1_000]);
+            });
+            scheduler.flush();
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([2_000]);
+            });
+
+            await signIn(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(3);
+            });
+            await settle();
+
+            expect(scheduler.delays()).toStrictEqual([1_000]);
+        });
+
+        it('retries instead of connecting when the session signed in during the refresh is expiring', async () => {
+            const store = await hydrated(NOW);
+            const pending = deferred<RefreshResult>();
+
+            gateway.refresh.mockReturnValueOnce(pending.promise);
+            follow(store);
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalled();
+            });
+
+            await signIn(tokens({ accessToken: 'signed-in', expiresAtEpochMs: NOW }));
+            pending.resolve({ kind: 'refreshed', tokens: tokens() });
+            await settle();
+
+            expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            expect(connection.calls).toStrictEqual(['disconnect']);
+            expect(scheduler.delays()).toStrictEqual([1_000]);
+        });
+
         it.each([
             ['other tokens', tokens({ accessToken: 'other', expiresAtEpochMs: null })],
             ['the same tokens', tokens({ expiresAtEpochMs: null })],
@@ -682,6 +741,98 @@ describe('session realtime policy', () => {
                 expect(connection.calls).toStrictEqual(['disconnect', 'connect']);
             });
             expect(store.isAuthenticated).toBe(true);
+        });
+    });
+
+    describe('over an EventSource connection', () => {
+        /** Every EventSource the connection opened. */
+        let sources: EventSource[];
+
+        /** The connection under test, guarded and followed. */
+        let sse: EventSourceConnection;
+
+        /** Stops following the session. */
+        let unfollow: ModuleTeardown;
+
+        /**
+         * Follow a current session with a guarded connection, let the session
+         * near its expiry, then fail the open source so the connection
+         * schedules a reconnect.
+         */
+        async function dropped(): Promise<SessionStore> {
+            let now = NOW;
+
+            resetSessionContext();
+            install({ clock: () => now });
+
+            const store = await hydrated(NOW + 2 * SKEW);
+
+            sse = new EventSourceConnection({
+                url: () => `/stream?token=${store.accessToken ?? ''}`,
+                eventSourceFactory: url => {
+                    const source = { url, close: () => undefined, addEventListener: () => undefined } as unknown;
+
+                    sources.push(source as EventSource);
+
+                    return source as EventSource;
+                },
+                beforeReconnect: sessionReconnectGuard(() => sse),
+            });
+            unfollow = followSession(sse, store);
+            await vi.advanceTimersByTimeAsync(0);
+            now += SKEW;
+            sources[0]?.onerror?.(new Event('error'));
+
+            return store;
+        }
+
+        beforeEach(() => {
+            vi.useFakeTimers();
+            sources = [];
+        });
+
+        afterEach(() => {
+            unfollow();
+            vi.useRealTimers();
+        });
+
+        it('reopens on the rotated token once the refresh lands', async () => {
+            await dropped();
+
+            gateway.refresh.mockResolvedValueOnce({
+                kind: 'refreshed',
+                tokens: tokens({ accessToken: 'rotated', expiresAtEpochMs: null }),
+            });
+            await vi.runOnlyPendingTimersAsync();
+
+            expect(sources.map(source => source.url)).toStrictEqual(['/stream?token=access', '/stream?token=rotated']);
+            expect(sse.state).toBe('connecting');
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it('keeps the reconnect pending when the refresh fails transiently', async () => {
+            await dropped();
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') });
+            await vi.runOnlyPendingTimersAsync();
+
+            expect(sources).toHaveLength(1);
+            expect(sse.state).toBe('connecting');
+            expect(vi.getTimerCount()).toBe(1);
+            expect(scheduler.delays()).toStrictEqual([]);
+        });
+
+        it('stops for good, with nothing pending, when the refresh is refused', async () => {
+            const store = await dropped();
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
+            await vi.runOnlyPendingTimersAsync();
+
+            expect(store.isAuthenticated).toBe(false);
+            expect(sources).toHaveLength(1);
+            expect(sse.state).toBe('closed');
+            expect(vi.getTimerCount()).toBe(0);
+            expect(scheduler.delays()).toStrictEqual([]);
         });
     });
 });

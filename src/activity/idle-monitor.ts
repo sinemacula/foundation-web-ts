@@ -14,6 +14,9 @@ export interface IdleMonitorOptions {
 
     /** The window whose activity events are observed; defaults to the global window. */
     readonly targetWindow?: Window;
+
+    /** Receives an error thrown by a subscriber, which never stops the others; defaults to the global `reportError`. */
+    readonly onError?: (error: unknown) => void;
 }
 
 const DEFAULT_EVENTS: readonly string[] = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
@@ -34,6 +37,9 @@ export class IdleMonitor {
     /** The registered idle subscribers. */
     readonly #handlers = new Set<() => void>();
 
+    /** Receives errors thrown by subscribers. */
+    readonly #onError: (error: unknown) => void;
+
     /**
      * Rearms the countdown when activity is observed.
      */
@@ -48,7 +54,11 @@ export class IdleMonitor {
         this.#timer = null;
 
         for (const handler of this.#handlers) {
-            handler();
+            try {
+                handler();
+            } catch (error) {
+                this.#report(error);
+            }
         }
     };
 
@@ -62,6 +72,7 @@ export class IdleMonitor {
         this.#timeoutMs = options.timeoutMs;
         this.#events = options.events ?? DEFAULT_EVENTS;
         this.#targetWindow = options.targetWindow ?? globalThis.window;
+        this.#onError = options.onError ?? (error => globalThis.reportError(error));
     }
 
     /**
@@ -144,6 +155,17 @@ export class IdleMonitor {
         if (this.#timer !== null) {
             clearTimeout(this.#timer);
             this.#timer = null;
+        }
+    }
+
+    /**
+     * Pass a subscriber's error to the sink, ignoring a throwing sink.
+     */
+    #report(error: unknown): void {
+        try {
+            this.#onError(error);
+        } catch {
+            // The sink is the last resort; nothing is left to report to.
         }
     }
 }

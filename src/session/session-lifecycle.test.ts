@@ -7,10 +7,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { HttpError } from '@sinemacula/foundation/http/http-error';
+import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { SessionSnapshot } from '@sinemacula/foundation/session/session-persistence';
+import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { resetWebCoreServices } from '../app/services';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
@@ -182,6 +185,20 @@ describe('session lifecycle', () => {
             expect(target.store().isAuthenticated).toBe(false);
         });
 
+        it('stays put when a session begins', async () => {
+            const target = harness();
+
+            await target.boot();
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+            await settle();
+
+            expect(target.store().isAuthenticated).toBe(true);
+            expect(target.pushes).toStrictEqual([]);
+        });
+
         it('stays put when disabled', async () => {
             const target = persisted({ sessionLossRedirect: false });
 
@@ -273,6 +290,26 @@ describe('session lifecycle', () => {
             expect(load).toHaveBeenCalledTimes(loads + 1);
         });
 
+        it('loads no user after a failed synchronisation', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens());
+            gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(gateway.currentUser).toHaveBeenCalledTimes(1);
+            });
+
+            target.win.localStorage.setItem('auth.session', 'not json');
+            target.win.dispatchStorage({ key: 'auth.session' });
+
+            await vi.waitFor(() => {
+                expect(target.observability.errors).toHaveLength(1);
+            });
+            await settle();
+            expect(gateway.currentUser).toHaveBeenCalledTimes(1);
+        });
+
         it('reports a failed synchronisation and keeps the session', async () => {
             const target = persisted();
 
@@ -326,6 +363,80 @@ describe('session lifecycle', () => {
 
             expect(target.observability.errors).toHaveLength(1);
             expect(target.win.listenerCount()).toBe(1);
+        });
+
+        it('reports a cold boot over an unreadable session once, and a later sign-in heals it', async () => {
+            const target = harness();
+
+            target.win.localStorage.setItem('auth.session', 'not json');
+            await target.boot();
+
+            expect(target.observability.errors).toHaveLength(1);
+            expect(target.store().isAuthenticated).toBe(false);
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual({
+                revision: 1,
+                tokens: tokens(),
+            });
+        });
+
+        it('reports a different hydration failure', async () => {
+            const target = harness();
+
+            vi.spyOn(KeyValueSessionPersistence.prototype, 'load')
+                .mockRejectedValueOnce(new SessionError('unreadable'))
+                .mockRejectedValueOnce(new DOMException('blocked', 'SecurityError'));
+            await target.boot();
+
+            expect(target.observability.errors).toHaveLength(2);
+        });
+
+        it('reports the same failure again once a hydration has succeeded', async () => {
+            const target = harness();
+
+            target.win.localStorage.setItem('auth.session', 'not json');
+            await target.boot();
+
+            persistSnapshot(target.win.localStorage, tokens(), 2);
+            gateway.currentUser.mockResolvedValue(user());
+            target.win.dispatchStorage({ key: 'auth.session' });
+            await vi.waitFor(() => {
+                expect(target.store().isAuthenticated).toBe(true);
+            });
+
+            target.win.localStorage.setItem('auth.session', 'not json');
+            target.win.dispatchStorage({ key: 'auth.session' });
+
+            await vi.waitFor(() => {
+                expect(target.observability.errors).toHaveLength(2);
+            });
+        });
+
+        it('refuses to boot over a blocked localStorage, naming the option', async () => {
+            const target = harness(
+                { persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) },
+                {
+                    storageBlocked: true,
+                },
+            );
+            const refusal: unknown = await target.boot().catch((error: unknown) => error);
+
+            expect(refusal).toBeInstanceOf(SessionError);
+            expect(refusal).toHaveProperty('message', expect.stringContaining('crossTabSync'));
+            expect(refusal).toHaveProperty('cause.name', 'SecurityError');
+        });
+
+        it('boots over a blocked localStorage when disabled', async () => {
+            const target = harness(
+                { crossTabSync: false, persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) },
+                { storageBlocked: true },
+            );
+
+            await expect(target.boot()).resolves.toBeTypeOf('function');
         });
 
         it('neither listens nor reconciles when disabled', async () => {
@@ -415,6 +526,39 @@ describe('session lifecycle', () => {
             expect(target.observability.flagContexts).toStrictEqual([{ userId: 'u1' }]);
         });
 
+        it('touches no channel when a session whose user never loaded ends', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens());
+            gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(gateway.currentUser).toHaveBeenCalled();
+            });
+
+            await target.store().clearLocal();
+            await settle();
+
+            expect(target.observability.reportedUsers).toStrictEqual([]);
+            expect(target.observability.resets).toStrictEqual([]);
+            expect(target.observability.flagContexts).toStrictEqual([]);
+        });
+
+        it('fans nothing out when disabled, even when the user cannot be loaded', async () => {
+            const target = harness({ identity: false });
+
+            persistSnapshot(target.win.localStorage, tokens());
+            gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(gateway.currentUser).toHaveBeenCalled();
+            });
+            await settle();
+
+            expect(target.observability.resets).toStrictEqual([]);
+            expect(target.observability.errors).toStrictEqual([]);
+        });
+
         it('fans nothing out when disabled', async () => {
             const target = persisted({ identity: false });
 
@@ -424,6 +568,172 @@ describe('session lifecycle', () => {
             });
 
             expect(target.observability.identified).toStrictEqual([]);
+        });
+
+        describe('across tabs', () => {
+            /**
+             * Boot over a persisted session whose user has been identified.
+             */
+            async function identified(options: SessionModuleOptions = {}): Promise<SessionHarness> {
+                const target = persisted(options);
+
+                await target.boot();
+                await vi.waitFor(() => {
+                    expect(target.observability.identified).toStrictEqual(['u1']);
+                });
+
+                return target;
+            }
+
+            /**
+             * Persist the given tokens as another tab would, and announce it.
+             */
+            function persistElsewhere(target: SessionHarness, persisted: SessionTokens | null, revision = 2): void {
+                persistSnapshot(target.win.localStorage, persisted, revision);
+                target.win.dispatchStorage({ key: 'auth.session' });
+            }
+
+            it('touches no channel when another tab rotates the session', async () => {
+                const target = await identified();
+
+                persistElsewhere(target, tokens({ accessToken: 'rotated', refreshToken: 'rotated-refresh' }));
+
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(2);
+                    expect(target.store().user).not.toBeNull();
+                });
+                await settle();
+
+                expect(target.store().accessToken).toBe('rotated');
+                expect(target.observability.reportedUsers).toHaveLength(1);
+                expect(target.observability.identified).toStrictEqual(['u1']);
+                expect(target.observability.resets).toStrictEqual([]);
+                expect(target.observability.flagContexts).toStrictEqual([{ userId: 'u1' }]);
+            });
+
+            it('resets before identifying a different user another tab signs in', async () => {
+                const target = await identified();
+
+                gateway.currentUser.mockResolvedValue(user({ id: 'u2', email: null, name: null }));
+                persistElsewhere(target, tokens({ accessToken: 'other-user' }));
+
+                await vi.waitFor(() => {
+                    expect(target.observability.analyticsCalls).toStrictEqual(['identify u1', 'reset', 'identify u2']);
+                });
+                expect(target.observability.reportedUsers.at(-1)).toStrictEqual({ id: 'u2' });
+                expect(target.observability.flagContexts.at(-1)).toStrictEqual({ userId: 'u2' });
+            });
+
+            it('updates only the channels whose mapped value changed', async () => {
+                const target = await identified();
+
+                gateway.currentUser.mockResolvedValue(user({ name: 'Alice Jones' }));
+                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+
+                await vi.waitFor(() => {
+                    expect(target.observability.reportedUsers).toHaveLength(2);
+                });
+                expect(target.observability.reportedUsers.at(-1)).toStrictEqual({
+                    id: 'u1',
+                    email: 'alice@example.com',
+                    name: 'Alice Jones',
+                });
+                expect(target.observability.identified).toStrictEqual(['u1']);
+                expect(target.observability.resets).toStrictEqual([]);
+                expect(target.observability.flagContexts).toHaveLength(1);
+            });
+
+            it('reports again an identity that lost a field', async () => {
+                const target = await identified();
+
+                gateway.currentUser.mockResolvedValue(user({ email: null }));
+                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+
+                await vi.waitFor(() => {
+                    expect(target.observability.reportedUsers).toHaveLength(2);
+                });
+                expect(target.observability.reportedUsers.at(-1)).toStrictEqual({ id: 'u1', name: 'Alice Smith' });
+            });
+
+            it('clears every channel when the adopted session user cannot be loaded', async () => {
+                const target = await identified();
+
+                gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
+                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+
+                await vi.waitFor(() => {
+                    expect(target.observability.resets).toHaveLength(1);
+                });
+                expect(target.store().isAuthenticated).toBe(true);
+                expect(target.observability.reportedUsers.at(-1)).toBeNull();
+                expect(target.observability.flagContexts.at(-1)).toStrictEqual({});
+            });
+
+            it('leaves every channel alone when a superseded adoption fails to load its user', async () => {
+                const target = await identified();
+                const superseded = deferred<SessionUser>();
+                const current = deferred<SessionUser>();
+
+                gateway.currentUser.mockReturnValueOnce(superseded.promise).mockReturnValueOnce(current.promise);
+                persistElsewhere(target, tokens({ accessToken: 'first' }));
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(2);
+                });
+                persistElsewhere(target, tokens({ accessToken: 'second' }), 3);
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(3);
+                });
+
+                superseded.reject(new NetworkError('offline'));
+                await settle();
+                current.resolve(user());
+                await settle();
+
+                expect(target.store().accessToken).toBe('second');
+                expect(target.observability.resets).toStrictEqual([]);
+                expect(target.observability.reportedUsers).toHaveLength(1);
+            });
+
+            it('leaves every channel alone when the adopted user fails to load after teardown', async () => {
+                const target = persisted();
+                const teardown = await target.boot();
+                const loading = deferred<SessionUser>();
+
+                await vi.waitFor(() => {
+                    expect(target.observability.identified).toStrictEqual(['u1']);
+                });
+                gateway.currentUser.mockReturnValueOnce(loading.promise);
+                persistSnapshot(target.win.localStorage, tokens({ accessToken: 'rotated' }), 2);
+                target.win.dispatchStorage({ key: 'auth.session' });
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(2);
+                });
+
+                teardown();
+                loading.reject(new NetworkError('offline'));
+                await settle();
+
+                expect(target.observability.resets).toStrictEqual([]);
+                expect(target.observability.reportedUsers).toHaveLength(1);
+            });
+
+            it('clears every channel when the session ends before the adopted user loads', async () => {
+                const target = await identified();
+                const loading = deferred<SessionUser>();
+
+                gateway.currentUser.mockReturnValueOnce(loading.promise);
+                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+                await vi.waitFor(() => {
+                    expect(gateway.currentUser).toHaveBeenCalledTimes(2);
+                });
+
+                persistElsewhere(target, null, 3);
+
+                await vi.waitFor(() => {
+                    expect(target.observability.resets).toHaveLength(1);
+                });
+                expect(target.observability.reportedUsers.at(-1)).toBeNull();
+            });
         });
     });
 
@@ -451,6 +761,10 @@ describe('session lifecycle', () => {
             return target;
         }
 
+        beforeEach(() => {
+            vi.spyOn(Math, 'random').mockReturnValue(0);
+        });
+
         it('arms the refresh the skew ahead of expiry on the platform clock, then follows the new expiry', async () => {
             const target = expiring(1_000_000 + 120_000);
 
@@ -470,6 +784,17 @@ describe('session lifecycle', () => {
                 expect(scheduler.delays()).toStrictEqual([180_000]);
             });
             expect(gateway.refresh).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            [0.5, 75_000],
+            [0.999_99, 89_999],
+        ])('spreads the refresh over the earlier half of the skew window for a sample of %d', async (sample, delay) => {
+            vi.mocked(Math.random).mockReturnValue(sample);
+
+            await expiring(1_000_000 + 120_000).boot();
+
+            expect(scheduler.delays()).toStrictEqual([delay]);
         });
 
         it('honours a custom skew', async () => {
@@ -515,6 +840,39 @@ describe('session lifecycle', () => {
 
             expect(scheduler.delays()).toStrictEqual([60_000]);
             expect(gateway.refresh).not.toHaveBeenCalled();
+        });
+
+        it('arms the refresh itself at exactly the longest timer delay', async () => {
+            const target = expiring(1_000_000 + MAX_TIMEOUT_DELAY_MS + 60_000);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
+            await target.boot();
+
+            expect(scheduler.delays()).toStrictEqual([MAX_TIMEOUT_DELAY_MS]);
+
+            scheduler.flush();
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        it('keeps the session and arms nothing further when the proactive refresh fails transiently', async () => {
+            const target = expiring(1_000_000 + 1_000);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') });
+            await target.boot();
+            scheduler.flush();
+
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            });
+            await settle();
+
+            expect(target.store().accessToken).toBe('access');
+            expect(target.pushes).toStrictEqual([]);
+            expect(target.observability.errors).toStrictEqual([]);
+            expect(scheduler.delays()).toStrictEqual([]);
         });
 
         it('redirects when the proactive refresh is refused', async () => {

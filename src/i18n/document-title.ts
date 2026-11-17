@@ -5,7 +5,8 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { Router } from 'vue-router';
+import { watch } from 'vue';
+import type { RouteLocationNormalizedLoaded, Router } from 'vue-router';
 
 import type { ApplicationI18n } from './application-i18n';
 
@@ -27,17 +28,27 @@ export interface DocumentTitleOptions {
 }
 
 /**
- * Install an after-navigation hook setting the title to the translated
- * `meta.title` suffixed with the app name, or the app name alone.
+ * Keep the title on the current route's translated `meta.title` suffixed with
+ * the app name, or the app name alone, across navigations and locale switches.
  *
- * @returns a teardown removing the navigation hook
+ * @returns a teardown stopping the synchronisation
  */
 export function installDocumentTitleSync(options: DocumentTitleOptions): () => void {
     const target = options.targetDocument ?? globalThis.document;
 
-    return options.router.afterEach(route => {
+    /**
+     * Resolve the title for `route` in the active locale.
+     */
+    const titleOf = (route: RouteLocationNormalizedLoaded): string => {
         const key = route.meta.title;
 
-        target.title = key === undefined ? options.appName : `${options.i18n.global.t(key)} | ${options.appName}`;
-    });
+        return key === undefined ? options.appName : `${options.i18n.global.t(key)} | ${options.appName}`;
+    };
+
+    return watch(
+        [() => options.router.currentRoute.value, () => titleOf(options.router.currentRoute.value)],
+        ([, title]) => {
+            target.title = title;
+        },
+    );
 }
