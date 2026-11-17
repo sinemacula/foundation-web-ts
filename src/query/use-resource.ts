@@ -53,7 +53,8 @@ export interface Resource<Value> {
     refetch(): Promise<void>;
 
     /**
-     * Abort any in-flight run and stop reacting to the watch source(s).
+     * Abort any in-flight run, discard its outcome and stop reacting to the
+     * watch source(s); later {@link refetch} calls do nothing.
      */
     stop(): void;
 }
@@ -76,7 +77,7 @@ export function useResource<Value>(options: UseResourceOptions<Value>): Resource
     const isLoading = ref(false);
     const resolvedOnce = ref(false);
 
-    const { run, abort } = createRunner(fetcher, { data, error, isLoading, resolvedOnce });
+    const { run, halt } = createRunner(fetcher, { data, error, isLoading, resolvedOnce });
 
     /**
      * Run the fetcher again, superseding any run already in flight.
@@ -88,10 +89,11 @@ export function useResource<Value>(options: UseResourceOptions<Value>): Resource
     let stopWatch: (() => void) | null = null;
 
     /**
-     * Abort any in-flight run and stop reacting to the watch source(s).
+     * Abort and discard any in-flight run and stop reacting to the watch
+     * source(s).
      */
     function stop(): void {
-        abort();
+        halt();
         stopWatch?.();
     }
 
@@ -139,65 +141,75 @@ interface ResourceState<Value> {
 }
 
 /**
- * The run trigger and abort control returned by {@link createRunner}.
+ * The run trigger and halt control returned by {@link createRunner}.
  */
 interface Runner {
     /** Trigger a run, superseding any run already in flight. */
     run: () => Promise<void>;
 
-    /** Abort the in-flight run without starting a new one. */
-    abort: () => void;
+    /** Abort and discard the in-flight run and refuse every later run. */
+    halt: () => void;
 }
 
 /**
  * Drive sequential runs of a fetcher, settling `state` for the latest run only.
  */
 function createRunner<Value>(fetcher: ResourceFetcher<Value>, state: ResourceState<Value>): Runner {
-    let sequence = 0;
     let activeController: AbortController | null = null;
+    let stopped = false;
 
     /**
      * Execute one run, discarding its outcome when a newer run supersedes it.
      */
     async function run(): Promise<void> {
-        const token = ++sequence;
+        if (stopped) {
+            return;
+        }
 
-        activeController?.abort();
-
+        const previous = activeController;
         const controller = new AbortController();
 
         activeController = controller;
+        previous?.abort();
+
+        // An abort listener on the previous run may have stopped or rerun the resource.
+        if (controller.signal.aborted) {
+            return;
+        }
+
         state.error.value = null;
         state.isLoading.value = true;
 
         try {
             const result = await fetcher(controller.signal);
 
-            if (token !== sequence) {
+            if (controller.signal.aborted) {
                 return;
             }
 
             state.data.value = result;
             state.resolvedOnce.value = true;
         } catch (caught) {
-            if (token !== sequence || controller.signal.aborted) {
+            if (controller.signal.aborted) {
                 return;
             }
 
             state.error.value = caught;
         } finally {
-            if (token === sequence) {
+            if (activeController === controller) {
                 state.isLoading.value = false;
             }
         }
     }
 
     /**
-     * Abort the in-flight run without starting a new one.
+     * Abort and discard the in-flight run and refuse every later run.
      */
-    function abort(): void {
+    function halt(): void {
+        stopped = true;
         activeController?.abort();
+        state.isLoading.value = false;
     }
 
-    return { run, abort };
+    return { run, halt };
 }
