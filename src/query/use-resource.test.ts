@@ -508,7 +508,7 @@ describe('useResource', () => {
         type PairedList = ListQuery<NonNullable<(typeof definition)['filters']>>;
 
         /**
-         * Compose a list query and a resource that watches its parameters, recording each request.
+         * Compose a list query with a resource that records each request.
          */
         function createListResource(): {
             /** The list query driving the resource. */

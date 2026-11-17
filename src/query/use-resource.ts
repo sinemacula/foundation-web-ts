@@ -172,7 +172,7 @@ function createRunner<Value>(fetcher: ResourceFetcher<Value>, state: ResourceSta
         activeController = controller;
         previous?.abort();
 
-        // An abort listener on the previous run may have stopped or rerun the resource.
+        // An abort listener on the previous run may have stopped or rerun this.
         if (controller.signal.aborted) {
             return;
         }
