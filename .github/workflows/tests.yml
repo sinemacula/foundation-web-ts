@@ -28,7 +28,9 @@ jobs:
     # Typecheck, unit tests at 100% coverage across the Node matrix, the build,
     # and the Playwright e2e suite - all from the shared reusable workflow.
     tests:
-        uses: sinemacula/.github/.github/workflows/node-tests.yml@v1.13.0
+        uses: sinemacula/.github/.github/workflows/node-tests.yml@v3.0.2
+        # The shared jobs inherit only what this job grants; the coverage upload
+        # signs in through OIDC.
         permissions:
             contents: read
             id-token: write
