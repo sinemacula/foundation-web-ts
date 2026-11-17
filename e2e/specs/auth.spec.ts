@@ -68,9 +68,9 @@ test.describe('authentication', { tag: '@engine' }, () => {
         await expect(page).toHaveTitle(/^Dashboard/u);
 
         expect(api.requestsTo('/auth/sign-in')[0]?.body).toMatchObject({ email: EMAIL, password: PASSWORD });
-        expect(api.requestsTo('/users/self').map(request => request.authorization)).toEqual([
-            'Bearer e2e-access-token-1',
-        ]);
+        await expect
+            .poll(() => api.requestsTo('/users/self').map(request => request.authorization))
+            .toEqual(['Bearer e2e-access-token-1']);
     });
 
     test('keeps the session the app wrote across a reload', async ({ page, api, loginPage, dashboardPage }) => {
@@ -85,10 +85,9 @@ test.describe('authentication', { tag: '@engine' }, () => {
         await expect(dashboardPage.heading).toBeVisible();
         await expect(page).toHaveURL(/\/$/u);
         expect((await storedTokens(page))?.accessToken).toBe('e2e-access-token-1');
-        expect(api.requestsTo('/users/self').map(request => request.authorization)).toEqual([
-            'Bearer e2e-access-token-1',
-            'Bearer e2e-access-token-1',
-        ]);
+        await expect
+            .poll(() => api.requestsTo('/users/self').map(request => request.authorization))
+            .toEqual(['Bearer e2e-access-token-1', 'Bearer e2e-access-token-1']);
     });
 
     test('rejects an empty submit with field errors and sends no request', async ({ page, api, loginPage }) => {
@@ -135,9 +134,9 @@ test.describe('signed-in visitor', { tag: '@engine' }, () => {
         await dashboardPage.goto();
 
         await expect(dashboardPage.heading).toBeVisible();
-        expect(api.requestsTo('/users/self').map(request => request.authorization)).toEqual([
-            `Bearer ${SEEDED_SESSION.accessToken}`,
-        ]);
+        await expect
+            .poll(() => api.requestsTo('/users/self').map(request => request.authorization))
+            .toEqual([`Bearer ${SEEDED_SESSION.accessToken}`]);
     });
 
     test('is sent past the login screen', async ({ page, loginPage, dashboardPage }) => {
@@ -160,9 +159,9 @@ test.describe('signed-in visitor', { tag: '@engine' }, () => {
 
         await expect(loginPage.heading).toBeVisible();
         await expect(page).toHaveURL(/\/login$/u);
-        expect(api.requestsTo('/auth/logout').map(request => request.body)).toEqual([
-            Object.fromEntries([['refresh_token', SEEDED_SESSION.refreshToken]]),
-        ]);
+        await expect
+            .poll(() => api.requestsTo('/auth/logout').map(request => request.body))
+            .toEqual([Object.fromEntries([['refresh_token', SEEDED_SESSION.refreshToken]])]);
         expect(await storedTokens(page)).toBeNull();
     });
 

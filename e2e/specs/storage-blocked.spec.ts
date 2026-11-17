@@ -7,8 +7,11 @@
  */
 
 import { expect, test } from '../fixtures/app';
+import { SERVED_BY_PREVIEW } from '../support/environment';
 
 test.describe('blocked site storage', { tag: '@engine' }, () => {
+    test.skip(!SERVED_BY_PREVIEW, 'the dev build loads Vue devtools, which reads localStorage at import');
+
     test.beforeEach(async ({ context }) => {
         await context.addInitScript(() => {
             for (const area of ['localStorage', 'sessionStorage']) {

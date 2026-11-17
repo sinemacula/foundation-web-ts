@@ -24,12 +24,11 @@ test.describe('token refresh', { tag: '@engine' }, () => {
 
         await expect(dashboardPage.heading).toBeVisible();
         await expect(page).toHaveURL(/\/$/u);
+        await expect
+            .poll(() => api.requestsTo('/users/self').map(request => request.authorization))
+            .toEqual([`Bearer ${SEEDED_SESSION.accessToken}`, 'Bearer e2e-access-token-1']);
         expect(api.requestsTo('/auth/refresh').map(request => request.body)).toEqual([
             Object.fromEntries([['refresh_token', SEEDED_SESSION.refreshToken]]),
-        ]);
-        expect(api.requestsTo('/users/self').map(request => request.authorization)).toEqual([
-            `Bearer ${SEEDED_SESSION.accessToken}`,
-            'Bearer e2e-access-token-1',
         ]);
         expect(await storedTokens(page)).toMatchObject({
             accessToken: 'e2e-access-token-1',
@@ -73,9 +72,9 @@ test.describe('proactive refresh', { tag: '@engine' }, () => {
         expect(await page.evaluate(() => Date.now())).toBeLessThan(NOW + EXPIRES_IN_MS);
         await expect.poll(async () => (await storedTokens(page))?.accessToken).toBe('e2e-access-token-1');
         expect(api.requestsTo('/auth/refresh')).toHaveLength(1);
-        expect(api.requestsTo('/users/self').map(request => request.authorization)).toEqual([
-            `Bearer ${SEEDED_SESSION.accessToken}`,
-        ]);
+        await expect
+            .poll(() => api.requestsTo('/users/self').map(request => request.authorization))
+            .toEqual([`Bearer ${SEEDED_SESSION.accessToken}`]);
         await expect(dashboardPage.heading).toBeVisible();
     });
 });
