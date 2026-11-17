@@ -6,30 +6,34 @@
  */
 
 import { expect, test } from '../fixtures/app';
-import { UsersPage } from '../pages/users-page';
-import { mockUsersList, mockUsersListServerError, seedAuthenticatedSession } from '../support/api-mock';
+import { SEEDED_SESSION } from '../support/api-mock';
+
+const ERROR_COPY = 'Something went wrong. Please try again.';
 
 test.describe('users list', () => {
-    test('navigates from the dashboard and lists users', async ({ page, dashboardPage }) => {
-        await seedAuthenticatedSession(page);
-        await mockUsersList(page);
+    test.use({ seededSession: SEEDED_SESSION });
+
+    test('navigates from the dashboard and lists users with the stored bearer', async ({
+        page,
+        api,
+        dashboardPage,
+        usersPage,
+    }) => {
+        await api.usersList();
 
         await dashboardPage.goto();
-
-        const usersPage = new UsersPage(page);
-
         await page.getByRole('link', { name: 'Users' }).click();
 
         await expect(page).toHaveURL(/\/users$/u);
         await expect(usersPage.heading).toBeVisible();
         await expect(usersPage.rows).toHaveCount(2);
+        expect(api.requestsTo('/users').map(request => request.authorization)).toEqual([
+            `Bearer ${SEEDED_SESSION.accessToken}`,
+        ]);
     });
 
-    test('loads the next page of results', async ({ page }) => {
-        await seedAuthenticatedSession(page);
-        await mockUsersList(page);
-
-        const usersPage = new UsersPage(page);
+    test('loads the next page of results', async ({ page, api, usersPage }) => {
+        await api.usersList();
 
         await usersPage.goto();
 
@@ -38,38 +42,50 @@ test.describe('users list', () => {
         await usersPage.nextButton.click();
 
         await expect(page.getByText('Carol Page Two')).toBeVisible();
+        expect(api.requestsTo('/users').map(request => request.url.searchParams.get('page'))).toEqual(['1', '2']);
     });
 
-    test('sends the search term to the server after typing', async ({ page }) => {
-        await seedAuthenticatedSession(page);
-        await mockUsersList(page);
-
-        const usersPage = new UsersPage(page);
+    test('sends one debounced search request after typing', async ({ page, api, usersPage }) => {
+        await api.usersList();
 
         await usersPage.goto();
         await expect(usersPage.rows).toHaveCount(2);
 
-        const requestPromise = page.waitForRequest(request => request.url().includes('/users?'));
+        const searched = page.waitForResponse(response => new URL(response.url()).searchParams.has('search'));
 
-        await usersPage.searchField.fill('alice');
+        await usersPage.searchField.pressSequentially('alice', { delay: 30 });
+        await searched;
+        await expect(usersPage.rows).toHaveCount(2);
 
-        const request = await requestPromise;
+        const searches = api.requestsTo('/users').flatMap(request => request.url.searchParams.getAll('search'));
 
-        expect(new URL(request.url()).searchParams.get('search')).toBe('alice');
+        expect(searches).toEqual(['alice']);
     });
 
-    test('surfaces a server error as an inline error and a toast', async ({ page }) => {
-        await seedAuthenticatedSession(page);
-        await mockUsersListServerError(page);
-
-        const usersPage = new UsersPage(page);
+    test('surfaces a server error as an inline error and a toast', async ({ page, api, usersPage }) => {
+        await api.usersListServerError();
 
         await usersPage.goto();
 
-        await expect(page.getByRole('main').getByText('Something went wrong. Please try again.')).toBeVisible();
+        await expect(page.getByRole('main').getByText(ERROR_COPY)).toBeVisible();
         await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
 
         // The toast host sits outside <main>, so this alert is the toast.
-        await expect(page.getByRole('alert')).toContainText('Something went wrong. Please try again.');
+        await expect(page.getByRole('alert')).toContainText(ERROR_COPY);
+    });
+
+    test('recovers through Retry once the network is back', async ({ page, api, usersPage }) => {
+        await api.usersList();
+        await api.usersListDisconnectedOnce();
+
+        await usersPage.goto();
+
+        await expect(page.getByRole('main').getByText(ERROR_COPY)).toBeVisible();
+        await expect(page.getByRole('alert')).toContainText(ERROR_COPY);
+
+        await page.getByRole('button', { name: 'Retry' }).click();
+
+        await expect(usersPage.rows).toHaveCount(2);
+        await expect(page.getByRole('main').getByText(ERROR_COPY)).toBeHidden();
     });
 });
