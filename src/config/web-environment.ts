@@ -93,7 +93,7 @@ function withoutBlankValues(runtime: Readonly<Record<string, string>>): Record<s
  * @throws {ConfigurationError} when any required key is missing or blank
  */
 function assertRequiredKeys(runtime: Readonly<Record<string, string>>, requiredKeys: readonly string[]): void {
-    const missing = requiredKeys.filter(key => isBlank(runtime[key]));
+    const missing = requiredKeys.filter(key => !Object.hasOwn(runtime, key) || isBlank(runtime[key]));
 
     if (missing.length > 0) {
         throw new ConfigurationError(`Runtime configuration is missing required keys: ${missing.join(', ')}.`);
