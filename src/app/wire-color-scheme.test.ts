@@ -176,4 +176,24 @@ describe('wireColorScheme', () => {
 
         expect(mql.removeCount).toBe(1);
     });
+
+    it('passes a throwing listener and a failed storage read to the error sink', () => {
+        const errors: unknown[] = [];
+        const readFailure = new Error('read');
+        const listenerFailure = new Error('listener');
+        const storage = new MemoryStorage();
+
+        storage.get = () => {
+            throw readFailure;
+        };
+
+        const service = wireColorScheme(baseOptions({ storage, onError: error => errors.push(error) }));
+
+        service.subscribe(() => {
+            throw listenerFailure;
+        });
+        service.setPreference('dark');
+
+        expect(errors).toStrictEqual([readFailure, listenerFailure]);
+    });
 });

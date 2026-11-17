@@ -44,6 +44,9 @@ export interface WireColorSchemeOptions {
 
     /** The document whose root and head receive the applied scheme. */
     readonly targetDocument?: Document;
+
+    /** Receives a throwing listener or a failed storage read. */
+    readonly onError?: (error: unknown) => void;
 }
 
 /**
@@ -62,6 +65,7 @@ export function wireColorScheme(options: WireColorSchemeOptions): ColorSchemeSer
         applier,
         defaultPreference: config.colorScheme.default,
         ...(options.colorSchemeStorageKey === undefined ? {} : { storageKey: options.colorSchemeStorageKey }),
+        ...(options.onError === undefined ? {} : { onError: options.onError }),
     });
 
     service.start();

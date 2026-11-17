@@ -32,19 +32,40 @@ export function useFeatureFlag(flags: FeatureFlags, key: string, fallback = fals
 }
 
 /**
- * Return a computed variant that re-evaluates whenever the flag set changes.
+ * Return a computed string variant that re-evaluates whenever the flag set
+ * changes; a missing key or a value of another type resolves to the fallback.
  *
  * Safe outside an effect scope: every composable over the same flag set shares
  * one change subscription held for the flag set's lifetime.
- *
- * @param fallback - returned when the flag is absent or the wrong type; its
- * type pins the return type
  */
-export function useVariant<Value extends FlagValue>(
+export function useVariant(flags: FeatureFlags, key: string, fallback: string): ComputedRef<string>;
+
+/**
+ * Return a computed numeric variant that re-evaluates whenever the flag set
+ * changes; a missing key or a value of another type resolves to the fallback.
+ */
+export function useVariant(flags: FeatureFlags, key: string, fallback: number): ComputedRef<number>;
+
+/**
+ * Return a computed boolean variant that re-evaluates whenever the flag set
+ * changes; a missing key or a value of another type resolves to the fallback.
+ */
+export function useVariant(flags: FeatureFlags, key: string, fallback: boolean): ComputedRef<boolean>;
+
+/**
+ * Return a computed variant narrowed to an explicit `Value`. The narrowing is
+ * unchecked: only the runtime type is compared with the fallback's.
+ */
+export function useVariant<Value extends FlagValue = FlagValue>(
     flags: FeatureFlags,
     key: string,
-    fallback: Value,
-): ComputedRef<Value> {
+    fallback: NoInfer<Value>,
+): ComputedRef<NoInfer<Value>>;
+
+/**
+ * Resolve the variant through the flag set on every change.
+ */
+export function useVariant(flags: FeatureFlags, key: string, fallback: FlagValue): ComputedRef<FlagValue> {
     const revision = flagSetRevision(flags);
 
     return computed(() => {

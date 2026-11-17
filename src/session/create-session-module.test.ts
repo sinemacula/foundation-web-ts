@@ -85,7 +85,7 @@ describe('createSessionModule', () => {
      * the request is retried.
      */
     function retries(target: SessionHarness): Promise<boolean> {
-        return unauthorizedHandler(target)();
+        return unauthorizedHandler(target)(REQUEST);
     }
 
     beforeEach(() => {

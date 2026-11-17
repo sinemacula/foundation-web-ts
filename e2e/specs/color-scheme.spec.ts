@@ -95,7 +95,7 @@ test.describe('colour scheme switcher', () => {
         expect(await storedPreference(page)).toBe('light');
     });
 
-    test('clears the override and the stored key when returning to system', async ({ page, dashboardPage }) => {
+    test('clears the override and stores system when returning to system', async ({ page, dashboardPage }) => {
         await dashboardPage.goto();
 
         await expect(dashboardPage.heading).toBeVisible();
@@ -107,7 +107,7 @@ test.describe('colour scheme switcher', () => {
 
         await expect(root(page)).not.toHaveAttribute('data-theme');
         await expect(option(page, 'System')).toHaveAttribute('aria-pressed', 'true');
-        expect(await storedPreference(page)).toBeNull();
+        expect(await storedPreference(page)).toBe('system');
     });
 
     test('keeps an explicit choice when the OS scheme changes', async ({ page, dashboardPage }) => {

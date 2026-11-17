@@ -15,6 +15,7 @@ import { createMemoryHistory, createWebHistory } from 'vue-router';
 import type * as PageTracking from '@sinemacula/foundation/analytics/install-page-tracking';
 import { NullAnalyticsTracker } from '@sinemacula/foundation/analytics/null-analytics-tracker';
 import type { Environment } from '@sinemacula/foundation/config/environment';
+import { RuntimeEnvironmentError } from '@sinemacula/foundation/config/runtime-environment-error';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { UpdateMonitor } from '../updates/update-monitor';
 import { createWebEnvironment } from '../config/web-environment';
@@ -492,6 +493,7 @@ describe('createWebCoreApp', () => {
             expect(fetchFn).toHaveBeenCalledWith('/custom-env.json', {
                 cache: 'no-store',
                 headers: { accept: 'application/json' },
+                signal: expect.any(AbortSignal),
             });
             expect(app.config.app.name).toBe('Runtime App');
             expect(app.config.api.baseUrl).toBe('https://api.runtime.test');
@@ -501,6 +503,29 @@ describe('createWebCoreApp', () => {
             expect(app.services.config.all()).toBe(app.config);
 
             app.dispose();
+        });
+
+        it('boots over an empty runtime document when it is not deployed', async () => {
+            const fetchFn = makeFetch();
+
+            fetchFn.mockResolvedValueOnce(jsonResponse(null, 404));
+
+            const app = await bootApp({ platform: makeSeams(fetchFn) });
+
+            expect(app.config.app.name).toBe('Kernel App');
+
+            app.dispose();
+        });
+
+        it.each([
+            ['an error status', () => Promise.resolve(jsonResponse(null, 500))],
+            ['a network failure', () => Promise.reject(new TypeError('offline'))],
+        ])('rejects the boot when the runtime document fails with %s', async (_, response) => {
+            const fetchFn = makeFetch();
+
+            fetchFn.mockImplementationOnce(response);
+
+            await expect(bootApp({ platform: makeSeams(fetchFn) })).rejects.toBeInstanceOf(RuntimeEnvironmentError);
         });
     });
 
@@ -1044,6 +1069,23 @@ describe('createWebCoreApp', () => {
             app.dispose();
         });
 
+        it('reports a throwing colour-scheme listener to the installed reporter', async () => {
+            const reporter = new NullErrorReporter();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const failure = new Error('listener failure');
+            const app = await bootApp({ observability: { reporter: () => reporter } });
+
+            app.services.colorScheme.subscribe(() => {
+                throw failure;
+            });
+            app.services.colorScheme.setPreference('dark');
+
+            expect(captureSpy).toHaveBeenCalledWith(failure, { source: 'color-scheme' });
+            expect(app.services.colorScheme.preference()).toBe('dark');
+
+            app.dispose();
+        });
+
         it('disposes the colour-scheme service on teardown', async () => {
             const app = await bootApp();
             const disposeSpy = vi.spyOn(app.services.colorScheme, 'dispose');
@@ -1314,6 +1356,66 @@ describe('createWebCoreApp', () => {
             expect(seams.targetDocument.title).toBe('sentinel');
             expect(seams.targetWindow.listenerCount('error')).toBe(0);
             expect(seams.targetWindow.listenerCount('unhandledrejection')).toBe(0);
+        });
+        it('tracks completed navigations by path only', async () => {
+            const tracker = new NullAnalyticsTracker();
+            const pageSpy = vi.spyOn(tracker, 'page');
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        routes: [
+                            { path: '/', name: 'home.index', component: EmptyComponent },
+                            { path: '/other', name: 'home.other', component: EmptyComponent },
+                            { path: '/blocked', name: 'home.blocked', component: EmptyComponent },
+                        ],
+                    }),
+                ],
+                observability: { analytics: () => tracker },
+            });
+
+            await app.router.isReady();
+            app.router.beforeEach(to => to.path !== '/blocked');
+            await app.router.push('/other?token=secret#section');
+            await app.router.push('/other?token=secret#section');
+            await app.router.push('/blocked');
+
+            expect(pageSpy.mock.calls).toStrictEqual([
+                ['home.index', { path: '/' }],
+                ['home.other', { path: '/other' }],
+            ]);
+
+            app.dispose();
+        });
+
+        it('reports a throwing page tracker without failing the navigation', async () => {
+            const reporter = new NullErrorReporter();
+            const tracker = new NullAnalyticsTracker();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const failure = new Error('tracker failure');
+
+            vi.spyOn(tracker, 'page').mockImplementation(() => {
+                throw failure;
+            });
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        routes: [
+                            { path: '/', name: 'home.index', component: EmptyComponent },
+                            { path: '/other', name: 'home.other', component: EmptyComponent },
+                        ],
+                    }),
+                ],
+                observability: { reporter: () => reporter, analytics: () => tracker },
+            });
+
+            await app.router.isReady();
+            await app.router.push('/other');
+
+            expect(app.router.currentRoute.value.path).toBe('/other');
+            expect(captureSpy).toHaveBeenCalledWith(failure, { source: 'page-tracking' });
+
+            app.dispose();
         });
     });
 
@@ -2138,6 +2240,7 @@ describe('createWebCoreApp', () => {
                 expect(globalThis.fetch).toHaveBeenCalledWith('/runtime-env.json', {
                     cache: 'no-store',
                     headers: { accept: 'application/json' },
+                    signal: expect.any(AbortSignal),
                 });
                 expect(app.config.app.name).toBe('Default App');
                 expect(appStorage()).toBeInstanceOf(BrowserStorage);

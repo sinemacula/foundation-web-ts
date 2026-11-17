@@ -5,9 +5,11 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import type { ComputedRef } from 'vue';
 import { effectScope } from 'vue';
 
+import type { FlagValue } from '@sinemacula/foundation/feature-flags/feature-flags';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import { useFeatureFlag, useVariant } from './use-feature-flag';
 
@@ -97,6 +99,43 @@ describe('useVariant', () => {
         expect(result?.value).toBe(100);
 
         scope.stop();
+    });
+
+    it('returns the current boolean variant value', () => {
+        const flags = new StaticFeatureFlags({ compact: true });
+
+        expect(useVariant(flags, 'compact', false).value).toBe(true);
+    });
+
+    it('returns the fallback when the stored value has another type', () => {
+        const flags = new StaticFeatureFlags({ limit: '100' });
+
+        expect(useVariant(flags, 'limit', 0).value).toBe(0);
+    });
+
+    it('widens a literal fallback to its primitive type', () => {
+        const flags = new StaticFeatureFlags();
+
+        expectTypeOf(useVariant(flags, 'flow', 'checkout-v1')).toEqualTypeOf<ComputedRef<string>>();
+        expectTypeOf(useVariant(flags, 'limit', 0)).toEqualTypeOf<ComputedRef<number>>();
+        expectTypeOf(useVariant(flags, 'compact', false)).toEqualTypeOf<ComputedRef<boolean>>();
+        expectTypeOf(useVariant(flags, 'mixed', 0 as FlagValue)).toEqualTypeOf<ComputedRef<FlagValue>>();
+    });
+
+    it('does not narrow from the expected result type', () => {
+        const flags = new StaticFeatureFlags();
+        // @ts-expect-error a literal fallback resolves to a plain string
+        const result: ComputedRef<'checkout-v1'> = useVariant(flags, 'flow', 'checkout-v1');
+
+        expect(result.value).toBe('checkout-v1');
+    });
+
+    it('narrows to an explicit variant type', () => {
+        const flags = new StaticFeatureFlags({ flow: 'checkout-v2' });
+        const result = useVariant<'checkout-v1' | 'checkout-v2'>(flags, 'flow', 'checkout-v1');
+
+        expectTypeOf(result).toEqualTypeOf<ComputedRef<'checkout-v1' | 'checkout-v2'>>();
+        expect(result.value).toBe('checkout-v2');
     });
 
     it('returns the fallback when the key is absent', () => {

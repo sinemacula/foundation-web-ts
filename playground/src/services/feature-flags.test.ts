@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { FeatureFlags } from '@sinemacula/foundation/feature-flags/feature-flags';
+import type { FeatureFlags, FlagValue } from '@sinemacula/foundation/feature-flags/feature-flags';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { featureFlags, initialiseFeatureFlags, resetFeatureFlags } from '@/services/feature-flags';
@@ -13,7 +13,7 @@ import { featureFlags, initialiseFeatureFlags, resetFeatureFlags } from '@/servi
 /** No-op feature-flag adapter. */
 const stubFlags: FeatureFlags = {
     isEnabled: () => false,
-    variant: (_key, fallback) => fallback,
+    variant: <Value extends FlagValue>(_key: string, fallback: Value): Value => fallback,
     setContext: () => undefined,
     onChange: () => () => undefined,
 };
