@@ -64,8 +64,8 @@ export interface Pagination {
 const DEFAULT_PER_PAGE = 25;
 
 /**
- * Create reactive pagination state for a data set with a known total. Pages
- * stop where the offset of the next would exceed the largest safe integer.
+ * Create reactive pagination state for a data set with a known total, up to the
+ * last page whose offset is a safe integer.
  *
  * @throws {RangeError} when `perPage` is not a positive safe integer
  */
@@ -76,7 +76,7 @@ export function usePagination(options: UsePaginationOptions): Pagination {
         throw new RangeError(`perPage must be a positive safe integer, received ${perPage}.`);
     }
 
-    const maxPage = Math.floor(Number.MAX_SAFE_INTEGER / perPage);
+    const maxPage = Math.min(Math.floor(Number.MAX_SAFE_INTEGER / perPage) + 1, Number.MAX_SAFE_INTEGER);
     const initialPage = options.initialPage ?? 1;
     const page = ref(Number.isFinite(initialPage) ? Math.min(Math.max(1, Math.trunc(initialPage)), maxPage) : 1);
 

@@ -70,9 +70,9 @@ describe('usePagination', () => {
             goTo(Number.MAX_SAFE_INTEGER);
             next();
 
-            expect(pageCount.value).toBe(Math.floor(Number.MAX_SAFE_INTEGER / 2));
+            expect(pageCount.value).toBe(Math.ceil(Number.MAX_SAFE_INTEGER / 2));
             expect(page.value).toBe(pageCount.value);
-            expect(offset.value).toBe(Number.MAX_SAFE_INTEGER - 3);
+            expect(offset.value).toBe(Number.MAX_SAFE_INTEGER - 1);
         });
 
         it('reacts when total changes', () => {
@@ -261,8 +261,15 @@ describe('usePagination', () => {
         it('clamps initialPage to the last page a safe offset reaches', () => {
             const { page, offset } = usePagination({ total: ref(100), perPage: 10, initialPage: 1e20 });
 
-            expect(page.value).toBe(Math.floor(Number.MAX_SAFE_INTEGER / 10));
-            expect(Number.isSafeInteger(offset.value)).toBe(true);
+            expect(page.value).toBe(Math.floor(Number.MAX_SAFE_INTEGER / 10) + 1);
+            expect(offset.value).toBe(Number.MAX_SAFE_INTEGER - 1);
+        });
+
+        it('clamps initialPage to the largest safe page for a single item per page', () => {
+            const { page, offset } = usePagination({ total: ref(100), perPage: 1, initialPage: 1e20 });
+
+            expect(page.value).toBe(Number.MAX_SAFE_INTEGER);
+            expect(offset.value).toBe(Number.MAX_SAFE_INTEGER - 1);
         });
 
         it('accepts a single item per page', () => {
