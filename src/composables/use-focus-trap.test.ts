@@ -146,6 +146,7 @@ describe('useFocusTrap', () => {
             trap.activate();
 
             expect(document.activeElement?.id).toBe('first');
+            expect(container.hasAttribute('tabindex')).toBe(false);
         });
 
         it('Tab on the last element wraps to the first', () => {

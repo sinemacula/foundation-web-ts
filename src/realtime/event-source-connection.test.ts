@@ -437,9 +437,13 @@ describe('EventSourceConnection', () => {
             expect(sources.at(1)?.listenerCount('gone-19')).toBe(0);
         });
 
-        it('leaves a resubscribed name alone when a stale unsubscribe runs', () => {
+        it('leaves a resubscribed name alone when a stale unsubscribe runs', async () => {
             const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
+            const conn = new EventSourceConnection({
+                url: 'http://sse',
+                backoff: fixedBackoff(100),
+                eventSourceFactory: factory,
+            });
             const received: string[] = [];
 
             conn.connect();
@@ -450,8 +454,11 @@ describe('EventSourceConnection', () => {
             conn.on('tick', msg => received.push(msg.data));
             stale();
             sources.at(0)?.emitMessage('tick', 'live');
+            sources.at(0)?.emitError();
+            await vi.advanceTimersByTimeAsync(100);
+            sources.at(1)?.emitMessage('tick', 'reconnected');
 
-            expect(received).toEqual(['live']);
+            expect(received).toEqual(['live', 'reconnected']);
         });
 
         it('unsubscribes while disconnected without touching a source', () => {
