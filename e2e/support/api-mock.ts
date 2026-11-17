@@ -1,11 +1,91 @@
 /**
- * Network-boundary API stubs for end-to-end specs; no real backend is used.
+ * Network-boundary API fake for end-to-end specs; no real backend is used.
+ *
+ * Every mock is registered on the browser context, so it answers every tab.
+ * Protected endpoints honour only bearer tokens the fake issued and has not
+ * revoked, and requests that break the wire contract are recorded as failures.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { Page } from '@playwright/test';
+import type { BrowserContext, BrowserContextOptions, Page, Request, Route } from '@playwright/test';
+
+import { API_ORIGIN, BASE_URL } from './environment';
+import type { FailureGuard } from './failure-guard';
+
+/** The storage key the session module persists its snapshot under. */
+export const SESSION_STORAGE_KEY = 'auth.session';
+
+/** The token pair of a persisted session. */
+export interface SessionTokens {
+    /** The bearer access token. */
+    readonly accessToken: string;
+
+    /** The refresh token. */
+    readonly refreshToken: string;
+
+    /** The access token expiry, or null for none. */
+    readonly expiresAtEpochMs: number | null;
+}
+
+/** The session every signed-in spec starts from. */
+export const SEEDED_SESSION: SessionTokens = {
+    accessToken: 'e2e-seeded-access-token',
+    refreshToken: 'e2e-seeded-refresh-token',
+    expiresAtEpochMs: null,
+};
+
+/** One API request the fake answered. */
+export interface RecordedRequest {
+    /** The HTTP method. */
+    readonly method: string;
+
+    /** The request URL. */
+    readonly url: URL;
+
+    /** The Authorization header, or null when absent. */
+    readonly authorization: string | null;
+
+    /** The parsed JSON body, or null when there is none. */
+    readonly body: unknown;
+}
+
+/** The reply a mock settles a request with. */
+interface Reply {
+    /** The HTTP status. */
+    readonly status: number;
+
+    /** The JSON body, if any. */
+    readonly json?: unknown;
+}
+
+/** A browser storage state a context can start from. */
+type StorageState = Exclude<BrowserContextOptions['storageState'], string | undefined>;
+
+/** The session snapshot the app persists. */
+interface PersistedSession {
+    /** The persisted token pair, or null once signed out. */
+    readonly tokens?: SessionTokens | null;
+}
+
+/** The permissions the default fake user holds. */
+const DEFAULT_PERMISSIONS: readonly string[] = ['users.view'];
+
+/**
+ * Build the browser storage state holding `tokens` as a persisted session.
+ */
+export function signedInStorageState(tokens: SessionTokens = SEEDED_SESSION): StorageState {
+    return {
+        cookies: [],
+        origins: [
+            {
+                origin: BASE_URL,
+                localStorage: [{ name: SESSION_STORAGE_KEY, value: JSON.stringify({ revision: 1, tokens }) }],
+            },
+        ],
+    };
+}
 
 /**
  * Build a record from `[key, value]` pairs, keeping snake_case wire names out
@@ -13,94 +93,6 @@ import type { Page } from '@playwright/test';
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
-}
-
-/**
- * Build a session response body in the default session gateway's wire shape.
- */
-function sessionResponse(accessToken: string, refreshToken: string): string {
-    return JSON.stringify(
-        wire([
-            ['access_token', accessToken],
-            ['refresh_token', refreshToken],
-            ['expires_in', 3600],
-        ]),
-    );
-}
-
-/**
- * Stub GET users/self with a fixed user holding `permissions`.
- */
-async function mockGetCurrentUser(page: Page, permissions: readonly string[] = ['users.view']): Promise<void> {
-    await page.route('**/users/self', route =>
-        route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                data: wire([
-                    ['id', 'user-1'],
-                    ['first_name', 'E2E'],
-                    ['last_name', 'User'],
-                    ['full_name', 'E2E User'],
-                    ['email', 'e2e@example.com'],
-                    ['permissions', permissions],
-                ]),
-            }),
-        }),
-    );
-}
-
-/**
- * Stub a successful sign-in and the current-user fetch it triggers.
- */
-export async function mockLoginSuccess(page: Page): Promise<void> {
-    await page.route('**/auth/sign-in', route =>
-        route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: sessionResponse('e2e-access-token', 'e2e-refresh-token'),
-        }),
-    );
-
-    await mockGetCurrentUser(page);
-}
-
-/**
- * Stub sign-in with an invalid-credentials rejection.
- */
-export async function mockLoginFailure(page: Page): Promise<void> {
-    await page.route('**/auth/sign-in', route =>
-        route.fulfill({
-            status: 401,
-            contentType: 'application/json',
-            body: JSON.stringify({ message: 'Invalid credentials.' }),
-        }),
-    );
-}
-
-/**
- * Stub sign-in with a pending session that owes a second factor.
- */
-export async function mockLoginInteractionRequired(page: Page): Promise<void> {
-    await page.route('**/auth/sign-in', route =>
-        route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(
-                wire([
-                    ['pending_credential', 'e2e-pending-credential'],
-                    ['requires', ['mfa']],
-                ]),
-            ),
-        }),
-    );
-}
-
-/**
- * Stub logout with a 204 No Content response.
- */
-export async function mockLogout(page: Page): Promise<void> {
-    await page.route('**/auth/logout', route => route.fulfill({ status: 204 }));
 }
 
 /** Build one raw user row for the mocked users-list response. */
@@ -114,169 +106,374 @@ function userRow(id: string, fullName: string): Record<string, unknown> {
 }
 
 /**
- * Stub GET users with two pages of rows, the second served for `page=2`.
- *
- * The glob also matches the app's `/users` route and `users-view.vue` module,
- * so only `fetch` requests are stubbed.
+ * Whether `body` is an object with exactly `keys`, each holding a non-empty
+ * string.
  */
-export async function mockUsersList(page: Page): Promise<void> {
-    await page.route('**/users*', route => {
-        if (route.request().method() !== 'GET' || route.request().resourceType() !== 'fetch') {
-            return route.fallback();
-        }
+function hasStringFields(body: unknown, keys: readonly string[]): boolean {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        return false;
+    }
 
-        const isSecondPage = new URL(route.request().url()).searchParams.get('page') === '2';
+    const entries = Object.entries(body);
 
-        const body = isSecondPage
-            ? {
-                  data: [userRow('user-3', 'Carol Page Two'), userRow('user-4', 'Dave Page Two')],
-                  meta: wire([
-                      ['total', 27],
-                      ['count', 2],
-                      ['continue', false],
-                  ]),
-              }
-            : {
-                  data: [userRow('user-1', 'Alice Example'), userRow('user-2', 'Bob Example')],
-                  meta: wire([
-                      ['total', 27],
-                      ['count', 25],
-                      ['continue', true],
-                  ]),
-              };
-
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(body),
-        });
-    });
+    return (
+        entries.length === keys.length &&
+        entries.every(([key, value]) => keys.includes(key) && typeof value === 'string' && value !== '')
+    );
 }
 
 /**
- * Stub GET users with a 500, which the default error handler raises as a toast.
+ * Parse a request body as JSON, or null when there is none.
  */
-export async function mockUsersListServerError(page: Page): Promise<void> {
-    await page.route('**/users*', route => {
-        if (route.request().method() !== 'GET' || route.request().resourceType() !== 'fetch') {
-            return route.fallback();
-        }
+function parseBody(request: Request): unknown {
+    const text = request.postData();
 
-        return route.fulfill({
-            status: 500,
-            contentType: 'application/json',
-            body: JSON.stringify({ message: 'Server error.' }),
-        });
-    });
+    if (text === null || text === '') {
+        return null;
+    }
+
+    try {
+        return JSON.parse(text) as unknown;
+    } catch {
+        return text;
+    }
 }
 
 /**
- * Persist a signed-in session before boot and stub the current user it loads.
+ * A stateful fake of the playground's API, bound to one browser context.
  */
-export async function seedAuthenticatedSession(
-    page: Page,
-    permissions: readonly string[] = ['users.view'],
-): Promise<void> {
-    const snapshot = JSON.stringify({
-        revision: 1,
-        tokens: { accessToken: 'e2e-seeded-token', refreshToken: 'e2e-seeded-refresh-token', expiresAtEpochMs: null },
-    });
+export class MockApi {
+    /** Every request a mock answered, in arrival order. */
+    readonly requests: RecordedRequest[] = [];
 
-    await page.addInitScript(value => window.localStorage.setItem('auth.session', value), snapshot);
+    /** The access tokens currently honoured. */
+    private readonly accessTokens = new Set<string>();
 
-    await mockGetCurrentUser(page, permissions);
-}
+    /** The refresh tokens that may still be redeemed once. */
+    private readonly refreshTokens = new Set<string>();
 
-/**
- * Stub GET users/self to 401 once, then succeed, forcing a refresh-and-retry.
- *
- * Register it after {@link seedAuthenticatedSession}: the latest route wins.
- */
-export async function mockUsersSelfUnauthorizedOnce(page: Page): Promise<void> {
-    let requestCount = 0;
+    /** How many token pairs the fake has issued. */
+    private issued = 0;
 
-    await page.route('**/users/self', route => {
-        if (route.request().method() !== 'GET' || route.request().resourceType() !== 'fetch') {
-            return route.fallback();
-        }
+    constructor(
+        private readonly context: BrowserContext,
+        private readonly guard: FailureGuard,
+    ) {}
 
-        requestCount += 1;
+    /**
+     * Honour `tokens`, as though the API had issued them before the spec.
+     */
+    trust(tokens: SessionTokens): void {
+        this.accessTokens.add(tokens.accessToken);
+        this.refreshTokens.add(tokens.refreshToken);
+    }
 
-        if (requestCount === 1) {
-            return route.fulfill({
-                status: 401,
-                contentType: 'application/json',
-                body: JSON.stringify({ message: 'Unauthenticated.' }),
-            });
-        }
+    /**
+     * Stop honouring an access token, as when it expires server side.
+     */
+    expireAccessToken(accessToken: string): void {
+        this.accessTokens.delete(accessToken);
+    }
 
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                data: wire([
-                    ['id', 'user-1'],
-                    ['first_name', 'E2E'],
-                    ['last_name', 'User'],
-                    ['full_name', 'E2E User'],
-                    ['email', 'e2e@example.com'],
-                ]),
+    /**
+     * The requests answered for `pathname`, optionally of one method.
+     */
+    requestsTo(pathname: string, method?: string): RecordedRequest[] {
+        return this.requests.filter(
+            request => request.url.pathname === pathname && (method === undefined || request.method === method),
+        );
+    }
+
+    /**
+     * Serve GET users/self as a user holding `permissions`.
+     */
+    async currentUser(permissions: readonly string[] = DEFAULT_PERMISSIONS): Promise<void> {
+        await this.endpoint('GET', '/users/self', request =>
+            this.protectedReply(request, {
+                status: 200,
+                json: {
+                    data: wire([
+                        ['id', 'user-1'],
+                        ['first_name', 'E2E'],
+                        ['last_name', 'User'],
+                        ['full_name', 'E2E User'],
+                        ['email', 'e2e@example.com'],
+                        ['permissions', permissions],
+                    ]),
+                },
             }),
-        });
-    });
-}
+        );
+    }
 
-/**
- * Stub the auth refresh endpoint with a fresh session.
- *
- * @returns an accessor for the number of refresh requests observed so far
- */
-export async function mockAuthRefreshSuccess(page: Page): Promise<() => number> {
-    let requestCount = 0;
+    /**
+     * Serve POST auth/sign-in with a fresh session, then the current user.
+     */
+    async signInSucceeds(): Promise<void> {
+        await this.signIn(() => ({ status: 200, json: this.issueSession() }));
+        await this.currentUser();
+    }
 
-    await page.route('**/auth/refresh', route => {
-        requestCount += 1;
+    /**
+     * Serve POST auth/sign-in with an invalid-credentials rejection.
+     */
+    async signInFails(): Promise<void> {
+        await this.signIn(() => ({ status: 401, json: { message: 'Invalid credentials.' } }));
+    }
 
-        return route.fulfill({
+    /**
+     * Serve POST auth/sign-in with a pending session that owes a second factor.
+     */
+    async signInRequiresInteraction(): Promise<void> {
+        await this.signIn(() => ({
             status: 200,
-            contentType: 'application/json',
-            body: sessionResponse('e2e-refreshed-access-token', 'e2e-refreshed-refresh-token'),
+            json: wire([
+                ['pending_credential', 'e2e-pending-credential'],
+                ['requires', ['mfa']],
+            ]),
+        }));
+    }
+
+    /**
+     * Serve POST auth/refresh, redeeming each refresh token once for a new pair
+     * and refusing any other.
+     */
+    async refreshRotates(): Promise<void> {
+        await this.endpoint('POST', '/auth/refresh', request => {
+            const refreshToken = this.refreshTokenIn(request);
+
+            if (refreshToken === null) {
+                return { status: 422, json: { message: 'A refresh token is required.' } };
+            }
+
+            if (!this.refreshTokens.delete(refreshToken)) {
+                return { status: 401, json: { message: 'The refresh token is invalid.' } };
+            }
+
+            return { status: 200, json: this.issueSession() };
         });
-    });
+    }
 
-    return () => requestCount;
-}
+    /**
+     * Serve POST auth/refresh with a refusal.
+     */
+    async refreshRefused(): Promise<void> {
+        await this.endpoint('POST', '/auth/refresh', request => {
+            this.refreshTokenIn(request);
 
-/**
- * Stub the runtime environment to report a new version after the boot fetch.
- *
- * @param appUrl - echoed as APP_URL to satisfy the required-key check in builds
- */
-export async function mockRuntimeEnvironmentVersionChange(page: Page, appUrl: string): Promise<void> {
-    let requestCount = 0;
+            return { status: 401, json: { message: 'The refresh token is invalid.' } };
+        });
+    }
 
-    await page.route('**/runtime-env.json', route => {
-        if (route.request().resourceType() !== 'fetch') {
-            return route.fallback();
+    /**
+     * Serve POST auth/logout, revoking the presented refresh token.
+     */
+    async logout(): Promise<void> {
+        await this.endpoint('POST', '/auth/logout', request => {
+            const refreshToken = this.refreshTokenIn(request);
+
+            if (refreshToken !== null) {
+                this.refreshTokens.delete(refreshToken);
+            }
+
+            return { status: 204 };
+        });
+    }
+
+    /**
+     * Serve GET users with two pages of rows, the second for `page=2`.
+     */
+    async usersList(): Promise<void> {
+        await this.endpoint('GET', '/users', request => {
+            const isSecondPage = request.url.searchParams.get('page') === '2';
+
+            return this.protectedReply(request, {
+                status: 200,
+                json: isSecondPage
+                    ? {
+                          data: [userRow('user-3', 'Carol Page Two'), userRow('user-4', 'Dave Page Two')],
+                          meta: wire([
+                              ['total', 27],
+                              ['count', 2],
+                              ['continue', false],
+                          ]),
+                      }
+                    : {
+                          data: [userRow('user-1', 'Alice Example'), userRow('user-2', 'Bob Example')],
+                          meta: wire([
+                              ['total', 27],
+                              ['count', 25],
+                              ['continue', true],
+                          ]),
+                      },
+            });
+        });
+    }
+
+    /**
+     * Serve GET users with no rows.
+     */
+    async usersListEmpty(): Promise<void> {
+        await this.endpoint('GET', '/users', request =>
+            this.protectedReply(request, {
+                status: 200,
+                json: {
+                    data: [],
+                    meta: wire([
+                        ['total', 0],
+                        ['count', 0],
+                        ['continue', false],
+                    ]),
+                },
+            }),
+        );
+    }
+
+    /**
+     * Serve GET users with a 500, which the default error handler raises as a
+     * toast.
+     */
+    async usersListServerError(): Promise<void> {
+        await this.endpoint('GET', '/users', request =>
+            this.protectedReply(request, { status: 500, json: { message: 'Server error.' } }),
+        );
+    }
+
+    /**
+     * Drop the next GET users request at the transport layer, as when the
+     * network is down; later requests fall through to earlier mocks.
+     */
+    async usersListDisconnectedOnce(): Promise<void> {
+        let dropped = false;
+
+        await this.context.route(
+            url => url.origin === API_ORIGIN && url.pathname === '/users',
+            route => {
+                if (dropped || route.request().method() !== 'GET') {
+                    return route.fallback();
+                }
+
+                dropped = true;
+                this.guard.expectFailedResource(route.request().url(), null);
+
+                return route.abort('internetdisconnected');
+            },
+        );
+    }
+
+    /**
+     * Register POST auth/sign-in, checking the credentials body first.
+     */
+    private async signIn(reply: () => Reply): Promise<void> {
+        await this.endpoint('POST', '/auth/sign-in', request => {
+            if (!hasStringFields(request.body, ['email', 'password', 'platform'])) {
+                this.guard.contractViolation(`sign-in body ${JSON.stringify(request.body)}`);
+
+                return { status: 422, json: { message: 'Malformed sign-in.' } };
+            }
+
+            return reply();
+        });
+    }
+
+    /**
+     * Read the refresh token from a refresh or logout body, recording a
+     * contract violation when the body is malformed.
+     */
+    private refreshTokenIn(request: RecordedRequest): string | null {
+        if (!hasStringFields(request.body, ['refresh_token'])) {
+            this.guard.contractViolation(`${request.url.pathname} body ${JSON.stringify(request.body)}`);
+
+            return null;
         }
 
-        requestCount += 1;
+        return (request.body as Record<string, string>)['refresh_token'] ?? null;
+    }
 
-        const appVersion = requestCount === 1 ? '1.0.0' : '2.0.0';
+    /**
+     * Answer with `reply` when the request carries an honoured bearer token,
+     * and with a 401 otherwise.
+     */
+    private protectedReply(request: RecordedRequest, reply: Reply): Reply {
+        const token = /^Bearer (.+)$/u.exec(request.authorization ?? '')?.[1];
 
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(
-                wire([
-                    ['APP_ENV', 'e2e'],
-                    ['APP_VERSION', appVersion],
-                    ['API_URL', 'http://localhost:8000'],
-                    ['APP_URL', appUrl],
-                    ['DEFAULT_LOCALE', 'en-US'],
-                    ['ENABLED_LOCALES', '["en-US"]'],
-                ]),
-            ),
-        });
-    });
+        if (token === undefined || !this.accessTokens.has(token)) {
+            return { status: 401, json: { message: 'Unauthenticated.' } };
+        }
+
+        return reply;
+    }
+
+    /**
+     * Issue and honour a new token pair, in the session gateway's wire shape.
+     */
+    private issueSession(): Record<string, unknown> {
+        this.issued += 1;
+
+        const accessToken = `e2e-access-token-${this.issued}`;
+        const refreshToken = `e2e-refresh-token-${this.issued}`;
+
+        this.accessTokens.add(accessToken);
+        this.refreshTokens.add(refreshToken);
+
+        return wire([
+            ['access_token', accessToken],
+            ['refresh_token', refreshToken],
+            ['expires_in', 3600],
+        ]);
+    }
+
+    /**
+     * Route `method` requests for exactly `pathname` on the API origin to
+     * `handle`, recording each one; other methods fall through.
+     */
+    private async endpoint(
+        method: string,
+        pathname: string,
+        handle: (request: RecordedRequest) => Reply,
+    ): Promise<void> {
+        await this.context.route(
+            url => url.origin === API_ORIGIN && url.pathname === pathname,
+            async (route: Route) => {
+                const request = route.request();
+
+                if (request.method() !== method) {
+                    return route.fallback();
+                }
+
+                const recorded: RecordedRequest = {
+                    method,
+                    url: new URL(request.url()),
+                    authorization: await request.headerValue('authorization'),
+                    body: parseBody(request),
+                };
+
+                this.requests.push(recorded);
+
+                const reply = handle(recorded);
+
+                if (reply.status >= 400) {
+                    this.guard.expectFailedResource(request.url(), reply.status);
+                }
+
+                return reply.json === undefined
+                    ? route.fulfill({ status: reply.status })
+                    : route.fulfill({ status: reply.status, json: reply.json });
+            },
+        );
+    }
+}
+
+/**
+ * Read the token pair the app persisted in `page`, or null when it holds none.
+ */
+export async function storedTokens(page: Page): Promise<SessionTokens | null> {
+    const raw = await page.evaluate(key => window.localStorage.getItem(key), SESSION_STORAGE_KEY);
+
+    if (raw === null) {
+        return null;
+    }
+
+    const snapshot = JSON.parse(raw) as PersistedSession;
+
+    return snapshot.tokens ?? null;
 }
