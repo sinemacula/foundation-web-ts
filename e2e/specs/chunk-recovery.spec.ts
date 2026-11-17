@@ -15,12 +15,33 @@ import type { FailureGuard } from '../support/failure-guard';
 /** The users view module, as a built chunk or a dev server source module. */
 const USERS_CHUNK = /\/users-view[^/]*\.(?:js|vue)$/u;
 
+/** A stubbed-out users view chunk. */
+interface RemovedChunk {
+    /** Settles once the first request for the chunk gets its 404. */
+    readonly removed: Promise<void>;
+}
+
 /**
  * Answer the users view chunk with a 404, for good or, when `untilReload`, only
  * until the first document is replaced, as after a deploy the reload picks up.
+ *
+ * @returns the stub, whose `removed` settles once the first 404 is served;
+ * every engine reports that, unlike a page response for a module script
  */
-async function removeUsersChunk(context: BrowserContext, guard: FailureGuard, untilReload = false): Promise<void> {
+async function removeUsersChunk(
+    context: BrowserContext,
+    guard: FailureGuard,
+    untilReload = false,
+): Promise<RemovedChunk> {
     let documents = 0;
+
+    /**
+     * Mark the first 404 as served.
+     */
+    let markRemoved = (): void => undefined;
+    const removed = new Promise<void>(resolve => {
+        markRemoved = resolve;
+    });
 
     context.on('request', request => {
         if (request.isNavigationRequest()) {
@@ -30,16 +51,19 @@ async function removeUsersChunk(context: BrowserContext, guard: FailureGuard, un
 
     await context.route(
         url => USERS_CHUNK.test(url.pathname),
-        route => {
+        async route => {
             if (untilReload && documents > 1) {
                 return route.fallback();
             }
 
             guard.expectFailedResource(route.request().url(), 404);
 
-            return route.fulfill({ status: 404, body: 'Not found' });
+            await route.fulfill({ status: 404, body: 'Not found' });
+            markRemoved();
         },
     );
+
+    return { removed };
 }
 
 /**
@@ -104,7 +128,8 @@ test.describe('chunk-load recovery', { tag: '@engine' }, () => {
         guard,
         dashboardPage,
     }) => {
-        await removeUsersChunk(context, guard);
+        const chunk = await removeUsersChunk(context, guard);
+
         await context.addInitScript(() => {
             const setItem = Storage.prototype.setItem;
 
@@ -122,10 +147,8 @@ test.describe('chunk-load recovery', { tag: '@engine' }, () => {
         await dashboardPage.goto();
         await expect(dashboardPage.heading).toBeVisible();
 
-        const chunkRequest = page.waitForResponse(response => USERS_CHUNK.test(new URL(response.url()).pathname));
-
         await page.getByRole('link', { name: 'Users' }).click();
-        await chunkRequest;
+        await chunk.removed;
         await expect(page.getByRole('progressbar')).toHaveCount(0);
 
         await expect(dashboardPage.heading).toBeVisible();
