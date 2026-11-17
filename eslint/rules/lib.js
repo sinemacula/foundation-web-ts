@@ -44,10 +44,10 @@ export function isTestPath(filename) {
  * for a path directly under `modules/`.
  */
 export function moduleLocation(filename) {
-    const parts = filename.split('/');
+    const parts = filename.split('/').filter(part => part !== '');
     const index = parts.lastIndexOf('modules');
 
-    if (index < 0 || index + 2 >= parts.length || !parts[index + 1]) {
+    if (index < 0 || index + 2 >= parts.length) {
         return null;
     }
 

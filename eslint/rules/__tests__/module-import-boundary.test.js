@@ -63,6 +63,9 @@ ruleTester.run('module-import-boundary', rule, {
         },
         // A package path through a `modules` folder is not a module tree.
         { filename: 'src/app.ts', code: "import 'some-package/modules/forms/input';" },
+        // A trailing slash still names the public surface.
+        { filename: 'src/modules/auth/routes.ts', code: "import { x } from '@/modules/users/';" },
+        { filename: 'src/modules/auth/routes.ts', code: "import { x } from '../users/';" },
         // An explicit index entry is the public surface too.
         { filename: 'src/modules/auth/routes.ts', code: "import { x } from '@/modules/users/index';" },
         { filename: 'src/modules/auth/routes.ts', code: "import { x } from '../users/index.ts';" },

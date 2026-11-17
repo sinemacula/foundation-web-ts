@@ -146,6 +146,20 @@ ruleTester.run('route-name-via-constant', rule, {
             code: "export const authRoutes = [{ path: '/', redirect() { return { name: 'auth.login' }; } }];",
             errors: [{ messageId: 'inline', data: { value: 'auth.login' } }],
         },
+        // Either branch of a conditional redirect.
+        {
+            filename: 'src/modules/auth/routes.ts',
+            code: "export const authRoutes = [{ path: '/', redirect: to => (to.query.x ? { name: 'auth.a' } : { name: 'auth.b' }) }];",
+            errors: [
+                { messageId: 'inline', data: { value: 'auth.a' } },
+                { messageId: 'inline', data: { value: 'auth.b' } },
+            ],
+        },
+        {
+            filename: 'src/modules/auth/routes.ts',
+            code: "export const authRoutes = [{ path: '/', redirect: to => { return to ? { name: 'auth.a' } : '/'; } }];",
+            errors: [{ messageId: 'inline', data: { value: 'auth.a' } }],
+        },
         // An asserted name, a `.tsx` routes file, and one at the root.
         {
             filename: 'src/modules/auth/routes.ts',
