@@ -225,7 +225,7 @@ describe('useFocusTrap', () => {
     });
 
     describe('focused control removed after activation', () => {
-        it('holds Tab when nothing tabbable is left', () => {
+        it('moves focus to the container when nothing tabbable is left', () => {
             container = buildContainer('<button id="dyn">Dynamic</button>');
 
             const trap = useFocusTrap(ref<HTMLElement | null>(container));
@@ -234,8 +234,12 @@ describe('useFocusTrap', () => {
             (container.querySelector<HTMLElement>('#dyn') as HTMLElement).remove();
 
             expect(pressKey('Tab').defaultPrevented).toBe(true);
+            expect(document.activeElement).toBe(container);
+            expect(container.getAttribute('tabindex')).toBe('-1');
 
             trap.deactivate();
+
+            expect(container.hasAttribute('tabindex')).toBe(false);
         });
 
         it('pulls focus back in from the body', () => {
