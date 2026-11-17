@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModuleDefinition } from '../module/module';
 import type { ModuleMessageSource } from '../module/module-registry';
@@ -742,5 +742,253 @@ describe('createLocaleSwitcher', () => {
         await expect(switcher.switchTo('fr-FR')).rejects.toThrow(
             'Module "common" collides with a shared top-level translation key for locale "fr-FR".',
         );
+    });
+
+    describe('switch ordering and failure', () => {
+        /**
+         * A shared loader whose result the test settles on demand.
+         */
+        interface DeferredLoader {
+            /** The loader the switcher calls. */
+            readonly load: () => Promise<Record<string, string>>;
+
+            /** Resolve the pending load with `messages`. */
+            readonly resolve: (messages: Record<string, string>) => void;
+
+            /** Reject the pending load with `error`. */
+            readonly reject: (error: Error) => void;
+        }
+
+        /** Build a shared loader whose result the test settles on demand. */
+        function deferredLoader(): DeferredLoader {
+            let resolve!: (messages: Record<string, string>) => void;
+            let reject!: (error: Error) => void;
+            const promise = new Promise<Record<string, string>>((res, rej) => {
+                resolve = res;
+                reject = rej;
+            });
+
+            return { load: () => promise, resolve, reject };
+        }
+
+        /** Build a switcher over three enabled locales with `en-GB` stored. */
+        function buildSwitcher(sharedLoaders: Record<string, () => Promise<Record<string, string>>>) {
+            const i18n = createApplicationI18n('en-GB');
+            const storage = new MemoryStorage();
+            const target = document.implementation.createHTMLDocument('t');
+
+            storage.set('locale', 'en-GB');
+
+            const switcher = createLocaleSwitcher({
+                i18n,
+                modules: [],
+                sharedLoaders,
+                localeService: new LocaleService({
+                    defaultLocale: 'en-GB',
+                    enabledLocales: ['en-GB', 'fr-FR', 'ar-SA'],
+                    storage,
+                }),
+                supported: {
+                    'en-GB': { direction: 'ltr' },
+                    'fr-FR': { direction: 'ltr' },
+                    'ar-SA': { direction: 'rtl' },
+                },
+                fallbackLocale: 'en-GB',
+                targetDocument: target,
+            });
+
+            return { i18n, storage, target, switcher };
+        }
+
+        it('leaves the stored and active locale unchanged when the load fails', async () => {
+            const { storage, target, switcher } = buildSwitcher({
+                'fr-FR': () => Promise.reject(new Error('chunk failed')),
+            });
+
+            await expect(switcher.switchTo('fr-FR')).rejects.toThrow('chunk failed');
+
+            expect(storage.get('locale')).toBe('en-GB');
+            expect(switcher.current.value).toBe('en-GB');
+            expect(target.documentElement.hasAttribute('lang')).toBe(false);
+        });
+
+        it('leaves the stored locale unchanged when a namespace collision rejects the switch', async () => {
+            const i18n = createApplicationI18n('en-GB');
+            const storage = new MemoryStorage();
+
+            storage.set('locale', 'en-GB');
+
+            const switcher = createLocaleSwitcher({
+                i18n,
+                modules: [{ name: 'common', routes: [], locales: async () => ({ greeting: 'From module' }) }],
+                sharedLoaders: { 'fr-FR': async () => ({ common: 'From shared' }) },
+                localeService: new LocaleService({
+                    defaultLocale: 'en-GB',
+                    enabledLocales: ['en-GB', 'fr-FR'],
+                    storage,
+                }),
+                supported: { 'en-GB': { direction: 'ltr' }, 'fr-FR': { direction: 'ltr' } },
+                fallbackLocale: 'en-GB',
+                onNamespaceCollision: 'error',
+                targetDocument: document.implementation.createHTMLDocument('t'),
+            });
+
+            await expect(switcher.switchTo('fr-FR')).rejects.toThrow('collides');
+
+            expect(storage.get('locale')).toBe('en-GB');
+            expect(switcher.current.value).toBe('en-GB');
+        });
+
+        it('retries a locale whose earlier load failed', async () => {
+            let attempts = 0;
+            const { storage, switcher } = buildSwitcher({
+                'fr-FR': () => {
+                    attempts += 1;
+
+                    return attempts === 1 ? Promise.reject(new Error('offline')) : Promise.resolve({ hi: 'Salut' });
+                },
+            });
+
+            await expect(switcher.switchTo('fr-FR')).rejects.toThrow('offline');
+            await switcher.switchTo('fr-FR');
+
+            expect(switcher.current.value).toBe('fr-FR');
+            expect(storage.get('locale')).toBe('fr-FR');
+        });
+
+        it('lets the latest selection win when an earlier switch loads last', async () => {
+            const french = deferredLoader();
+            const arabic = deferredLoader();
+            const { i18n, storage, target, switcher } = buildSwitcher({ 'fr-FR': french.load, 'ar-SA': arabic.load });
+
+            const first = switcher.switchTo('fr-FR');
+            const second = switcher.switchTo('ar-SA');
+
+            arabic.resolve({ hi: 'Marhaba' });
+            await second;
+            french.resolve({ hi: 'Salut' });
+            await first;
+
+            expect(switcher.current.value).toBe('ar-SA');
+            expect(i18n.global.t('hi')).toBe('Marhaba');
+            expect(target.documentElement.getAttribute('lang')).toBe('ar-SA');
+            expect(target.documentElement.getAttribute('dir')).toBe('rtl');
+            expect(storage.get('locale')).toBe('ar-SA');
+        });
+
+        it('applies nothing for a superseded switch that loads first', async () => {
+            const french = deferredLoader();
+            const arabic = deferredLoader();
+            const { storage, target, switcher } = buildSwitcher({ 'fr-FR': french.load, 'ar-SA': arabic.load });
+
+            const first = switcher.switchTo('fr-FR');
+            const second = switcher.switchTo('ar-SA');
+
+            french.resolve({ hi: 'Salut' });
+            await first;
+
+            expect(switcher.current.value).toBe('en-GB');
+            expect(target.documentElement.hasAttribute('lang')).toBe(false);
+            expect(storage.get('locale')).toBe('en-GB');
+
+            arabic.resolve({ hi: 'Marhaba' });
+            await second;
+
+            expect(switcher.current.value).toBe('ar-SA');
+        });
+
+        it('still rejects a superseded switch whose own load fails', async () => {
+            const french = deferredLoader();
+            const { storage, switcher } = buildSwitcher({
+                'fr-FR': french.load,
+                'ar-SA': async () => ({ hi: 'Marhaba' }),
+            });
+
+            const first = switcher.switchTo('fr-FR');
+
+            await switcher.switchTo('ar-SA');
+            french.reject(new Error('chunk failed'));
+
+            await expect(first).rejects.toThrow('chunk failed');
+            expect(switcher.current.value).toBe('ar-SA');
+            expect(storage.get('locale')).toBe('ar-SA');
+        });
+
+        it('loads each locale once across repeated switches', async () => {
+            const calls: string[] = [];
+            const i18n = createApplicationI18n('en-GB');
+            const source: ModuleMessageSource = {
+                messages: locale => {
+                    calls.push(`module:${locale}`);
+
+                    return Promise.resolve({});
+                },
+            };
+
+            /**
+             * Build a shared loader recording each call.
+             */
+            const recording = (locale: string) => () => {
+                calls.push(`shared:${locale}`);
+
+                return Promise.resolve({});
+            };
+            const shared = {
+                i18n,
+                modules: [],
+                sharedLoaders: { 'en-GB': recording('en-GB'), 'fr-FR': recording('fr-FR') },
+                messageSource: source,
+                fallbackLocale: 'en-GB',
+                targetDocument: document.implementation.createHTMLDocument('t'),
+            };
+
+            await activateLocale({ ...shared, locale: 'en-GB', direction: 'ltr' });
+
+            const switcher = createLocaleSwitcher({
+                ...shared,
+                localeService: buildLocaleService(),
+                supported: { 'en-GB': { direction: 'ltr' }, 'fr-FR': { direction: 'ltr' } },
+            });
+
+            await switcher.switchTo('fr-FR');
+            await switcher.switchTo('en-GB');
+            await switcher.switchTo('fr-FR');
+
+            expect(calls).toStrictEqual(['shared:en-GB', 'module:en-GB', 'shared:fr-FR', 'module:fr-FR']);
+            expect(switcher.current.value).toBe('fr-FR');
+        });
+
+        it('shares one load between concurrent switches to the same locale', async () => {
+            const french = deferredLoader();
+            const load = vi.fn(french.load);
+            const { switcher } = buildSwitcher({ 'fr-FR': load });
+
+            const first = switcher.switchTo('fr-FR');
+            const second = switcher.switchTo('fr-FR');
+
+            french.resolve({ hi: 'Salut' });
+            await Promise.all([first, second]);
+
+            expect(load).toHaveBeenCalledTimes(1);
+            expect(switcher.current.value).toBe('fr-FR');
+        });
+
+        it('starts the active and fallback loads together', () => {
+            const started: string[] = [];
+
+            /**
+             * Build a loader that records its start and never settles.
+             */
+            const pending = (locale: string) => () => {
+                started.push(locale);
+
+                return new Promise<Record<string, string>>(() => undefined);
+            };
+            const { switcher } = buildSwitcher({ 'fr-FR': pending('fr-FR'), 'en-GB': pending('en-GB') });
+
+            void switcher.switchTo('fr-FR');
+
+            expect(started).toStrictEqual(['fr-FR', 'en-GB']);
+        });
     });
 });

@@ -120,6 +120,23 @@ type TestWindow = Window & {
 };
 
 /**
+ * Build a map-backed stand-in for a Web Storage area.
+ */
+function makeWebStorage(): Storage {
+    const values = new Map<string, string>();
+
+    return {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+            values.set(key, value);
+        },
+        removeItem: (key: string) => {
+            values.delete(key);
+        },
+    } as unknown as Storage;
+}
+
+/**
  * Build a window stub that records its event listeners.
  */
 function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
@@ -127,6 +144,7 @@ function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
 
     return {
         navigator: { onLine: true, languages },
+        sessionStorage: makeWebStorage(),
         matchMedia: () => ({
             matches: false,
             addEventListener: () => undefined,
@@ -980,26 +998,27 @@ describe('createWebCoreApp', () => {
     });
 
     describe('chunk recovery', () => {
+        /** Build a home module whose `/lazy` route fails to load its chunk. */
+        function staleChunkModule(): ModuleDefinition {
+            return homeModule({
+                routes: [
+                    { path: '/', name: 'home.index', component: EmptyComponent },
+                    {
+                        path: '/lazy',
+                        name: 'home.lazy',
+                        component: () =>
+                            Promise.reject(new Error('Failed to fetch dynamically imported module: /assets/lazy.js')),
+                    },
+                ],
+            });
+        }
+
         it('recovers stale-deploy chunk failures through the injected reload and clock seams', async () => {
             const reload = vi.fn();
             const seams = makeSeams();
 
             const app = await bootApp({
-                modules: [
-                    homeModule({
-                        routes: [
-                            { path: '/', name: 'home.index', component: EmptyComponent },
-                            {
-                                path: '/lazy',
-                                name: 'home.lazy',
-                                component: () =>
-                                    Promise.reject(
-                                        new Error('Failed to fetch dynamically imported module: /assets/lazy.js'),
-                                    ),
-                            },
-                        ],
-                    }),
-                ],
+                modules: [staleChunkModule()],
                 monitors: { chunkRecovery: { enabled: true, reload, windowMs: 30_000 } },
                 platform: seams,
             });
@@ -1010,7 +1029,55 @@ describe('createWebCoreApp', () => {
 
             expect(reload).toHaveBeenCalledTimes(1);
             expect(reload).toHaveBeenCalledWith('/lazy');
-            expect(seams.storage.get('chunk-recovery./lazy')).toBe('1000');
+            expect(seams.targetWindow.sessionStorage.getItem('chunk-recovery.reloaded-at')).toBe('1000');
+            expect(seams.storage.get('chunk-recovery.reloaded-at')).toBeNull();
+
+            app.dispose();
+        });
+
+        it('applies the configured reload-loop window instead of the default', async () => {
+            const reload = vi.fn();
+            let now = 1_000;
+            const seams = { ...makeSeams(), clock: (): number => now };
+
+            const app = await bootApp({
+                modules: [staleChunkModule()],
+                monitors: { chunkRecovery: { reload, windowMs: 30_000 } },
+                platform: seams,
+            });
+
+            await app.router.push('/lazy').catch(() => undefined);
+            now += 40_000;
+            await app.router.push('/lazy').catch(() => undefined);
+
+            expect(reload).toHaveBeenCalledTimes(2);
+
+            app.dispose();
+        });
+
+        it('boots and reports chunk failures without reloading when session storage is refused', async () => {
+            const reload = vi.fn();
+            const reporter = new NullErrorReporter();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const targetWindow = makeWindow();
+
+            Object.defineProperty(targetWindow, 'sessionStorage', {
+                get: () => {
+                    throw new DOMException('denied', 'SecurityError');
+                },
+            });
+
+            const app = await bootApp({
+                modules: [staleChunkModule()],
+                monitors: { chunkRecovery: { reload } },
+                observability: { reporter: () => reporter },
+                platform: { ...makeSeams(), targetWindow },
+            });
+
+            await app.router.push('/lazy').catch(() => undefined);
+
+            expect(reload).not.toHaveBeenCalled();
+            expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), { source: 'router', path: '/lazy' });
 
             app.dispose();
         });
@@ -1019,21 +1086,7 @@ describe('createWebCoreApp', () => {
             const reload = vi.fn();
 
             const app = await bootApp({
-                modules: [
-                    homeModule({
-                        routes: [
-                            { path: '/', name: 'home.index', component: EmptyComponent },
-                            {
-                                path: '/lazy',
-                                name: 'home.lazy',
-                                component: () =>
-                                    Promise.reject(
-                                        new Error('Failed to fetch dynamically imported module: /assets/lazy.js'),
-                                    ),
-                            },
-                        ],
-                    }),
-                ],
+                modules: [staleChunkModule()],
                 monitors: { chunkRecovery: { enabled: false, reload }, connectivity: { enabled: true } },
             });
 

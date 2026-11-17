@@ -6,8 +6,9 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { defineComponent } from 'vue';
-import { createMemoryHistory } from 'vue-router';
+import type { Component } from 'vue';
+import { defineComponent, nextTick } from 'vue';
+import { createMemoryHistory, createRouter } from 'vue-router';
 
 import { createApplicationRouter } from '../router/router-factory';
 import { activateLocale, createApplicationI18n } from './application-i18n';
@@ -24,6 +25,7 @@ async function buildEnv() {
         modules: [],
         sharedLoaders: {
             'en-GB': async () => ({ 'page.home': 'Home', 'page.about': 'About' }),
+            'fr-FR': async () => ({ 'page.home': 'Accueil', 'page.about': 'A propos' }),
         },
         locale: 'en-GB',
         direction: 'ltr',
@@ -120,5 +122,98 @@ describe('installDocumentTitleSync', () => {
         await router.push('/about');
 
         expect(target.title).toBe('untouched');
+    });
+
+    it('keeps the title of the current page when a navigation is aborted', async () => {
+        const { i18n, router } = await buildEnv();
+        const target = document.implementation.createHTMLDocument('test');
+
+        installDocumentTitleSync({ router, i18n, appName: 'App', targetDocument: target });
+
+        await router.push('/');
+        router.beforeEach(to => to.path !== '/about');
+        await router.push('/about');
+
+        expect(router.currentRoute.value.path).toBe('/');
+        expect(target.title).toBe('Home | App');
+    });
+
+    it('keeps the title of the newer page when a superseded navigation settles last', async () => {
+        const i18n = createApplicationI18n('en-GB');
+
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: { 'en-GB': async () => ({ 'page.home': 'Home', 'page.slow': 'Slow' }) },
+            locale: 'en-GB',
+            direction: 'ltr',
+            targetDocument: document.implementation.createHTMLDocument('setup'),
+        });
+
+        let resolveSlow!: (component: Component) => void;
+        const router = createRouter({
+            history: createMemoryHistory(),
+            routes: [
+                { path: '/', component: Empty, meta: { title: 'page.home' } },
+                {
+                    path: '/slow',
+                    component: () => new Promise<Component>(resolve => (resolveSlow = resolve)),
+                    meta: { title: 'page.slow' },
+                },
+            ],
+        });
+        const target = document.implementation.createHTMLDocument('test');
+
+        installDocumentTitleSync({ router, i18n, appName: 'App', targetDocument: target });
+
+        const slow = router.push('/slow');
+
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        await router.push('/');
+        resolveSlow(Empty);
+        await slow;
+
+        expect(router.currentRoute.value.path).toBe('/');
+        expect(target.title).toBe('Home | App');
+    });
+
+    it('re-translates the title when the locale switches', async () => {
+        const { i18n, router } = await buildEnv();
+        const target = document.implementation.createHTMLDocument('test');
+
+        installDocumentTitleSync({ router, i18n, appName: 'App', targetDocument: target });
+
+        await router.push('/about');
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: { 'fr-FR': async () => ({ 'page.home': 'Accueil', 'page.about': 'A propos' }) },
+            locale: 'fr-FR',
+            direction: 'ltr',
+            targetDocument: document.implementation.createHTMLDocument('switch'),
+        });
+
+        expect(target.title).toBe('A propos | App');
+    });
+
+    it('stops re-translating the title after teardown', async () => {
+        const { i18n, router } = await buildEnv();
+        const target = document.implementation.createHTMLDocument('test');
+
+        const teardown = installDocumentTitleSync({ router, i18n, appName: 'App', targetDocument: target });
+
+        await router.push('/about');
+        teardown();
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: { 'fr-FR': async () => ({ 'page.about': 'A propos' }) },
+            locale: 'fr-FR',
+            direction: 'ltr',
+            targetDocument: document.implementation.createHTMLDocument('switch'),
+        });
+        await nextTick();
+
+        expect(target.title).toBe('About | App');
     });
 });

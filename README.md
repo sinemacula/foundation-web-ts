@@ -180,7 +180,14 @@ Defaults and behaviours worth knowing:
 - `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an
   application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with neither throws a
   `FoundationBootError` at boot. `monitors.connectivity` defaults to on exactly when the update monitor runs and pauses
-  its polling while offline. `monitors.chunkRecovery` is on by default.
+  its polling while offline. `monitors.chunkRecovery` is on by default: a chunk-load or stylesheet-preload failure
+  reloads the tab once per window (default 60s) at the router's URL for the target, guarded in that tab's
+  `sessionStorage`; when that storage is unavailable it reports instead of reloading.
+- Inline `createColorSchemeBootScript({ storageKey, defaultPreference })` (`./theme/color-scheme-boot`) in the host
+  page's `<head>`, with the same values passed to `colorScheme`, so the first paint matches the stored scheme. It
+  reads `localStorage`, so a custom `platform.storage` is not visible to it.
+- A navigation redirected by middleware more than ten times fails with a `RedirectLoopError`
+  (`./router/redirect-loop-error`) through the router's error flow instead of looping.
 - The `platform` seams thread to every subsystem and to module hooks (as `ResolvedPlatform`), which is how tests drive
   the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed clock, a hand-run
   `schedule` (delayed work, cancelled through the function it returns; defaults to the global timers) and an injected
