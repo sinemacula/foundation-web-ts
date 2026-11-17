@@ -65,6 +65,7 @@ function baseOptions(overrides: Partial<WireColorSchemeOptions> = {}): WireColor
         storage: new MemoryStorage(),
         targetWindow: windowOf(makeMql(false)),
         targetDocument: document.implementation.createHTMLDocument('t'),
+        onError: () => undefined,
         ...overrides,
     };
 }
@@ -149,7 +150,7 @@ describe('wireColorScheme', () => {
 
         storage.set('theme', 'dark');
 
-        wireColorScheme({ config, storage, targetWindow: windowOf(makeMql(false)) });
+        wireColorScheme({ config, storage, targetWindow: windowOf(makeMql(false)), onError: () => undefined });
 
         expect(dataTheme(document)).toBe('dark');
     });
