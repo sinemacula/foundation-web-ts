@@ -5,11 +5,21 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { Linter } from 'eslint';
+import { ESLint, Linter } from 'eslint';
+import tseslint from 'typescript-eslint';
 import { describe, expect, it } from 'vitest';
 import config from './index.js';
 
 const linter = new Linter({ configType: 'flat' });
+
+/** Source breaking every web-core rule that could apply to its file. */
+const VIOLATIONS = [
+    "import { x } from '@sinemacula/web-core';",
+    'export const payload = { snake_key: x };',
+    "export const AUTH_ROUTE_NAMES = { home: 'home' };",
+    "export const wrong: ModuleDefinition = { name: 'login' };",
+    "export const records = [{ path: '/', name: 'auth.home' }];",
+].join('\n');
 
 /** Lint a code snippet as though it lived at the given filename. */
 function lint(code, filename) {
@@ -21,20 +31,39 @@ function ruleIds(messages) {
     return messages.map(message => message.ruleId);
 }
 
+/** The distinct web-core rule names reported, sorted, with the plugin prefix dropped. */
+function reportedRules(messages) {
+    return [...new Set(ruleIds(messages).map(id => id?.replace('@sinemacula/web-core/', '')))].sort();
+}
+
 describe('preset config', () => {
-    it('enforces the import boundary on .ts files', () => {
-        const messages = lint("import { x } from '@sinemacula/web-core';", 'src/app.ts');
-
-        expect(ruleIds(messages)).toEqual(['@sinemacula/web-core/module-import-boundary']);
+    it.each([
+        ['src/app.ts', ['module-import-boundary', 'no-snake-case-keys']],
+        [
+            'src/modules/auth/module.ts',
+            ['module-export-names', 'module-import-boundary', 'module-name-matches-folder', 'no-snake-case-keys'],
+        ],
+        [
+            'src/modules/auth/routes.ts',
+            ['module-export-names', 'module-import-boundary', 'no-snake-case-keys', 'route-name-via-constant'],
+        ],
+        [
+            'src/modules/auth/routes.tsx',
+            ['module-export-names', 'module-import-boundary', 'no-snake-case-keys', 'route-name-via-constant'],
+        ],
+        ['src/modules/auth/route-names.ts', ['module-import-boundary', 'no-snake-case-keys', 'route-name-namespacing']],
+    ])('enables exactly the applicable rules on %s', (filename, expected) => {
+        expect(reportedRules(lint(VIOLATIONS, filename))).toEqual(expected);
     });
 
-    it('enforces the import boundary inside .vue single-file components', () => {
-        const code =
-            '<script setup lang="ts">\nimport { x } from \'@/modules/users/composables/use-thing\';\n</script>';
-        const messages = lint(code, 'src/App.vue');
+    it.each(['src/App.vue', 'src/modules/auth/views/login-view.vue'])(
+        'enables only the conventions inside %s',
+        filename => {
+            const messages = lint(`<script setup lang="ts">\n${VIOLATIONS}\n</script>`, filename);
 
-        expect(ruleIds(messages)).toEqual(['@sinemacula/web-core/module-import-boundary']);
-    });
+            expect(reportedRules(messages)).toEqual(['module-import-boundary', 'no-snake-case-keys']);
+        },
+    );
 
     it('exempts test files from the import boundary', () => {
         const messages = lint("import { x } from '@/modules/users/composables/use-thing';", 'src/app.test.ts');
@@ -43,13 +72,58 @@ describe('preset config', () => {
     });
 
     it('applies the feature-module contract only under modules/', () => {
-        const outside = lint('export const AUTH_ROUTES = {} as const;', 'src/config/routes.ts');
-        const inside = lint(
-            "export const authModule: ModuleDefinition = { name: 'wrong' };",
-            'src/modules/auth/module.ts',
-        );
+        expect(lint('export const AUTH_ROUTES = {} as const;', 'src/config/routes.ts')).toEqual([]);
+    });
 
-        expect(outside).toEqual([]);
-        expect(ruleIds(inside)).toContain('@sinemacula/web-core/module-name-matches-folder');
+    it('parses TypeScript-only syntax in .ts files', () => {
+        const code = "import type { Foo } from './foo';\nexport const value = { a: 1 } satisfies Foo;";
+
+        expect(lint(code, 'src/app.ts')).toEqual([]);
+    });
+
+    it('parses generic TypeScript single-file components', () => {
+        const code = [
+            '<script setup lang="ts" generic="T extends string">',
+            'defineProps<{ a: T }>();',
+            'const o = { snake_key: 1 };',
+            '</script>',
+        ].join('\n');
+
+        expect(ruleIds(lint(code, 'src/components/item-list.vue'))).toEqual([
+            '@sinemacula/web-core/no-snake-case-keys',
+        ]);
+    });
+});
+
+describe('preset in a flat config', () => {
+    const eslint = new ESLint({
+        overrideConfigFile: true,
+        overrideConfig: [...tseslint.configs.recommended, ...config],
+    });
+
+    /** Lint source through the ESLint class as though it lived at the given path. */
+    async function lintText(code, filePath) {
+        const [result] = await eslint.lintText(code, { filePath });
+
+        return ruleIds(result.messages);
+    }
+
+    it('reports web-core rules after another preset', async () => {
+        const names = "export const AUTH_ROUTE_NAMES = { login: 'login' } as const;";
+        const component =
+            '<script setup lang="ts">\nimport { x } from \'@/modules/users/composables/use-thing\';\nx();\n</script>';
+
+        expect(await lintText(names, 'src/modules/auth/route-names.ts')).toEqual([
+            '@sinemacula/web-core/route-name-namespacing',
+        ]);
+        expect(await lintText(component, 'src/App.vue')).toEqual(['@sinemacula/web-core/module-import-boundary']);
+    });
+
+    it('passes conforming sources', async () => {
+        const names = "export const AUTH_ROUTE_NAMES = { login: 'auth.login' } as const;";
+        const component = '<script setup lang="ts">\nimport { x } from \'@/modules/users\';\nx();\n</script>';
+
+        expect(await lintText(names, 'src/modules/auth/route-names.ts')).toEqual([]);
+        expect(await lintText(component, 'src/App.vue')).toEqual([]);
     });
 });

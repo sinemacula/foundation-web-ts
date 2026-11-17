@@ -91,6 +91,16 @@ ruleTester.run('module-name-matches-folder', rule, {
             filename: 'src/modules/auth/module.ts',
             code: "export const authModule: ModuleDefinition = { [dynamic]: 1, 'name': 'auth' };",
         },
+        // Other keys, quoted or not, are never mistaken for `name`.
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule: ModuleDefinition = { label: 'Auth', 'title': 'x', name: 'auth' };",
+        },
+        // A nested module tree is matched against its innermost folder.
+        {
+            filename: 'src/modules/admin/modules/users/module.ts',
+            code: "export const usersModule: ModuleDefinition = { name: 'users' };",
+        },
     ],
     invalid: [
         {
@@ -106,6 +116,50 @@ ruleTester.run('module-name-matches-folder', rule, {
         // Backslash (Windows) paths are normalised before the folder is read.
         {
             filename: 'src\\modules\\auth\\module.ts',
+            code: "export const authModule: ModuleDefinition = { name: 'login' };",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        // The name is found after other properties, and under a quoted key.
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule: ModuleDefinition = { routes: authRoutes, name: 'login' };",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule: ModuleDefinition = { 'name': 'login' };",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        // Computed static keys and asserted or template values are static.
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule: ModuleDefinition = { ['name']: 'login' };",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule: ModuleDefinition = { name: 'login' as const };",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: 'export const authModule: ModuleDefinition = { name: `login` };',
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        // The type is read at any wrapper layer, through a frozen object.
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule = ({ name: 'login' } satisfies ModuleDefinition) as const;",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        {
+            filename: 'src/modules/auth/module.ts',
+            code: "export const authModule = Object.freeze({ name: 'login' } satisfies ModuleDefinition);",
+            errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
+        },
+        // A `.tsx` module definition is a contract file too.
+        {
+            filename: 'src/modules/auth/module.tsx',
             code: "export const authModule: ModuleDefinition = { name: 'login' };",
             errors: [{ messageId: 'mismatch', data: { folder: 'auth', name: 'login' } }],
         },

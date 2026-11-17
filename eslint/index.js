@@ -43,14 +43,9 @@ export default [
         },
         rules: CONVENTIONS,
     },
+    // A subset of TS_FILES, so the block above supplies the plugin and parser.
     {
         files: MODULE_TS_FILES,
-        plugins: {
-            '@sinemacula/web-core': plugin,
-        },
-        languageOptions: {
-            parser: tseslint.parser,
-        },
         rules: {
             '@sinemacula/web-core/module-name-matches-folder': 'error',
             '@sinemacula/web-core/module-export-names': 'error',

@@ -23,8 +23,18 @@ ruleTester.run('no-snake-case-keys', rule, {
         { filename: 'src/http/client.ts', code: 'const o = { [refresh_token]: 1 };' },
         // A non-string (numeric) key is not a snake_case key.
         { filename: 'src/http/client.ts', code: 'const o = { 42: 1 };' },
+        // Leading-underscore markers and mixed case are not snake_case.
+        { filename: 'src/http/client.ts', code: 'const o = { __v_skip: true, foo_Bar: 1, foo_barBaz: 2 };' },
         // Test files are exempt.
         { filename: 'src/http/client.test.ts', code: 'const o = { refresh_token: 1 };' },
+        { filename: 'src/http/client.test.mts', code: 'const o = { refresh_token: 1 };' },
+        { filename: 'src/http/client.spec.cts', code: 'const o = { refresh_token: 1 };' },
+        { filename: 'src\\http\\__tests__\\fixtures.ts', code: 'const o = { refresh_token: 1 };' },
+        // Type tests, mocks and test-only helper folders are test code too.
+        { filename: 'src/http/client.test-d.ts', code: 'const o = { refresh_token: 1 };' },
+        { filename: 'src/http/__mocks__/client.ts', code: 'const o = { refresh_token: 1 };' },
+        { filename: 'src/session/test-support/payloads.ts', code: 'const o = { refresh_token: 1 };' },
+        { filename: 'test-support/payloads.ts', code: 'const o = { refresh_token: 1 };' },
     ],
     invalid: [
         {
@@ -37,10 +47,26 @@ ruleTester.run('no-snake-case-keys', rule, {
             code: "const o = { 'created_at': 1 };",
             errors: [{ messageId: 'snake', data: { key: 'created_at' } }],
         },
+        {
+            filename: 'src/http/client.ts',
+            code: 'const o = { token_expires_at: 1 };',
+            errors: [{ messageId: 'snake', data: { key: 'token_expires_at' } }],
+        },
         // A computed string-literal key.
         {
             filename: 'src/http/client.ts',
             code: "const o = { ['refresh_token']: 1 };",
+            errors: [{ messageId: 'snake', data: { key: 'refresh_token' } }],
+        },
+        {
+            filename: 'src/http/client.ts',
+            code: 'const o = { [`refresh_token`]: 1 };',
+            errors: [{ messageId: 'snake', data: { key: 'refresh_token' } }],
+        },
+        // Only whole folder names mark test-only helpers.
+        {
+            filename: 'src/my-test-support/payloads.ts',
+            code: 'const o = { refresh_token: 1 };',
             errors: [{ messageId: 'snake', data: { key: 'refresh_token' } }],
         },
     ],
