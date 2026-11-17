@@ -243,10 +243,12 @@ export class MockApi {
 
     /**
      * Serve POST auth/refresh, redeeming each refresh token once for a new pair
-     * and refusing any other.
+     * and refusing any other, each once `held` has settled.
      */
-    async refreshRotates(): Promise<void> {
-        await this.endpoint('POST', '/auth/refresh', request => {
+    async refreshRotates(held: Promise<void> = Promise.resolve()): Promise<void> {
+        await this.endpoint('POST', '/auth/refresh', async request => {
+            await held;
+
             const refreshToken = this.refreshTokenIn(request);
 
             if (refreshToken === null) {
@@ -441,7 +443,7 @@ export class MockApi {
     private async endpoint(
         method: string,
         pathname: string,
-        handle: (request: RecordedRequest) => Reply,
+        handle: (request: RecordedRequest) => Reply | Promise<Reply>,
     ): Promise<void> {
         await this.context.route(
             url => url.origin === API_ORIGIN && url.pathname === pathname,
@@ -461,7 +463,7 @@ export class MockApi {
 
                 this.requests.push(recorded);
 
-                const reply = handle(recorded);
+                const reply = await handle(recorded);
 
                 if (reply.status >= 400) {
                     this.guard.expectFailedResource(request.url(), reply.status);
