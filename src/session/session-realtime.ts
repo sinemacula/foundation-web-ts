@@ -7,7 +7,8 @@
  * connection for good when the session is gone or cannot be refreshed. The
  * session module uses the same policy to connect the installed realtime
  * connection while a session is held, since a connection never runs the
- * reconnect hook before its first or a manual connect.
+ * reconnect hook before its first or a manual connect, and stops it whenever a
+ * refresh on any path ends the session's renewal.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -72,7 +73,11 @@ export function sessionReconnectGuard(connection: () => RealtimeConnection = rea
  * the session ends, starting from the store's current state. Connecting applies
  * the reconnect guard's policy and only the latest transition acts. A session
  * replaced by another is reconnected on the new one; a skipped connect is
- * retried with backoff, and at once when a rotation renews the session.
+ * retried with backoff, and at once when a rotation renews the session. A
+ * refresh on any path that is refused, returns to pending authentication or
+ * fails disconnects the connection and abandons pending work, leaving the
+ * session as the refresh left it; the connection stays down until the session
+ * is replaced.
  *
  * @param connection - the realtime connection to drive
  * @param store - the hydrated session store
@@ -80,7 +85,11 @@ export function sessionReconnectGuard(connection: () => RealtimeConnection = rea
  * this follower opened
  */
 export function followSession(connection: RealtimeConnection, store: SessionStore): ModuleTeardown {
-    const follower = new SessionFollower(connection, store, sessionContext().schedule);
+    const { coordinator, schedule } = sessionContext();
+    const follower = new SessionFollower(connection, store, schedule);
+    const unsubscribe = coordinator.onTerminal(() => {
+        follower.halt();
+    });
 
     if (store.isAuthenticated) {
         void follower.reconcile();
@@ -92,6 +101,7 @@ export function followSession(connection: RealtimeConnection, store: SessionStor
 
     return () => {
         unwatch();
+        unsubscribe();
         follower.dispose();
     };
 }
@@ -109,7 +119,7 @@ class SessionFollower {
     /** Schedules the retries of a skipped connect. */
     readonly #schedule: ScheduleTask;
 
-    /** Bumped by every reconciliation and the disposal; only the latest acts. */
+    /** Bumped by every reconciliation, halt and the disposal; only the latest acts. */
     #generation = 0;
 
     /**
@@ -184,6 +194,16 @@ class SessionFollower {
         } else {
             this.#open();
         }
+    }
+
+    /**
+     * Stop the connection after a refresh ended the session's renewal,
+     * abandoning pending work until the session is replaced.
+     */
+    halt(): void {
+        this.#abandon();
+        this.#skipped = false;
+        this.#disconnect();
     }
 
     /**

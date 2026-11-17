@@ -9,7 +9,6 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
-import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
 import { RealtimeError } from '@sinemacula/foundation/realtime/realtime-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { RefreshOutcome, RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
@@ -18,8 +17,9 @@ import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installRealtime, resetWebCoreServices } from '../app/services';
 import type { ModuleTeardown } from '../module/module';
 import type { SessionContext } from './session-context';
-import { installSessionContext, resetSessionContext } from './session-context';
+import { installSessionContext, resetSessionContext, sessionContext } from './session-context';
 import { followSession, sessionReconnectGuard } from './session-realtime';
+import { SessionRefreshCoordinator } from './session-refresh-coordinator';
 import type { SessionStore } from './session-store';
 import { useSessionStore } from './session-store';
 import type { FakeSessionApi, ManualScheduler, RecordingConnection } from './test-support/session-fixtures';
@@ -251,12 +251,10 @@ describe('session realtime policy', () => {
             await hydrated(NOW);
             resetSessionContext();
             install({
-                coordinator: new TokenRefreshCoordinator<RefreshOutcome>({
-                    refresh: async () => {
-                        await useSessionStore().clearLocal();
+                coordinator: new SessionRefreshCoordinator(async (): Promise<RefreshOutcome> => {
+                    await useSessionStore().clearLocal();
 
-                        return { kind: 'refreshed' };
-                    },
+                    return { kind: 'refreshed' };
                 }),
             });
 
@@ -268,9 +266,7 @@ describe('session realtime policy', () => {
             await hydrated(NOW);
             resetSessionContext();
             install({
-                coordinator: new TokenRefreshCoordinator<RefreshOutcome>({
-                    refresh: () => Promise.resolve({ kind: 'refreshed' }),
-                }),
+                coordinator: new SessionRefreshCoordinator(() => Promise.resolve({ kind: 'refreshed' })),
             });
 
             await expect(check()).resolves.toBe(true);
@@ -458,6 +454,87 @@ describe('session realtime policy', () => {
                 expect(scheduler.delays()).toStrictEqual([]);
             });
             expect(gateway.refresh).toHaveBeenCalledTimes(1);
+        });
+
+        it.each<[string, RefreshResult, boolean]>([
+            ['refused', { kind: 'rejected', error: new HttpError(401, 'refused') }, false],
+            [
+                'returned to pending authentication',
+                { kind: 'interactionRequired', pending: { credential: 'p', requires: ['mfa'] } },
+                false,
+            ],
+            ['failed', { kind: 'failed', error: new HttpError(422, 'malformed') }, true],
+        ])(
+            'stops an open connection and its pending retry when a refresh elsewhere is %s',
+            async (_label, result, kept) => {
+                const store = await hydrated(NOW);
+
+                connection.state = 'open';
+                gateway.refresh
+                    .mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') })
+                    .mockResolvedValueOnce(result);
+                follow(store);
+                await vi.waitFor(() => {
+                    expect(scheduler.delays()).toStrictEqual([1_000]);
+                });
+
+                await sessionContext().coordinator.refresh();
+                await settle();
+
+                expect(connection.state).toBe('closed');
+                expect(connection.calls).not.toContain('connect');
+                expect(scheduler.delays()).toStrictEqual([]);
+                expect(store.isAuthenticated).toBe(kept);
+            },
+        );
+
+        it('keeps a connection stopped by a failed refresh down through a later rotation', async () => {
+            const store = await hydrated(NOW);
+
+            gateway.refresh
+                .mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') })
+                .mockResolvedValueOnce({ kind: 'failed', error: new HttpError(422, 'malformed') })
+                .mockResolvedValueOnce({
+                    kind: 'refreshed',
+                    tokens: tokens({ accessToken: 'rotated', expiresAtEpochMs: null }),
+                });
+            follow(store);
+            await vi.waitFor(() => {
+                expect(scheduler.delays()).toStrictEqual([1_000]);
+            });
+
+            await sessionContext().coordinator.refresh();
+            await sessionContext().coordinator.refresh();
+            await settle();
+
+            expect(store.accessToken).toBe('rotated');
+            expect(connection.calls).toStrictEqual(['disconnect']);
+        });
+
+        it('disconnects once when its own refresh fails', async () => {
+            const store = await hydrated(NOW);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error: new HttpError(422, 'malformed') });
+            follow(store);
+            await vi.waitFor(() => {
+                expect(gateway.refresh).toHaveBeenCalledTimes(1);
+            });
+            await settle();
+
+            expect(connection.calls).toStrictEqual(['disconnect']);
+            expect(store.isAuthenticated).toBe(true);
+        });
+
+        it('ignores refresh failures once torn down', async () => {
+            const store = await hydrated(null);
+
+            connection.state = 'open';
+            follow(store)();
+            gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error: new HttpError(422, 'malformed') });
+
+            await sessionContext().coordinator.refresh();
+
+            expect(connection.calls).toStrictEqual([]);
         });
 
         it('disconnects the connection it connected once torn down', async () => {

@@ -543,6 +543,27 @@ describe('session lifecycle', () => {
             expect(target.store().isAuthenticated).toBe(false);
         });
 
+        it('disconnects an open connection when the proactive refresh fails, keeping the session', async () => {
+            const connection = createRecordingConnection();
+            const failure = new HttpError(422, 'malformed');
+            const target = expiring(1_000_000 + 120_000, {}, { realtime: connection });
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error: failure });
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            scheduler.flush();
+
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect', 'disconnect']);
+            });
+            expect(target.observability.errors).toStrictEqual([failure]);
+            expect(target.store().isAuthenticated).toBe(true);
+            expect(scheduler.delays()).toStrictEqual([]);
+        });
+
         it('arms nothing when disabled', async () => {
             await expiring(1_000_000 + 1_000, { proactiveRefresh: false }).boot();
 
@@ -576,6 +597,24 @@ describe('session lifecycle', () => {
             await harness({}, { realtime: connection }).boot();
 
             expect(connection.calls).toStrictEqual([]);
+        });
+
+        it('disconnects an open connection when a 401 refresh fails, keeping the session', async () => {
+            const connection = createRecordingConnection();
+            const failure = new HttpError(422, 'malformed');
+            const target = persisted({}, { realtime: connection });
+
+            await target.boot();
+            await vi.waitFor(() => {
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error: failure });
+
+            await expect(target.contributions.onUnauthorized?.()).resolves.toBe(false);
+            expect(connection.calls).toStrictEqual(['connect', 'disconnect']);
+            expect(target.observability.errors).toStrictEqual([failure]);
+            expect(target.store().isAuthenticated).toBe(true);
         });
 
         it('leaves the realtime connection alone when it does not follow the session', async () => {

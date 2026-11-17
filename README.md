@@ -283,8 +283,8 @@ which the boot guarantees happens before mount:
 `createSessionModule` (`src/session/create-session-module.ts`) returns a plain `ModuleDefinition` - session
 support is opt-in and self-installs through the module contract, with no preset special case. At register it
 installs the session context and contributes the bearer-token interceptor plus the single unauthorized
-handler (a `TokenRefreshCoordinator`, so the reactive 401 path and the proactive refresh timer can never
-race). At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor,
+handler (a `SessionRefreshCoordinator`, so the reactive 401 path, the proactive refresh timer and realtime
+reconnects can never race). At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor,
 refreshes and the boot hook all wait for that hydration, so the first navigation never sees a half-loaded
 session. At boot it wires the session-loss redirect (login route plus the sanitised current path under the
 `redirect` query key), cross-tab mirroring, identity fan-out to the reporting, analytics and feature-flag
@@ -317,7 +317,9 @@ an application wanting a prefix sets it in the keys themselves so event keys sti
 With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when
 another session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens),
 retries with backoff a connect skipped while the token could not be refreshed, and disconnects when the session
-is lost, or at teardown when it opened the connection. Proactive refreshes and retries run on the platform
+is lost, or at teardown when it opened the connection. A refresh on any path that is refused, returns to pending
+authentication or fails disconnects it and cancels pending retries, leaving the session as the refresh left
+it; it stays down until the session is replaced. Proactive refreshes and retries run on the platform
 `schedule`. Pass `sessionReconnectGuard()` from
 `src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
 token first and stops for good when the session ends.

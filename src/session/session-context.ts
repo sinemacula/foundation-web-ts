@@ -13,14 +13,13 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
 import type { PasswordCredentials } from '@sinemacula/foundation/session/session-api';
 import type { SessionCoreContext } from '@sinemacula/foundation/session/session-core';
-import type { RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { createServiceHolder } from '@sinemacula/foundation/support/service-holder';
 import type { ScheduleTask } from '../module/module';
 import type { SessionRoutes } from './create-session-module';
+import type { SessionRefreshCoordinator } from './session-refresh-coordinator';
 
 /**
  * The resolved collaborators shared across the session module's units.
@@ -33,8 +32,8 @@ export interface SessionContext<U extends SessionUser = SessionUser, C = Passwor
     /** The pinia store id the session store registers under. */
     readonly storeId: string;
 
-    /** The single refresh authority every refresh path (401 retry, proactive timer, realtime reconnect) routes through, collapsing concurrent attempts into one. */
-    readonly coordinator: TokenRefreshCoordinator<RefreshOutcome>;
+    /** The single refresh authority every refresh path (401 retry, proactive timer, realtime reconnect) routes through, collapsing concurrent attempts into one and announcing those that end renewal. */
+    readonly coordinator: SessionRefreshCoordinator;
 
     /** Settles once the persisted session has been hydrated into the store, starting hydration on first call; never rejects. */
     readonly ready: () => Promise<void>;

@@ -37,6 +37,7 @@
         "./session/redirect": "./src/session/redirect.ts",
         "./session/session-context": "./src/session/session-context.ts",
         "./session/session-realtime": "./src/session/session-realtime.ts",
+        "./session/session-refresh-coordinator": "./src/session/session-refresh-coordinator.ts",
         "./session/session-store": "./src/session/session-store.ts",
         "./storage/strict-web-storage": "./src/storage/strict-web-storage.ts",
         "./storage/web-locks-session-lock": "./src/storage/web-locks-session-lock.ts"

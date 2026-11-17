@@ -13,7 +13,6 @@
 import type { Mock } from 'vitest';
 import { vi } from 'vitest';
 
-import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
 import type { RealtimeConnection, RealtimeState } from '@sinemacula/foundation/realtime/realtime-connection';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
@@ -24,6 +23,7 @@ import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { ScheduleTask } from '../../module/module';
 import { scheduleOnTimers } from '../../module/module';
 import type { SessionContext } from '../session-context';
+import { SessionRefreshCoordinator } from '../session-refresh-coordinator';
 import { useSessionStore } from '../session-store';
 
 /** The default key the session snapshot persists under. */
@@ -279,7 +279,7 @@ export function createTestSessionContext(overrides: Partial<SessionContext> = {}
         device: () => ({ uuid: 'device-uuid', os: 'WEB' }),
         routes: { login: { name: 'auth.login' }, loginPath: '/login', home: '/', forbidden: '/forbidden' },
         storeId: 'auth',
-        coordinator: new TokenRefreshCoordinator({ refresh: () => useSessionStore().refresh() }),
+        coordinator: new SessionRefreshCoordinator(() => useSessionStore().refresh()),
         ready: () => {
             hydration ??= useSessionStore().hydrate();
 

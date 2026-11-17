@@ -17,12 +17,10 @@ import type { RouteLocationRaw } from 'vue-router';
 
 import { createBearerTokenInterceptor } from '@sinemacula/foundation/http/bearer-token-interceptor';
 import type { HttpClient } from '@sinemacula/foundation/http/http-client';
-import { TokenRefreshCoordinator } from '@sinemacula/foundation/http/token-refresh-coordinator';
 import { createDefaultSessionApi } from '@sinemacula/foundation/session/default-session-api';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { PasswordCredentials, SessionApi, SessionDevice } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
-import type { RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionRoutes as BaseSessionRoutes } from '@sinemacula/foundation/session/session-routes';
 import type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
@@ -35,6 +33,7 @@ import { StrictWebStorage } from '../storage/strict-web-storage';
 import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
 import { installSessionContext, sessionContext } from './session-context';
 import { bootSessionLifecycle } from './session-lifecycle';
+import { SessionRefreshCoordinator } from './session-refresh-coordinator';
 import { useSessionStore } from './session-store';
 
 export type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
@@ -304,19 +303,17 @@ function createReadiness(pinia: Pinia): () => Promise<void> {
  * @param ready - the session readiness
  * @returns the refresh coordinator
  */
-function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): TokenRefreshCoordinator<RefreshOutcome> {
-    return new TokenRefreshCoordinator<RefreshOutcome>({
-        refresh: async () => {
-            await ready();
+function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): SessionRefreshCoordinator {
+    return new SessionRefreshCoordinator(async () => {
+        await ready();
 
-            const outcome = await useSessionStore(pinia).refresh();
+        const outcome = await useSessionStore(pinia).refresh();
 
-            if (outcome.kind === 'failed') {
-                reporting().captureError(outcome.error);
-            }
+        if (outcome.kind === 'failed') {
+            reporting().captureError(outcome.error);
+        }
 
-            return outcome;
-        },
+        return outcome;
     });
 }
 
