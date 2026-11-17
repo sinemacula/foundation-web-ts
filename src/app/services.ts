@@ -1,10 +1,5 @@
 /**
- * Web application service singletons (composition root).
- *
- * Presents the unified web service surface: the base singletons from
- * `@sinemacula/foundation` plus the web-only locale switcher, with the
- * notification accessors re-narrowed to their concrete reactive services so the
- * hosts can read the reactive queue. `resetWebCoreServices` clears base + web.
+ * Web service singletons: the foundation surface plus the locale switcher.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -20,7 +15,7 @@ import type { LocaleSwitcher } from '../i18n/application-i18n';
 import type { ConfirmService } from '../notifications/confirm-service';
 import type { ToastService } from '../notifications/toast-service';
 
-// biome-ignore lint/performance/noBarrelFile: the web composition root re-exports the base composition-root surface (a deliberate seam, not a convenience barrel)
+// biome-ignore lint/performance/noBarrelFile: the web composition root deliberately re-exports the base surface
 export {
     analytics,
     api,
@@ -46,9 +41,7 @@ export {
 } from '@sinemacula/foundation/app/services';
 
 /**
- * The active toast service, narrowed to the concrete reactive service.
- *
- * @returns the active toast service
+ * The active toast service, narrowed so hosts can read its reactive queue.
  */
 export function toasts(): ToastService {
     return baseToasts() as ToastService;
@@ -57,8 +50,6 @@ export function toasts(): ToastService {
 /**
  * The active confirmation dialog service, narrowed to the concrete reactive
  * service.
- *
- * @returns the active confirm service
  */
 export function confirmDialogs(): ConfirmService {
     return baseConfirmDialogs() as ConfirmService;
@@ -67,9 +58,7 @@ export function confirmDialogs(): ConfirmService {
 const localeSwitcherHolder = createServiceHolder<LocaleSwitcher>('locale switcher');
 
 /**
- * Install the locale switcher. Called once at boot.
- *
- * @param instance - the locale switcher to install
+ * Install the locale switcher; called once at boot.
  */
 export function installLocaleSwitcher(instance: LocaleSwitcher): void {
     localeSwitcherHolder.install(instance);
@@ -78,7 +67,6 @@ export function installLocaleSwitcher(instance: LocaleSwitcher): void {
 /**
  * The active locale switcher.
  *
- * @returns the active locale switcher
  * @throws Error when accessed before {@link installLocaleSwitcher} has been
  * called
  */

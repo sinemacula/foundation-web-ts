@@ -18,15 +18,8 @@ const THROW_MESSAGE =
     'provide monitors.updates.toastKey or monitors.updates.onUpdate.';
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping non-camelCase environment keys out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a string record from pairs, keeping non-camelCase environment keys out
+ * of object-literal key positions that the naming rules inspect.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
@@ -220,14 +213,6 @@ describe('wireMonitors update monitoring', () => {
         connectivity?.stop();
     });
 
-    it('stays off when enabled is explicitly false', () => {
-        const { options } = makeHarness({ updates: { enabled: false, toastKey: 'app.updates.available' } });
-
-        const { updates } = wireMonitors(options);
-
-        expect(updates).toBeNull();
-    });
-
     it('passes the frozen settings to an enabled predicate', () => {
         const enabled = vi.fn((settings: Readonly<MonitorWiringSettings>) => settings.app.version === '1.0.0');
         const { options, settings } = makeHarness({ updates: { enabled, toastKey: 'app.updates.available' } });
@@ -242,16 +227,22 @@ describe('wireMonitors update monitoring', () => {
         connectivity?.stop();
     });
 
-    it('stays off when an enabled predicate returns false', () => {
-        const { options } = makeHarness({ updates: { enabled: () => false, toastKey: 'app.updates.available' } });
+    it.each([
+        ['explicitly false', false],
+        ['a predicate returning false', () => false],
+    ])('stays off when enabled is %s', (_label, enabled) => {
+        const { options } = makeHarness({ updates: { enabled, toastKey: 'app.updates.available' } });
 
         const { updates } = wireMonitors(options);
 
         expect(updates).toBeNull();
     });
 
-    it('throws when enabled is explicitly true with no way to surface updates', () => {
-        const { options } = makeHarness({ updates: { enabled: true } });
+    it.each([
+        ['explicitly true', true],
+        ['a predicate returning true', () => true],
+    ])('throws when enabled is %s with no way to surface updates', (_label, enabled) => {
+        const { options } = makeHarness({ updates: { enabled } });
 
         expect(() => wireMonitors(options)).toThrowError(FoundationBootError);
         expect(() => wireMonitors(options)).toThrow(THROW_MESSAGE);
@@ -266,12 +257,6 @@ describe('wireMonitors update monitoring', () => {
         } catch (error) {
             expect((error as Error).name).toBe('FoundationBootError');
         }
-    });
-
-    it('throws when an enabled predicate returns true with no way to surface updates', () => {
-        const { options } = makeHarness({ updates: { enabled: () => true } });
-
-        expect(() => wireMonitors(options)).toThrow(THROW_MESSAGE);
     });
 
     it('does not throw when an enabled predicate returns false with no way to surface updates', () => {

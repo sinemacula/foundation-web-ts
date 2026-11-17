@@ -1,11 +1,6 @@
 /**
  * Colour-scheme wiring for the bootstrap preset.
  *
- * Builds the colour-scheme service from the configured default preference and
- * the resolved platform seams (a matchMedia source and a DOM applier), applies
- * the resolved scheme, tracks OS changes while on system, and installs the
- * service singleton so later boot phases and components share it.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -21,7 +16,7 @@ import { installColorScheme } from './services';
  * The configuration slice the colour-scheme wiring reads.
  */
 export interface ColorSchemeWiringConfig {
-    /** Colour-scheme identity: the default preference. */
+    /** Colour-scheme settings. */
     readonly colorScheme: {
         /** The preference applied before any stored choice resolves. */
         readonly default: ColorSchemePreference;
@@ -52,13 +47,7 @@ export interface WireColorSchemeOptions {
 }
 
 /**
- * Wire the application colour scheme.
- *
- * Resolves the preference against the OS, applies it, tracks OS changes while
- * the preference is `system`, and installs the colour-scheme singleton.
- *
- * @param options - the configuration slice, storage and platform seams
- * @returns the installed colour-scheme service
+ * Start the colour-scheme service and install it as the singleton.
  */
 export function wireColorScheme(options: WireColorSchemeOptions): ColorSchemeService {
     const config = options.config;

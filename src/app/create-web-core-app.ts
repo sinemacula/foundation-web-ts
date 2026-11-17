@@ -1,18 +1,6 @@
 /**
  * Bootstrap preset assembling a complete web application from the kernel.
  *
- * `createWebCoreApp` runs a fixed sequence of boot phases over the kernel's
- * primitives: it validates the module registry, creates the Vue application,
- * wires the colour scheme, delegates the platform-agnostic core phases to
- * `bootFoundationCore` (runtime environment through HTTP client, with module
- * registration bridged through its contributions callback), then runs stores,
- * i18n, routing, realtime, module boot, chunk recovery and the release
- * monitors. Every subsystem is overridable through the options and every
- * platform dependency is injectable, so applications boot with a declarative
- * options object and tests drive the full sequence through seams. The returned
- * handle mounts the application after the router is ready and disposes
- * everything the boot installed in reverse order.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -96,13 +84,10 @@ type BootPhase = (typeof BOOT_PHASES)[number];
 let phaseRecorder: ((phase: BootPhase) => void) | null = null;
 
 /**
- * Test-only: observe the name of every executed boot phase, in order.
- *
- * Not part of the supported public surface: the phase names and their order are
- * internal and may change without notice.
+ * Test-only: observe each executed boot phase name, in order. Phase names and
+ * their order are internal and may change without notice.
  *
  * @internal
- * @param recorder - receives each phase name as the boot reaches it
  * @returns a remover that detaches the recorder
  */
 export function observeBootPhases(recorder: (phase: string) => void): () => void {
@@ -114,9 +99,7 @@ export function observeBootPhases(recorder: (phase: string) => void): () => void
 }
 
 /**
- * Report a phase to the installed test recorder, when one is attached.
- *
- * @param phase - the phase being entered
+ * Report a phase to the test recorder, when one is attached.
  */
 function recordPhase(phase: BootPhase): void {
     phaseRecorder?.(phase);
@@ -126,13 +109,13 @@ function recordPhase(phase: BootPhase): void {
  * Configuration construction options.
  */
 export interface WebCoreConfigOptions<T extends FoundationConfig> {
-    /** Caller-owned environment construction - the only place build-time variables may appear. Receives the fetched runtime document; throw to abort boot. Pair with `createWebEnvironment` for the standard dev-chain and production required-keys behaviour. */
+    /** Builds the environment from the fetched runtime document; the only place build-time variables may appear. Throw to abort boot. Pair with `createWebEnvironment` for the standard dev-chain and production required-keys behaviour. */
     readonly createEnvironment: (runtime: Readonly<Record<string, string>>) => Environment;
 
     /** Configuration definition over the environment; the result is deep-frozen. */
     readonly define: (environment: Environment) => T;
 
-    /** One URL for both the runtime-environment fetch and the update monitor's default poll target. Default '/runtime-env.json'. */
+    /** The runtime-environment URL, also the update monitor's default poll target. Default '/runtime-env.json'. */
     readonly runtimeUrl?: string;
 }
 
@@ -166,7 +149,7 @@ export interface WebCoreI18nOptions {
     /** The storage key the locale preference persists under. Default 'locale'. */
     readonly localeStorageKey?: string;
 
-    /** Behaviour when a module name shadows a shared top-level translation key. Default 'error'; 'module-wins' restores the shadowing merge. */
+    /** Behaviour when a module name shadows a shared top-level translation key. Default 'error' throws; 'module-wins' lets module messages shadow the key. */
     readonly duplicateNamespaceStrategy?: 'error' | 'module-wins';
 }
 
@@ -307,7 +290,7 @@ export interface WebCoreAppOptions<T extends FoundationConfig> {
     /** Feature-flag provider factory; defaults to the config-driven static adapter. */
     readonly featureFlags?: (settings: Readonly<T>) => FeatureFlags;
 
-    /** Opt-in realtime connection, installed into the realtime holder before the modules boot, handed to them unconnected, and disconnected on dispose. No default - the kernel knows no endpoint. */
+    /** Opt-in realtime connection, installed before the modules boot, handed to them unconnected and disconnected on dispose. */
     readonly realtime?: (settings: Readonly<T>) => RealtimeConnection;
 
     /** State-only notification services. */
@@ -393,19 +376,16 @@ export interface WebCoreApp<T extends FoundationConfig> {
     };
 
     /**
-     * Await router readiness, then mount - initialisation completes strictly
-     * before any component renders.
+     * Mount once the router is ready, so initial navigation resolves before any
+     * component renders.
      *
      * @param selector - the mount target; default '#app'
      */
     start(selector?: string | Element): Promise<void>;
 
     /**
-     * Idempotently tear down everything the boot installed, in reverse:
-     * monitors, realtime disconnect, chunk recovery, module boot teardowns,
-     * store disposals, then the page-tracking, global-error-handling and
-     * title-sync uninstalls. Service holders are left installed;
-     * `resetWebCoreServices` is the separate test affordance.
+     * Idempotently tear down everything the boot installed, in reverse order.
+     * Service holders stay installed; `resetWebCoreServices` clears them.
      */
     dispose(): void;
 }
@@ -505,8 +485,6 @@ interface ReleaseLayer {
 /**
  * Boot a web application through the kernel's phase sequence.
  *
- * @param options - the application's modules, configuration and overrides
- * @returns the assembled application handle, ready to start
  * @throws {ModuleRegistryError} when the module list fails validation
  * @throws {FoundationBootError} when the monitor options cannot work
  */
@@ -525,15 +503,9 @@ export async function createWebCoreApp<T extends FoundationConfig>(
 }
 
 /**
- * Run the web-owned head phases - module registry, Vue application and colour
- * scheme - then delegate the platform-agnostic core to `bootFoundationCore`,
- * bridging the register-modules phase through its contributions callback so
- * pinia and the registry never cross the foundation boundary.
- *
- * @param options - the application's modules, configuration and overrides
- * @param platform - the resolved platform seams
- * @param runtimeUrl - the runtime document URL
- * @returns the kernel services and application feeding the later phases
+ * Run the web-owned head phases, then the foundation core, bridging module
+ * registration through its contributions callback so pinia and the registry
+ * never cross the foundation boundary.
  */
 async function bootFoundation<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
@@ -584,13 +556,7 @@ async function bootFoundation<T extends FoundationConfig>(
 }
 
 /**
- * Run the module phases: instantiate eager stores and wire
- * internationalisation.
- *
- * @param options - the application's modules, configuration and overrides
- * @param platform - the resolved platform seams
- * @param foundation - the services and application from the foundation phases
- * @returns the eager store handles and locale wiring
+ * Run the module phases: instantiate eager stores and wire i18n.
  */
 async function bootModuleLayer<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
@@ -615,16 +581,8 @@ async function bootModuleLayer<T extends FoundationConfig>(
 }
 
 /**
- * Run the app-integration phases: wire the router, install global error
- * handling and page tracking, install the realtime connection, then boot the
- * modules with it.
- *
- * @param options - the application's modules, configuration and overrides
- * @param platform - the resolved platform seams
- * @param foundation - the services and application from the foundation phases
- * @param moduleLayer - the HTTP client and locale wiring from the module phases
- * @returns the router, the realtime connection and the teardown handles
- * installed by these phases
+ * Run the app-integration phases: router, error handling, page tracking,
+ * realtime and module boot.
  */
 async function wireAppIntegration<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
@@ -683,15 +641,7 @@ async function wireAppIntegration<T extends FoundationConfig>(
 }
 
 /**
- * Run the release phases: wire chunk-load recovery and start the update and
- * connectivity monitors.
- *
- * @param options - the application's modules, configuration and overrides
- * @param platform - the resolved platform seams
- * @param runtimeUrl - the runtime document URL, the default monitor poll target
- * @param foundation - the services and application from the foundation phases
- * @param integration - the router wired by the app-integration phases
- * @returns the chunk-recovery teardown and monitors
+ * Run the release phases: chunk-load recovery and the release monitors.
  */
 function wireReleaseMonitors<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
@@ -721,12 +671,7 @@ function wireReleaseMonitors<T extends FoundationConfig>(
 }
 
 /**
- * Collect the services the application handle exposes from the boot phases.
- *
- * @param foundation - the services and application from the foundation phases
- * @param moduleLayer - the HTTP client, eager stores and locale wiring
- * @param integration - the router, realtime connection and teardown handles
- * @returns the services exposed on the application handle
+ * Collect the services the application handle exposes.
  */
 function buildServices<T extends FoundationConfig>(
     foundation: AppFoundation<T>,
@@ -753,12 +698,6 @@ function buildServices<T extends FoundationConfig>(
 
 /**
  * Assemble the application handle from the results of every boot phase.
- *
- * @param foundation - the services and application from the foundation phases
- * @param moduleLayer - the HTTP client, eager stores and locale wiring
- * @param integration - the router, realtime connection and teardown handles
- * @param release - the monitors and chunk-recovery teardown
- * @returns the assembled application handle, ready to start
  */
 function assembleApp<T extends FoundationConfig>(
     foundation: AppFoundation<T>,
@@ -799,16 +738,7 @@ function assembleApp<T extends FoundationConfig>(
 }
 
 /**
- * Tear down everything the boot installed, in reverse order: monitors,
- * realtime, chunk recovery, module boots, stores, then the page-tracking,
- * error-handling and title-sync uninstalls, and finally the colour-scheme
- * OS-change listener.
- *
- * @param moduleLayer - the eager store handles to dispose
- * @param integration - the realtime connection, and the module boot, page,
- * error and title teardowns
- * @param release - the monitors and chunk-recovery teardown
- * @param colorScheme - the colour-scheme service to dispose
+ * Tear down everything the boot installed, in reverse order.
  */
 function teardownApp(
     moduleLayer: ModuleLayer,
@@ -838,9 +768,6 @@ function teardownApp(
 
 /**
  * Resolve the platform seams handed to every subsystem and module hook.
- *
- * @param platform - the caller's overrides, when any were provided
- * @returns the fully-resolved platform
  */
 function resolvePlatform(platform: WebCorePlatformOptions | undefined): ResolvedPlatform {
     return {
@@ -854,11 +781,6 @@ function resolvePlatform(platform: WebCorePlatformOptions | undefined): Resolved
 
 /**
  * Wire and install the colour-scheme service.
- *
- * @param storage - the application storage adapter
- * @param platform - the resolved platform seams
- * @param options - the full boot options carrying the colour-scheme seams
- * @returns the installed colour-scheme service
  */
 function resolveColorScheme<T extends FoundationConfig>(
     storage: KeyValueStorage,
@@ -879,13 +801,6 @@ function resolveColorScheme<T extends FoundationConfig>(
 
 /**
  * Wire internationalisation and install the locale switcher.
- *
- * @param settings - the frozen application configuration
- * @param modules - the registry's ordered module list
- * @param storage - the application storage adapter
- * @param platform - the resolved platform seams
- * @param options - the full boot options carrying the i18n and locale seams
- * @returns the i18n instance and the installed locale switcher
  */
 function resolveLocale<T extends FoundationConfig>(
     settings: Readonly<T>,
@@ -912,12 +827,8 @@ function resolveLocale<T extends FoundationConfig>(
 }
 
 /**
- * Build the opt-in realtime connection and install it into the realtime holder,
- * unconnected.
- *
- * @param settings - the frozen application configuration
- * @param factory - the caller's realtime connection factory, when any
- * @returns the installed connection, or null when none was configured
+ * Build and install the opt-in realtime connection, unconnected; null when none
+ * is configured.
  */
 function resolveRealtime<T extends FoundationConfig>(
     settings: Readonly<T>,
@@ -936,13 +847,6 @@ function resolveRealtime<T extends FoundationConfig>(
 
 /**
  * Wire chunk-load-failure recovery onto the router.
- *
- * @param router - the application router
- * @param storage - the application storage adapter
- * @param reporter - the installed error reporter
- * @param clock - the resolved clock seam
- * @param tuning - the caller's recovery tuning, when any was provided
- * @returns the teardown removing the error handler, or null when disabled
  */
 function resolveChunkRecovery(
     router: Router,
@@ -964,12 +868,6 @@ function resolveChunkRecovery(
 
 /**
  * Wire the update and connectivity monitors.
- *
- * @param settings - the frozen application configuration
- * @param runtimeUrl - the runtime document URL, the default poll target
- * @param platform - the resolved platform seams
- * @param monitors - the caller's monitor options, when any were provided
- * @returns the started monitors, each null when disabled
  */
 function resolveMonitors<T extends FoundationConfig>(
     settings: Readonly<T>,

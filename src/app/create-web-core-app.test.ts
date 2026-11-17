@@ -74,15 +74,8 @@ const BOOT_PHASE_ORDER = [
 const EmptyComponent = defineComponent({ render: () => null });
 
 /**
- * Build a `Record<string, string>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping non-camelCase environment keys out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, string>`
+ * Build a string record from pairs, keeping non-camelCase environment keys out
+ * of object-literal key positions that the naming rules inspect.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
@@ -549,8 +542,7 @@ describe('createWebCoreApp', () => {
 
                                 return {
                                     $dispose() {
-                                        // Disposal ordering is covered
-                                        // separately.
+                                        // Disposal order is covered separately.
                                     },
                                 };
                             },

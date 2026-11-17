@@ -1,12 +1,6 @@
 /**
  * Locale wiring for the bootstrap preset.
  *
- * Builds the i18n instance, detects the active locale (stored preference, then
- * caller candidates, then the configured default), activates it through a
- * memoised module message source, and installs a runtime locale switcher built
- * over the same locale service and message source so boot-time detection and
- * later runtime switches stay consistent.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -63,7 +57,7 @@ export interface WireLocaleOptions {
     /** The storage key the locale preference persists under. Default 'locale'. */
     readonly localeStorageKey?: string;
 
-    /** Behaviour when a module name shadows a shared top-level translation key. Default 'error': activation throws naming the module and locale; 'module-wins' keeps the merge where module messages shadow the key. */
+    /** Behaviour when a module name shadows a shared top-level translation key. Default 'error' throws; 'module-wins' lets module messages shadow the key. */
     readonly duplicateNamespaceStrategy?: 'error' | 'module-wins';
 
     /** The storage the locale preference is read from and persisted to. */
@@ -88,14 +82,9 @@ export interface WiredLocale {
 }
 
 /**
- * Wire application internationalisation.
+ * Detect and activate the locale with the default as fallback, then install a
+ * switcher sharing the same locale service and message source.
  *
- * Detects the locale, activates it (loading the configured default alongside as
- * the fallback), and installs the locale switcher singleton.
- *
- * @param options - the configuration slice, modules, i18n options and platform
- * seams
- * @returns the i18n instance and the installed locale switcher
  * @throws Error when the collision strategy is 'error' and a module name equals
  * a shared top-level translation key
  */
