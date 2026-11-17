@@ -38,25 +38,44 @@ describe('useFocusTrap', () => {
         container?.remove();
     });
 
-    describe('empty container', () => {
-        beforeEach(() => {
-            container = buildContainer('');
-        });
+    describe('container with nothing tabbable', () => {
+        it('focuses the container through a temporary tabindex and keeps Tab inside', () => {
+            const trigger = buildContainer('<button id="trigger">Trigger</button>');
 
-        it('activate is a safe no-op when there are no focusable descendants', () => {
-            const el = ref<HTMLElement | null>(container);
-            const trap = useFocusTrap(el);
+            (trigger.firstElementChild as HTMLElement).focus();
+            container = buildContainer('<p>Nothing to focus</p>');
 
-            expect(() => trap.activate()).not.toThrow();
-        });
-
-        it('deactivate is a safe no-op after a no-op activate', () => {
-            const el = ref<HTMLElement | null>(container);
-            const trap = useFocusTrap(el);
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
 
             trap.activate();
 
-            expect(() => trap.deactivate()).not.toThrow();
+            expect(document.activeElement).toBe(container);
+            expect(container.getAttribute('tabindex')).toBe('-1');
+
+            const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+
+            container.dispatchEvent(event);
+
+            expect(event.defaultPrevented).toBe(true);
+
+            trap.deactivate();
+
+            expect(container.hasAttribute('tabindex')).toBe(false);
+            expect(document.activeElement?.id).toBe('trigger');
+
+            trigger.remove();
+        });
+
+        it('keeps a tabindex the container already had', () => {
+            container = buildContainer('');
+            container.setAttribute('tabindex', '0');
+
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            trap.deactivate();
+
+            expect(container.getAttribute('tabindex')).toBe('0');
         });
     });
 
@@ -178,18 +197,24 @@ describe('useFocusTrap', () => {
 
     describe('non-Tab keys', () => {
         beforeEach(() => {
-            container = buildContainer('<button id="btn">Button</button>');
+            container = buildContainer('<button id="first">First</button><button id="last">Last</button>');
         });
 
-        it('ignores non-Tab keydown events', () => {
+        it.each(['Enter', 'Escape', 'ArrowDown'])('leaves %s on the last element alone', key => {
             const el = ref<HTMLElement | null>(container);
             const trap = useFocusTrap(el);
 
             trap.activate();
+            (container.querySelector<HTMLElement>('#last') as HTMLElement).focus();
 
-            expect(() => pressKey('Enter')).not.toThrow();
-            expect(() => pressKey('Escape')).not.toThrow();
-            expect(() => pressKey('ArrowDown')).not.toThrow();
+            const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+
+            document.activeElement?.dispatchEvent(event);
+
+            expect(document.activeElement?.id).toBe('last');
+            expect(event.defaultPrevented).toBe(false);
+
+            trap.deactivate();
         });
     });
 
@@ -286,6 +311,186 @@ describe('useFocusTrap', () => {
             pressKey('Tab');
 
             expect(document.activeElement?.id).toBe(activeBeforeTab);
+        });
+    });
+
+    describe('controls that Tab cannot reach', () => {
+        beforeEach(() => {
+            container = buildContainer(`
+                <input type="hidden" name="leading" />
+                <button id="first">First</button>
+                <button id="last">Last</button>
+                <button disabled>Disabled</button>
+                <button tabindex="-1">Skipped</button>
+                <div hidden><button>Hidden</button></div>
+                <div inert><button>Inert</button></div>
+                <button style="display: none">Undisplayed</button>
+                <button style="visibility: hidden">Invisible</button>
+                <input type="hidden" name="trailing" />
+            `);
+        });
+
+        it('wraps Tab from the last reachable control to the first', () => {
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            (container.querySelector<HTMLElement>('#last') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('first');
+
+            trap.deactivate();
+        });
+
+        it('wraps Shift+Tab from the first reachable control to the last', () => {
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+
+            expect(document.activeElement?.id).toBe('first');
+
+            pressKey('Tab', true);
+
+            expect(document.activeElement?.id).toBe('last');
+
+            trap.deactivate();
+        });
+
+        it.each([
+            [false, 'first'],
+            [true, 'last'],
+        ])('moves Tab (shift %s) from a non-tabbable element back into the cycle at %s', (shiftKey, expected) => {
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            (container.querySelector<HTMLElement>('[tabindex="-1"]') as HTMLElement).focus();
+            pressKey('Tab', shiftKey);
+
+            expect(document.activeElement?.id).toBe(expected);
+
+            trap.deactivate();
+        });
+    });
+
+    describe('repeated activation', () => {
+        it('returns focus to the original trigger and leaves no listener behind', () => {
+            const trigger = buildContainer('<button id="trigger">Trigger</button>');
+
+            (trigger.firstElementChild as HTMLElement).focus();
+            container = buildContainer('<button id="a">A</button><button id="b">B</button>');
+
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            trap.activate();
+            trap.deactivate();
+
+            expect(document.activeElement?.id).toBe('trigger');
+
+            (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('b');
+
+            trigger.remove();
+        });
+
+        it('moves the trap to a replaced container', () => {
+            const trigger = buildContainer('<button id="trigger">Trigger</button>');
+            const replacement = buildContainer('<button id="c">C</button><button id="d">D</button>');
+
+            (trigger.firstElementChild as HTMLElement).focus();
+            container = buildContainer('<button id="a">A</button><button id="b">B</button>');
+
+            const el = ref<HTMLElement | null>(container);
+            const trap = useFocusTrap(el);
+
+            trap.activate();
+            el.value = replacement;
+            trap.activate();
+
+            expect(document.activeElement?.id).toBe('c');
+
+            (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('b');
+
+            (replacement.querySelector<HTMLElement>('#d') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('c');
+
+            trap.deactivate();
+
+            expect(document.activeElement?.id).toBe('trigger');
+
+            trigger.remove();
+            replacement.remove();
+        });
+    });
+
+    describe('container ref changed before deactivate', () => {
+        it('releases the original container when the ref was nulled', () => {
+            const trigger = buildContainer('<button id="trigger">Trigger</button>');
+
+            (trigger.firstElementChild as HTMLElement).focus();
+            container = buildContainer('<button id="a">A</button><button id="b">B</button>');
+
+            const el = ref<HTMLElement | null>(container);
+            const trap = useFocusTrap(el);
+
+            trap.activate();
+            el.value = null;
+
+            expect(() => trap.deactivate()).not.toThrow();
+            expect(document.activeElement?.id).toBe('trigger');
+
+            (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('b');
+
+            trigger.remove();
+        });
+    });
+
+    describe('nested traps', () => {
+        it('lets only the innermost active trap handle Tab', () => {
+            container = buildContainer(`
+                <button id="outer-first">Outer first</button>
+                <div id="inner">
+                    <button id="inner-first">Inner first</button>
+                    <button id="inner-last">Inner last</button>
+                </div>
+            `);
+
+            const inner = container.querySelector<HTMLElement>('#inner') as HTMLElement;
+            const outerTrap = useFocusTrap(ref<HTMLElement | null>(container));
+            const innerTrap = useFocusTrap(ref<HTMLElement | null>(inner));
+
+            outerTrap.activate();
+            innerTrap.activate();
+
+            (inner.querySelector<HTMLElement>('#inner-last') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('inner-first');
+
+            pressKey('Tab', true);
+
+            expect(document.activeElement?.id).toBe('inner-last');
+
+            innerTrap.deactivate();
+
+            expect(document.activeElement?.id).toBe('outer-first');
+
+            (inner.querySelector<HTMLElement>('#inner-last') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('outer-first');
+
+            outerTrap.deactivate();
         });
     });
 });
