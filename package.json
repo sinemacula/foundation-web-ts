@@ -105,7 +105,15 @@
             "import": "./dist/storage/web-locks-session-lock.js"
         }
     },
-    "files": ["dist", "eslint", "!eslint/**/__tests__/**", "!eslint/vitest.config.mjs", "README.md", "LICENSE"],
+    "files": [
+        "dist",
+        "eslint",
+        "!eslint/**/__tests__/**",
+        "!eslint/**/*.test.js",
+        "!eslint/vitest.config.mjs",
+        "README.md",
+        "LICENSE"
+    ],
     "publishConfig": {
         "access": "public",
         "registry": "https://registry.npmjs.org/"
