@@ -327,9 +327,23 @@ describe('useFocusTrap', () => {
 
             const activeBeforeTab = document.activeElement?.id;
 
-            pressKey('Tab');
-
+            expect(pressKey('Tab').defaultPrevented).toBe(false);
             expect(document.activeElement?.id).toBe(activeBeforeTab);
+        });
+
+        it('stops intercepting Tab once its container leaves the document', () => {
+            container = buildContainer('<button id="a">A</button>');
+
+            const outside = buildContainer('<button id="outside">Outside</button>');
+
+            useFocusTrap(ref<HTMLElement | null>(container)).activate();
+            container.remove();
+            (outside.firstElementChild as HTMLElement).focus();
+
+            expect(pressKey('Tab').defaultPrevented).toBe(false);
+            expect(document.activeElement?.id).toBe('outside');
+
+            outside.remove();
         });
     });
 
@@ -519,6 +533,27 @@ describe('useFocusTrap', () => {
             expect(document.activeElement?.id).toBe('outer-first');
 
             outerTrap.deactivate();
+        });
+
+        it('leaves focus in an inner trap when the outer one closes first', () => {
+            container = buildContainer(`
+                <button id="outer-first">Outer first</button>
+                <div id="inner"><button id="inner-only">Inner only</button></div>
+            `);
+
+            const inner = container.querySelector<HTMLElement>('#inner') as HTMLElement;
+            const outerTrap = useFocusTrap(ref<HTMLElement | null>(container));
+            const innerTrap = useFocusTrap(ref<HTMLElement | null>(inner));
+
+            outerTrap.activate();
+            innerTrap.activate();
+            outerTrap.deactivate();
+
+            expect(document.activeElement?.id).toBe('inner-only');
+
+            innerTrap.deactivate();
+
+            expect(document.activeElement?.id).toBe('outer-first');
         });
 
         it('keeps focus on an inner trap with nothing tabbable', () => {

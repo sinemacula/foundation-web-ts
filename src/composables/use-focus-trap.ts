@@ -23,7 +23,8 @@ export interface FocusTrapControls {
 
     /**
      * Stop trapping and restore focus to the element active before the first
-     * `activate`, if it is still attached to the document.
+     * `activate`, if it is still attached to the document and no trap activated
+     * later is still open.
      */
     deactivate(): void;
 }
@@ -42,7 +43,7 @@ interface ActiveTrap {
     readonly addedTabIndex: boolean;
 }
 
-/** Active traps in activation order; only the most recent one handles Tab. */
+/** Active traps in activation order; only the latest one still in the document handles Tab. */
 const trapStack: ActiveTrap[] = [];
 
 /**
@@ -144,7 +145,7 @@ export function useFocusTrap(container: Ref<HTMLElement | null>): FocusTrapContr
         const active: ActiveTrap = {
             element: el,
             listener: (event: KeyboardEvent): void => {
-                if (event.key === 'Tab' && trapStack.at(-1) === active) {
+                if (event.key === 'Tab' && trapStack.findLast(entry => entry.element.isConnected) === active) {
                     handleTrapKeydown(event, el);
                 }
             },
@@ -159,12 +160,15 @@ export function useFocusTrap(container: Ref<HTMLElement | null>): FocusTrapContr
     }
 
     /**
-     * Stop intercepting Tab and restore focus to the pre-activation element.
+     * Stop intercepting Tab and, unless a trap activated later is still open,
+     * restore focus to the pre-activation element.
      */
     function deactivate(): void {
+        const isTop = trap === trapStack.at(-1);
+
         release();
 
-        if (previouslyFocused?.isConnected) {
+        if (isTop && previouslyFocused?.isConnected) {
             previouslyFocused.focus();
         }
 
