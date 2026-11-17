@@ -10,23 +10,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BrowserConnectivityMonitor } from './browser-connectivity-monitor';
 
 /**
- * Build a fake `Window` with a fixed `navigator.onLine` whose listeners can be
- * triggered and inspected.
+ * Build a fake `Window` whose `navigator.onLine` follows the emitted events and
+ * whose listeners can be triggered and inspected.
  */
 function fakeWindow(onLine: boolean): {
     /** The fake window handed to the monitor. */
     window: Window;
 
-    /** Dispatch an event to the registered listeners. */
+    /** Flip `navigator.onLine` and dispatch the matching event to the registered listeners. */
     emit: (type: 'online' | 'offline') => void;
+
+    /** Flip `navigator.onLine` without dispatching an event. */
+    setOnLine: (value: boolean) => void;
 
     /** Count the listeners registered for an event. */
     listenerCount: (type: 'online' | 'offline') => number;
 } {
     const listeners = new Map<string, Set<EventListener>>();
+    const navigator = { onLine };
 
     const target = {
-        navigator: { onLine },
+        navigator,
         addEventListener: (type: string, listener: EventListener) => {
             const set = listeners.get(type) ?? new Set<EventListener>();
 
@@ -41,9 +45,14 @@ function fakeWindow(onLine: boolean): {
     return {
         window: target,
         emit: type => {
+            navigator.onLine = type === 'online';
+
             for (const listener of listeners.get(type) ?? []) {
                 listener(new Event(type));
             }
+        },
+        setOnLine: value => {
+            navigator.onLine = value;
         },
         listenerCount: type => listeners.get(type)?.size ?? 0,
     };
@@ -131,6 +140,86 @@ describe('BrowserConnectivityMonitor', () => {
 
         expect(handler).not.toHaveBeenCalled();
         expect(monitor.online).toBe(true);
+    });
+
+    it('catches up on a change missed while stopped', () => {
+        const fake = fakeWindow(true);
+        const monitor = new BrowserConnectivityMonitor({ targetWindow: fake.window });
+        const handler = vi.fn();
+
+        monitor.onChange(handler);
+        monitor.start();
+        monitor.stop();
+        fake.setOnLine(false);
+        monitor.start();
+
+        expect(monitor.online).toBe(false);
+        expect(handler.mock.calls).toStrictEqual([[false]]);
+
+        fake.emit('online');
+
+        expect(handler.mock.calls).toStrictEqual([[false], [true]]);
+
+        monitor.stop();
+    });
+
+    it('catches up on a change between construction and the first start', () => {
+        const fake = fakeWindow(true);
+        const monitor = new BrowserConnectivityMonitor({ targetWindow: fake.window });
+        const handler = vi.fn();
+
+        monitor.onChange(handler);
+        fake.setOnLine(false);
+        monitor.start();
+
+        expect(handler.mock.calls).toStrictEqual([[false]]);
+
+        monitor.stop();
+    });
+
+    it('isolates a throwing subscriber and reports its error', () => {
+        const failure = new Error('subscriber failure');
+        const fake = fakeWindow(true);
+        const onError = vi.fn();
+        const monitor = new BrowserConnectivityMonitor({ targetWindow: fake.window, onError });
+        const handler = vi.fn();
+
+        monitor.onChange(() => {
+            throw failure;
+        });
+        monitor.onChange(handler);
+        monitor.start();
+        fake.emit('offline');
+
+        expect(handler).toHaveBeenCalledWith(false);
+        expect(onError).toHaveBeenCalledWith(failure);
+
+        monitor.stop();
+    });
+
+    it('reports subscriber errors globally by default and survives a throwing sink', () => {
+        const failure = new Error('subscriber failure');
+        const reportError = vi.fn(() => {
+            throw new Error('sink failure');
+        });
+        const fake = fakeWindow(true);
+        const handler = vi.fn();
+
+        vi.stubGlobal('reportError', reportError);
+
+        const monitor = new BrowserConnectivityMonitor({ targetWindow: fake.window });
+
+        monitor.onChange(() => {
+            throw failure;
+        });
+        monitor.onChange(handler);
+        monitor.start();
+        fake.emit('offline');
+
+        expect(reportError).toHaveBeenCalledWith(failure);
+        expect(handler).toHaveBeenCalledWith(false);
+
+        monitor.stop();
     });
 
     it('uses the global window when no target window is provided', () => {
