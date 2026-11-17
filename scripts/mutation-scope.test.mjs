@@ -106,26 +106,38 @@ describe('mutationScope', () => {
         },
     );
 
-    it('mutates everything when the installed Foundation or mutation engine changes', () => {
+    it('mutates everything when the installed Foundation, test runner or mutation engine changes', () => {
         expect(scopeOf([{ path: 'package-lock.json' }], true)).toEqual(MUTATE);
     });
 });
 
 describe('fullScopeFingerprint', () => {
     /**
-     * Build a lockfile installing Foundation from `resolved` and the mutation
-     * engine core and runner at the given versions, beside another package.
+     * Build a lockfile installing Foundation from `resolved` and the test
+     * runner and mutation engine at the given versions, beside another package.
      */
-    const lockfile = (resolved, { core = '10.0.0', runner = core, other = '1.0.0' } = {}) => ({
+    const lockfile = (
+        resolved,
+        { core = '10.0.0', runner = core, vitest = '5.0.0', mocker = vitest, other = '1.0.0', extra = {} } = {},
+    ) => ({
         packages: {
             'node_modules/@sinemacula/foundation': { version: '0.0.0', resolved },
             'node_modules/@stryker-mutator/core': { version: core },
             'node_modules/@stryker-mutator/vitest-runner': { version: runner },
+            'node_modules/vitest': { version: vitest },
+            'node_modules/@vitest/mocker': { version: mocker },
             'node_modules/vue': { version: other },
+            ...extra,
         },
     });
 
-    it('matches lockfiles installing the same Foundation and mutation engine', () => {
+    it('ignores a package whose name only starts with vitest', () => {
+        const extra = { 'node_modules/vitest-environment-x': { version: '1.0.0' } };
+
+        expect(fullScopeFingerprint(lockfile('git#a', { extra }))).toBe(fullScopeFingerprint(lockfile('git#a')));
+    });
+
+    it('matches lockfiles installing the same Foundation, test runner and mutation engine', () => {
         expect(fullScopeFingerprint(lockfile('git#a', { other: '1.0.0' }))).toBe(
             fullScopeFingerprint(lockfile('git#a', { other: '2.0.0' })),
         );
@@ -135,6 +147,12 @@ describe('fullScopeFingerprint', () => {
         ['a different Foundation commit', lockfile('git#b')],
         ['a different engine core', lockfile('git#a', { core: '10.1.0', runner: '10.0.0' })],
         ['a different engine runner', lockfile('git#a', { runner: '10.1.0' })],
+        ['a different test runner', lockfile('git#a', { vitest: '5.1.0' })],
+        ['a different test runner internal', lockfile('git#a', { mocker: '5.1.0' })],
+        [
+            'a nested test runner install',
+            lockfile('git#a', { extra: { 'node_modules/x/node_modules/vitest': { version: '4.0.0' } } }),
+        ],
         ['no lockfile', null],
         ['no Foundation or engine entry', { packages: {} }],
     ])('tells %s apart', (_case, other) => {
