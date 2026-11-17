@@ -20,13 +20,14 @@ import type { SessionStorageKeys } from '@sinemacula/foundation/session/session-
 import { DEFAULT_SESSION_STORAGE_KEYS } from '@sinemacula/foundation/session/session-storage-keys';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
-import { api, reporting } from '../app/services';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import { api, logger, reporting } from '../app/services';
 import type { ModuleDefinition, ModuleRegisterContext, ResolvedPlatform } from '../module/module';
 import { StrictWebStorage } from '../storage/strict-web-storage';
 import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
 import { installSessionContext, sessionContext } from './session-context';
 import type { HydrationReporter } from './session-lifecycle';
-import { accessLocalStorage, bootSessionLifecycle } from './session-lifecycle';
+import { bootSessionLifecycle } from './session-lifecycle';
 import { SessionRefreshCoordinator } from './session-refresh-coordinator';
 import { useSessionStore } from './session-store';
 
@@ -85,7 +86,7 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Overrides for the route identity. */
     readonly routes?: Partial<SessionRoutes>;
 
-    /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given. Cross-tab sync only observes that localStorage key, so with another persistence disable `crossTabSync` and call the store's `hydrate()` on its own change notifications. */
+    /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given, and where the browser blocks localStorage the session is kept in memory until reload, without cross-tab sync, with one logged warning. Cross-tab sync only observes that localStorage key, so with another persistence disable `crossTabSync` and call the store's `hydrate()` on its own change notifications. */
     readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
 
     /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed before a realtime reconnect; each tab refreshes proactively at a random point in the earlier half of that window. Default 60 seconds. */
@@ -176,11 +177,13 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
     const routes: SessionRoutes = { ...DEFAULT_ROUTES, ...options.routes };
     const reportHydration = createHydrationReporter();
 
+    let shared: boolean;
+
     return {
         name: options.name ?? 'session',
         routes: [],
         register: context => {
-            registerSession(context, options, storageKeys, routes, reportHydration);
+            shared = registerSession(context, options, storageKeys, routes, reportHydration);
         },
         stores: [
             pinia => {
@@ -193,7 +196,7 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
             bootSessionLifecycle(context, {
                 routes,
                 sessionKey: storageKeys.session,
-                crossTabSync: options.crossTabSync ?? true,
+                crossTabSync: (options.crossTabSync ?? true) && shared,
                 proactiveRefresh: options.proactiveRefresh ?? true,
                 sessionLossRedirect: options.sessionLossRedirect ?? true,
                 realtimeFollowsSession: options.realtimeFollowsSession ?? true,
@@ -208,6 +211,9 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
  * Install the session context, contribute the bearer-token interceptor, and
  * claim the unauthorized handler. Every request and refresh first awaits the
  * session's hydration, which itself sends no request.
+ *
+ * @returns false when blocked storage left the default persistence in memory,
+ * shared with no other tab
  */
 function registerSession(
     context: ModuleRegisterContext,
@@ -215,7 +221,7 @@ function registerSession(
     storageKeys: SessionStorageKeys,
     routes: SessionRoutes,
     reportHydration: HydrationReporter,
-): void {
+): boolean {
     const { pinia, platform, storage } = context;
     const apiFactory = options.api ?? (http => createDefaultSessionApi<unknown>(http, { now: platform.clock }));
     const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
@@ -224,10 +230,12 @@ function registerSession(
     const ready = createReadiness(pinia, reportHydration);
     const coordinator = createRefreshAuthority(pinia, ready);
 
+    const persistence = options.persistence?.(platform) ?? createDefaultPersistence(platform, storageKeys.session);
+
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
     installSessionContext({
-        persistence: options.persistence?.(platform) ?? createDefaultPersistence(platform, storageKeys.session),
+        persistence: persistence ?? createTabPersistence(),
         routes,
         storeId: options.storeId ?? 'auth',
         coordinator,
@@ -253,6 +261,8 @@ function registerSession(
         return attachBearer(request);
     });
     context.http.setUnauthorizedHandler(async () => (await coordinator.refresh()).kind === 'refreshed');
+
+    return persistence !== null;
 }
 
 /**
@@ -320,10 +330,18 @@ function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): Sessi
  * Persist the session snapshot in the target window's localStorage, failing
  * loudly, under a Web Locks lock every tab shares.
  *
- * @throws {@link SessionError} when the Web Locks API or localStorage is
- * unavailable
+ * @returns the persistence, or null when the browser blocks localStorage
+ * @throws {@link SessionError} when the Web Locks API is unavailable
  */
-function createDefaultPersistence(platform: ResolvedPlatform, key: string): SessionPersistence {
+function createDefaultPersistence(platform: ResolvedPlatform, key: string): SessionPersistence | null {
+    let area: Storage;
+
+    try {
+        area = platform.targetWindow.localStorage;
+    } catch {
+        return null;
+    }
+
     const locks: LockManager | undefined = platform.targetWindow.navigator.locks;
 
     if (locks === undefined) {
@@ -333,16 +351,22 @@ function createDefaultPersistence(platform: ResolvedPlatform, key: string): Sess
         );
     }
 
-    const area = accessLocalStorage(
-        platform.targetWindow,
-        'The session module persists the session in the window localStorage, which is inaccessible; ' +
-            'pass the persistence option where it is blocked.',
-    );
-
     return new KeyValueSessionPersistence(new StrictWebStorage(area), {
         key,
         lock: new WebLocksSessionLock(locks, `${key}:lock`),
     });
+}
+
+/**
+ * Keep the session snapshot in memory for this page's lifetime, warning once
+ * that it ends on reload and is shared with no other tab.
+ */
+function createTabPersistence(): SessionPersistence {
+    logger().warn(
+        'Site storage is blocked, so the session is kept in memory: it ends on reload and is not shared with other tabs.',
+    );
+
+    return new KeyValueSessionPersistence(new MemoryStorage());
 }
 
 /**

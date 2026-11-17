@@ -170,7 +170,7 @@ function wireSessionLossRedirect(router: Router, store: SessionStore, routes: Se
  *
  * @throws {@link SessionError} carrying the given guidance when inaccessible
  */
-export function accessLocalStorage(target: Window, guidance: string): Storage {
+function accessLocalStorage(target: Window, guidance: string): Storage {
     try {
         return target.localStorage;
     } catch (error) {
