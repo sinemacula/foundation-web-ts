@@ -40,8 +40,8 @@ export class ConfirmService implements Confirmer {
     /** Monotonic counter backing generated confirmation ids. */
     #sequence = 0;
 
-    /** Resolver for the active confirmation's promise, or null. */
-    #currentResolve: ((outcome: boolean) => void) | null = null;
+    /** The active confirmation's id and the resolver for its promise, or null. */
+    #current: { readonly id: string; readonly resolve: (outcome: boolean) => void } | null = null;
 
     /** The reactive, read-only currently-active confirmation request. */
     readonly active: ComputedRef<ActiveConfirm | null>;
@@ -57,7 +57,7 @@ export class ConfirmService implements Confirmer {
      */
     confirm(request: ConfirmRequest): Promise<boolean> {
         return new Promise<boolean>(resolve => {
-            if (this.#active.value === null) {
+            if (this.#current === null) {
                 this.#surface({ request, resolve });
             } else {
                 this.#queue.push({ request, resolve });
@@ -71,18 +71,16 @@ export class ConfirmService implements Confirmer {
      * longer active, so a stale or repeated answer never reaches the next one.
      */
     settle(outcome: boolean, id?: string): void {
-        const active = this.#active.value;
+        const current = this.#current;
 
-        if (active === null || this.#currentResolve === null || (id !== undefined && id !== active.id)) {
+        if (current === null || (id !== undefined && id !== current.id)) {
             return;
         }
 
-        const resolve = this.#currentResolve;
-
+        this.#current = null;
         this.#active.value = null;
-        this.#currentResolve = null;
 
-        resolve(outcome);
+        current.resolve(outcome);
 
         const next = this.#queue.shift();
 
@@ -96,12 +94,12 @@ export class ConfirmService implements Confirmer {
      */
     cancelAll(): void {
         const pending = this.#queue.splice(0);
-        const resolve = this.#currentResolve;
+        const current = this.#current;
 
+        this.#current = null;
         this.#active.value = null;
-        this.#currentResolve = null;
 
-        resolve?.(false);
+        current?.resolve(false);
 
         for (const entry of pending) {
             entry.resolve(false);
@@ -114,7 +112,7 @@ export class ConfirmService implements Confirmer {
     #surface(entry: PendingEntry): void {
         const id = `confirm-${++this.#sequence}`;
 
-        this.#currentResolve = entry.resolve;
+        this.#current = { id, resolve: entry.resolve };
         this.#active.value = { ...entry.request, id };
     }
 }
