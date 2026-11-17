@@ -11,7 +11,7 @@ import type { SortDefault } from '@sinemacula/foundation/query/list-query-defini
 import { useListQuery } from '@sinemacula/web-core/query/use-list-query';
 import { useResource } from '@sinemacula/web-core/query/use-resource';
 import type { ComputedRef, Ref } from 'vue';
-import { computed, getCurrentScope, onScopeDispose, ref, toRaw, watch } from 'vue';
+import { computed, onScopeDispose, ref, toRaw, watch } from 'vue';
 
 import { api } from '@/services/api';
 
@@ -93,20 +93,11 @@ function useSearchDebounce(commit: (term: string) => void, initial: string): Ref
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
     watch(searchInput, value => {
-        if (debounceTimer !== undefined) {
-            clearTimeout(debounceTimer);
-        }
-
+        clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => commit(value), SEARCH_DEBOUNCE_MS);
     });
 
-    if (getCurrentScope() !== undefined) {
-        onScopeDispose(() => {
-            if (debounceTimer !== undefined) {
-                clearTimeout(debounceTimer);
-            }
-        });
-    }
+    onScopeDispose(() => clearTimeout(debounceTimer), true);
 
     return searchInput;
 }
