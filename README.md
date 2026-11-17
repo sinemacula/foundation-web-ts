@@ -235,15 +235,18 @@ it. The two translation keys are application copy passed as options.
 
 #### start() and dispose()
 
-`createWebCoreApp` resolves once every phase has run; nothing is mounted yet. `start(selector?)` awaits
-`router.isReady()` and then mounts (default `#app`), so initialisation completes before any component renders. The
-handle also exposes the assembled `app`, `router`, `pinia` and `i18n`, the frozen `config` tree, typed references to
-every installed service under `services`, and the started `monitors`, so tests never need ambient access.
+`createWebCoreApp` resolves once every phase has run; nothing is mounted yet. When a phase fails, everything installed
+so far is torn down and the original error rejects. `start(selector?)` awaits `router.isReady()` and then mounts
+(default `#app`), so initialisation completes before any component renders. A handle starts once: a second `start()`
+rejects, and so does a `start()` after, or racing, `dispose()`. The handle also exposes the assembled `app`, `router`,
+`pinia` and `i18n`, the frozen `config` tree, typed references to every installed service under `services`, and the
+started `monitors`, so tests never need ambient access.
 
-`dispose()` idempotently tears down everything the boot installed, in reverse: monitors, realtime disconnect, chunk
-recovery, module boot teardowns, store disposals, the page-tracking, global-error-handling and title-sync uninstalls,
-and finally the colour-scheme listener. Service holders are left installed; `resetWebCoreServices()` clears them
-between tests.
+`dispose()` idempotently unmounts the root and tears down everything the boot installed, in reverse: the monitors,
+chunk recovery, module boot teardowns, realtime disconnect, the page-tracking, global-error-handling and title-sync
+uninstalls, the router history, store disposals, pending toasts and finally the colour-scheme listener. Every step runs
+even when one throws, and `dispose()` then rethrows the failure. Service holders are left installed;
+`resetWebCoreServices()` clears them between tests and before booting a replacement application.
 
 #### Service accessors
 
