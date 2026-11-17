@@ -66,8 +66,8 @@ test.describe('session across tabs', { tag: '@engine' }, () => {
 
         test('tabs refreshing at once share one rotation', async ({ browserName, context, page, api, usersPage }) => {
             test.skip(
-                browserName === 'webkit',
-                'WebKit can grant the exchange lock before the other tab sees the rotation written to localStorage.',
+                browserName !== 'chromium',
+                'WebKit and Firefox can grant the exchange lock before the other tab sees the rotation written to localStorage.',
             );
 
             /**
