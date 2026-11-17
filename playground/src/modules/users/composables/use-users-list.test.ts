@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 
-import { parseWireTimestamp, useUsersList } from '@/modules/users/composables/use-users-list';
+import { useUsersList } from '@/modules/users/composables/use-users-list';
 import { initialiseApi, resetApi } from '@/services/api';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
 
@@ -28,6 +28,21 @@ function userRow(id: string, fullName: string): Record<string, unknown> {
         ['created_at', '2026-01-01 00:00:00'],
     ]);
 }
+
+/** A page-1 response for a 27-row list paged 25 at a time. */
+function firstOfTwoPages(): Record<string, unknown> {
+    return {
+        data: [userRow('u1', 'Alice Smith')],
+        meta: wire([
+            ['total', 27],
+            ['count', 25],
+            ['continue', true],
+        ]),
+    };
+}
+
+/** A response that never settles, leaving its request in flight. */
+const IN_FLIGHT = new Promise<never>(() => undefined);
 
 /** Flushes pending microtasks so an in-flight fetch settles. */
 async function flushAll(): Promise<void> {
@@ -215,23 +230,33 @@ describe('useUsersList', () => {
     });
 
     describe('pagination', () => {
-        it('advances unconditionally when no meta is present yet', () => {
+        it('does not advance before the first page settles', () => {
+            fake.queueResponse(IN_FLIGHT);
+
             const usersList = useUsersList();
+
+            usersList.next();
+
+            expect(usersList.hasNextPage.value).toBe(false);
+            expect(usersList.page.value).toBe(1);
+        });
+
+        it('advances to the next page when meta reports more pages remain', async () => {
+            fake.queueResponse(firstOfTwoPages());
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            expect(usersList.hasNextPage.value).toBe(true);
 
             usersList.next();
 
             expect(usersList.page.value).toBe(2);
         });
 
-        it('advances to the next page when meta reports more pages remain', async () => {
-            fake.queueResponse({
-                data: [],
-                meta: wire([
-                    ['total', 30],
-                    ['count', 25],
-                    ['continue', true],
-                ]),
-            });
+        it('advances when the settled page reports no pagination meta', async () => {
+            fake.queueResponse({ data: [] });
 
             const usersList = useUsersList();
 
@@ -258,6 +283,58 @@ describe('useUsersList', () => {
 
             usersList.next();
 
+            expect(usersList.hasNextPage.value).toBe(false);
+            expect(usersList.page.value).toBe(1);
+        });
+
+        it('advances one page for repeated calls before the next request starts', async () => {
+            fake.queueResponse(firstOfTwoPages());
+            fake.queueResponse(IN_FLIGHT);
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            usersList.next();
+            usersList.next();
+            await flushAll();
+
+            expect(usersList.page.value).toBe(2);
+            expect(fake.calls).toHaveLength(2);
+        });
+
+        it('does not advance again while the next page is in flight', async () => {
+            fake.queueResponse(firstOfTwoPages());
+            fake.queueResponse(IN_FLIGHT);
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            usersList.next();
+            await flushAll();
+
+            expect(usersList.isLoading.value).toBe(true);
+            expect(usersList.hasNextPage.value).toBe(false);
+
+            usersList.next();
+            await flushAll();
+
+            expect(usersList.page.value).toBe(2);
+            expect(fake.calls).toHaveLength(2);
+        });
+
+        it('does not advance on a page whose refreshed query has not settled', async () => {
+            fake.queueResponse(firstOfTwoPages());
+            fake.queueResponse(IN_FLIGHT);
+
+            const usersList = useUsersList();
+
+            await flushAll();
+
+            usersList.search('alice');
+            usersList.next();
+
             expect(usersList.page.value).toBe(1);
         });
 
@@ -271,6 +348,71 @@ describe('useUsersList', () => {
             usersList.previous();
 
             expect(usersList.page.value).toBe(1);
+        });
+    });
+
+    describe('wire query', () => {
+        /**
+         * The query parameters each request was sent with.
+         */
+        function sentQueries(): unknown[] {
+            return fake.calls.map(call => call.options?.query);
+        }
+
+        it('requests the first page newest first', async () => {
+            fake.queueResponse(firstOfTwoPages());
+
+            useUsersList();
+            await flushAll();
+
+            expect(fake.calls[0]?.path).toBe('users');
+            expect(sentQueries()).toEqual([{ order: 'created_at:desc', page: 1, limit: 25 }]);
+        });
+
+        it('sends the sort, search and page the screen asks for', async () => {
+            fake.queueResponse(firstOfTwoPages());
+            fake.queueResponse(firstOfTwoPages());
+            fake.queueResponse(firstOfTwoPages());
+            fake.queueResponse(firstOfTwoPages());
+
+            const usersList = useUsersList();
+
+            await flushAll();
+            usersList.sortBy('full_name');
+            await flushAll();
+            usersList.search('ali');
+            await flushAll();
+            usersList.next();
+            await flushAll();
+
+            expect(sentQueries().slice(1)).toEqual([
+                { order: 'full_name', page: 1, limit: 25 },
+                { search: 'ali', order: 'full_name', page: 1, limit: 25 },
+                { search: 'ali', order: 'full_name', page: 2, limit: 25 },
+            ]);
+        });
+
+        it('aborts a request superseded by a newer query', async () => {
+            fake.queueResponse(IN_FLIGHT);
+            fake.queueResponse(IN_FLIGHT);
+
+            const usersList = useUsersList();
+
+            usersList.search('ali');
+            await flushAll();
+
+            expect(fake.calls.map(call => call.options?.signal?.aborted)).toEqual([true, false]);
+        });
+
+        it('aborts the in-flight request when its scope stops', () => {
+            fake.queueResponse(IN_FLIGHT);
+
+            const scope = effectScope();
+
+            scope.run(() => useUsersList());
+            scope.stop();
+
+            expect(fake.calls[0]?.options?.signal?.aborted).toBe(true);
         });
     });
 
@@ -292,17 +434,5 @@ describe('useUsersList', () => {
             expect(usersList.error.value).toBeNull();
             expect(usersList.rows.value).toHaveLength(1);
         });
-    });
-});
-
-describe('parseWireTimestamp', () => {
-    it('parses a wire-format timestamp as a UTC instant', () => {
-        const parsed = parseWireTimestamp('2026-01-01 00:00:00');
-
-        expect(parsed.toISOString()).toBe('2026-01-01T00:00:00.000Z');
-    });
-
-    it('throws when the timestamp cannot be parsed', () => {
-        expect(() => parseWireTimestamp('not-a-timestamp')).toThrow('not-a-timestamp');
     });
 });
