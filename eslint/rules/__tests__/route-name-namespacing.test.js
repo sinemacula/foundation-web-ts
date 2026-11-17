@@ -69,6 +69,34 @@ ruleTester.run('route-name-namespacing', rule, {
             filename: 'src/modules/auth/route-names.ts',
             code: 'export const AUTH_ROUTE_NAMES = { count: 1, dynamic: build() } as const;',
         },
+        // An interpolated template is not a static name.
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: `export const AUTH_ROUTE_NAMES = { login: \`\${NS}.login\` } as const;`,
+        },
+        // A folder name is matched literally, not as a pattern.
+        {
+            filename: 'src/modules/legacy.v1/route-names.ts',
+            code: "export const LEGACY_V1_ROUTE_NAMES = { home: 'legacy.v1.home' } as const;",
+        },
+        // Only a single-argument `Object.freeze` is seen through.
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = Object.seal({ a: 'a' });",
+        },
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = Other.freeze({ a: 'a' });",
+        },
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = Object['freeze']({ a: 'a' });",
+        },
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = Object.freeze({ a: 'a' }, x);",
+        },
+        { filename: 'src/modules/auth/route-names.ts', code: "export const AUTH_ROUTE_NAMES = freeze({ a: 'a' });" },
         // Correctly namespaced via satisfies / as const satisfies.
         {
             filename: 'src/modules/auth/route-names.ts',
@@ -95,6 +123,11 @@ ruleTester.run('route-name-namespacing', rule, {
             code: "export const AUTH_ROUTE_NAMES = { bad: 'auth.Not_Kebab' } as const;",
             errors: [{ messageId: 'unnamespaced', data: { value: 'auth.Not_Kebab', folder: 'auth' } }],
         },
+        {
+            filename: 'src/modules/legacy.v1/route-names.ts',
+            code: "export const LEGACY_V1_ROUTE_NAMES = { home: 'legacyxv1.home' } as const;",
+            errors: [{ messageId: 'unnamespaced', data: { value: 'legacyxv1.home', folder: 'legacy.v1' } }],
+        },
         // Backslash (Windows) paths are normalised before the folder is read.
         {
             filename: 'src\\modules\\auth\\route-names.ts',
@@ -116,6 +149,27 @@ ruleTester.run('route-name-namespacing', rule, {
         {
             filename: 'src/modules/auth/route-names.ts',
             code: "export const AUTH_ROUTE_NAMES = { login: 'login' } satisfies Record<string, string>;",
+            errors: [{ messageId: 'unnamespaced', data: { value: 'login', folder: 'auth' } }],
+        },
+        // Frozen maps and groups, asserted values, and `.tsx` files.
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = Object.freeze({ login: 'login' });",
+            errors: [{ messageId: 'unnamespaced', data: { value: 'login', folder: 'auth' } }],
+        },
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = { profile: Object.freeze({ view: 'view' }) } as const;",
+            errors: [{ messageId: 'unnamespaced', data: { value: 'view', folder: 'auth' } }],
+        },
+        {
+            filename: 'src/modules/auth/route-names.ts',
+            code: "export const AUTH_ROUTE_NAMES = { login: 'login' as const };",
+            errors: [{ messageId: 'unnamespaced', data: { value: 'login', folder: 'auth' } }],
+        },
+        {
+            filename: 'src/modules/auth/route-names.tsx',
+            code: "export const AUTH_ROUTE_NAMES = { login: 'login' } as const;",
             errors: [{ messageId: 'unnamespaced', data: { value: 'login', folder: 'auth' } }],
         },
         // A template-literal value.

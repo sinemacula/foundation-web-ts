@@ -7,45 +7,40 @@
 
 // biome-ignore-all lint/style/useNamingConvention: ESLint AST visitor keys
 
-import { createRule } from './lib.js';
-
-/** The static name of a non-computed property key, or null. */
-function keyName(property) {
-    if (property.type !== 'Property' || property.computed) {
-        return null;
-    }
-
-    if (property.key.type === 'Identifier') {
-        return property.key.name;
-    }
-
-    if (property.key.type === 'Literal' && typeof property.key.value === 'string') {
-        return property.key.value;
-    }
-
-    return null;
-}
+import { contractFile, createRule, projectPath, propertyName, staticString } from './lib.js';
 
 /** Whether an object expression is a route record (carries `path` or `component`). */
 function isRouteObject(objectExpression) {
     return objectExpression.properties.some(property => {
-        const name = keyName(property);
+        const name = propertyName(property);
 
         return name === 'path' || name === 'component';
     });
 }
 
-/** The string or single-quasi template a value carries, or null. */
-function inlineName(value) {
-    if (value.type === 'Literal' && typeof value.value === 'string') {
-        return value.value;
+/** The nearest ancestor that is not an `as` or `satisfies` wrapper. */
+function unwrappedParent(node) {
+    let parent = node.parent;
+
+    while (parent.type === 'TSAsExpression' || parent.type === 'TSSatisfiesExpression') {
+        parent = parent.parent;
     }
 
-    if (value.type === 'TemplateLiteral' && value.expressions.length === 0) {
-        return value.quasis[0].value.cooked;
+    return parent;
+}
+
+/**
+ * Whether an object is a route record's `redirect` location, given directly or
+ * as a concise arrow's result.
+ */
+function isRedirectLocation(objectExpression) {
+    let holder = unwrappedParent(objectExpression);
+
+    if (holder.type === 'ArrowFunctionExpression') {
+        holder = unwrappedParent(holder);
     }
 
-    return null;
+    return propertyName(holder) === 'redirect' && isRouteObject(holder.parent);
 }
 
 // Stryker disable all: declarative rule metadata
@@ -64,23 +59,17 @@ export default createRule({
     defaultOptions: [],
     // Stryker restore all
     create(context) {
-        const filename = context.filename.replace(/\\/g, '/');
-
-        if (!/(?:^|\/)routes\.ts$/.test(filename)) {
+        if (contractFile(projectPath(context))?.kind !== 'routes') {
             return {};
         }
 
         return {
             Property(node) {
-                if (
-                    keyName(node) !== 'name' ||
-                    node.parent?.type !== 'ObjectExpression' ||
-                    !isRouteObject(node.parent)
-                ) {
+                if (propertyName(node) !== 'name' || !(isRouteObject(node.parent) || isRedirectLocation(node.parent))) {
                     return;
                 }
 
-                const inline = inlineName(node.value);
+                const inline = staticString(node.value);
 
                 if (inline !== null) {
                     context.report({ node: node.value, messageId: 'inline', data: { value: inline } });
