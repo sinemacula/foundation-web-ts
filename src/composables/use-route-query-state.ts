@@ -33,8 +33,69 @@ export interface RouteQueryState {
     /**
      * Merge a patch of managed keys into the URL query, null clearing a key;
      * unmanaged keys in the patch are ignored and other parameters preserved.
+     * Patches set in the same tick, from any instance on the router, land in
+     * one navigation that waits for the previous one to settle.
      */
     set(patch: Readonly<Record<string, string | null>>): Promise<void>;
+}
+
+/**
+ * Query patches waiting for the next navigation on one router.
+ */
+interface QueryBatchState {
+    /** The merged patch for the batch not yet navigated, or null when none is open. */
+    pending: Record<string, string | null> | null;
+
+    /** The latest batch's navigation, which the next batch waits behind. */
+    tail: Promise<void>;
+}
+
+/** Pending query patches per router. */
+const batches = new WeakMap<Router, QueryBatchState>();
+
+/**
+ * Merge `patch` into the router's open batch, opening one behind the previous
+ * navigation when none is open.
+ *
+ * @returns the navigation that applies the batch
+ */
+function enqueuePatch(router: Router, patch: Readonly<Record<string, string | null>>): Promise<void> {
+    const state = batches.get(router) ?? { pending: null, tail: Promise.resolve() };
+
+    batches.set(router, state);
+
+    if (state.pending === null) {
+        const pending: Record<string, string | null> = {};
+
+        state.pending = pending;
+        state.tail = state.tail
+            .catch(() => undefined)
+            .then(async () => {
+                state.pending = null;
+                await router.replace({ query: applyPatch(router.currentRoute.value.query, pending) });
+            });
+    }
+
+    Object.assign(state.pending, patch);
+
+    return state.tail;
+}
+
+/**
+ * Apply a patch to a query, null removing a key.
+ */
+function applyPatch(query: LocationQuery, patch: Readonly<Record<string, string | null>>): LocationQuery {
+    const next: LocationQuery = { ...query };
+
+    for (const [key, value] of Object.entries(patch)) {
+        if (value === null) {
+            delete next[key];
+        } else {
+            next[key] = value;
+        }
+    }
+
+    return next;
 }
 
 /**
@@ -79,26 +140,12 @@ export function useRouteQueryState(router: Router, options: RouteQueryStateOptio
     }
 
     /**
-     * Merge a patch into the URL query; null removes a key and keys outside
-     * `defaults` are ignored.
+     * Queue the managed keys of a patch for the router's next query update.
      */
-    async function set(patch: Readonly<Record<string, string | null>>): Promise<void> {
-        const current = router.currentRoute.value.query;
-        const next: LocationQuery = { ...current };
+    function set(patch: Readonly<Record<string, string | null>>): Promise<void> {
+        const managed = Object.fromEntries(Object.entries(patch).filter(([key]) => Object.hasOwn(defaults, key)));
 
-        for (const [key, value] of Object.entries(patch)) {
-            if (!(key in defaults)) {
-                continue;
-            }
-
-            if (value === null) {
-                delete next[key];
-            } else {
-                next[key] = value;
-            }
-        }
-
-        await router.replace({ query: next });
+        return enqueuePatch(router, managed);
     }
 
     return { values, get, set };
