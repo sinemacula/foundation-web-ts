@@ -7,33 +7,28 @@
 
 // biome-ignore-all lint/style/useNamingConvention: ESLint AST visitor keys
 
-import { createRule, moduleFolder, typeReferenceName, unwrapExpression } from './lib.js';
-
-/** Whether a property is the non-computed `name` key of an object. */
-function isNameProperty(property) {
-    return (
-        property.type === 'Property' &&
-        !property.computed &&
-        ((property.key.type === 'Identifier' && property.key.name === 'name') ||
-            (property.key.type === 'Literal' && property.key.value === 'name'))
-    );
-}
+import {
+    contractFile,
+    createRule,
+    expressionLayers,
+    moduleFolder,
+    objectLiteral,
+    projectPath,
+    propertyName,
+    staticString,
+    typeReferenceName,
+} from './lib.js';
 
 /**
  * Whether a declarator is typed `ModuleDefinition` (or `ns.ModuleDefinition`)
- * by annotation, `satisfies` or `as`.
+ * by annotation, or by an `as` or `satisfies` at any wrapper layer.
  */
 function declaresModule(node) {
-    if (typeReferenceName(node.id?.typeAnnotation?.typeAnnotation) === 'ModuleDefinition') {
+    if (typeReferenceName(node.id.typeAnnotation?.typeAnnotation) === 'ModuleDefinition') {
         return true;
     }
 
-    const init = node.init;
-
-    return (
-        (init?.type === 'TSSatisfiesExpression' || init?.type === 'TSAsExpression') &&
-        typeReferenceName(init.typeAnnotation) === 'ModuleDefinition'
-    );
+    return expressionLayers(node.init).some(layer => typeReferenceName(layer.typeAnnotation) === 'ModuleDefinition');
 }
 
 // Stryker disable all: declarative rule metadata
@@ -52,15 +47,10 @@ export default createRule({
     defaultOptions: [],
     // Stryker restore all
     create(context) {
-        const filename = context.filename.replace(/\\/g, '/');
-
-        if (!/(?:^|\/)module\.ts$/.test(filename)) {
-            return {};
-        }
-
+        const filename = projectPath(context);
         const folder = moduleFolder(filename);
 
-        if (folder === null) {
+        if (contractFile(filename)?.kind !== 'module' || folder === null) {
             return {};
         }
 
@@ -70,24 +60,12 @@ export default createRule({
                     return;
                 }
 
-                const object = unwrapExpression(node.init);
+                const object = objectLiteral(node.init);
+                const nameProperty = object?.properties.find(property => propertyName(property) === 'name');
+                const name = staticString(nameProperty?.value);
 
-                if (object?.type !== 'ObjectExpression') {
-                    return;
-                }
-
-                const nameProperty = object.properties.find(isNameProperty);
-
-                if (nameProperty?.value.type !== 'Literal' || typeof nameProperty.value.value !== 'string') {
-                    return;
-                }
-
-                if (nameProperty.value.value !== folder) {
-                    context.report({
-                        node: nameProperty.value,
-                        messageId: 'mismatch',
-                        data: { folder, name: nameProperty.value.value },
-                    });
+                if (name !== null && name !== folder) {
+                    context.report({ node: nameProperty.value, messageId: 'mismatch', data: { folder, name } });
                 }
             },
         };
