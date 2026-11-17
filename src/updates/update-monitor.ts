@@ -236,7 +236,7 @@ export class UpdateMonitor {
  */
 function whenAborted(signal: AbortSignal): Promise<null> {
     return new Promise(resolve => {
-        signal.addEventListener('abort', () => resolve(null), { once: true });
+        signal.addEventListener('abort', () => resolve(null));
     });
 }
 

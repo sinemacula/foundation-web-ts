@@ -224,6 +224,15 @@ describe('UpdateMonitor', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
+    it('polls the runtime environment document by default', async () => {
+        const fetchFn = makeFetch(async () => versionResponse('1.0.0'));
+        const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
+
+        await monitor.checkNow();
+
+        expect(fetchFn).toHaveBeenCalledWith('/runtime-env.json', expect.objectContaining({ cache: 'no-store' }));
+    });
+
     it('uses the global fetch when no fetch function is provided', async () => {
         const stub = makeFetch(() => Promise.resolve(versionResponse('3.0.0')));
         vi.stubGlobal('fetch', stub);
@@ -368,6 +377,28 @@ describe('UpdateMonitor', () => {
             await fresh;
 
             expect(handler).toHaveBeenCalledWith('2.0.0');
+        });
+
+        it('keeps joining the fresh check when a check abandoned at stop settles', async () => {
+            const { fetchFn, releases } = deferredFetch();
+            const monitor = new UpdateMonitor({ currentVersion: '1.0.0', fetchFn });
+
+            const abandoned = monitor.checkNow();
+
+            monitor.stop();
+
+            const fresh = monitor.checkNow();
+
+            releases[0]?.(versionResponse('2.0.0'));
+            await abandoned;
+
+            const joined = monitor.checkNow();
+
+            expect(joined).toBe(fresh);
+            expect(fetchFn).toHaveBeenCalledTimes(2);
+
+            releases[1]?.(versionResponse('2.0.0'));
+            await fresh;
         });
 
         it('abandons a hung request after the timeout so later checks run', async () => {
