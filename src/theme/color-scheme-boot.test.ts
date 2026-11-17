@@ -76,6 +76,26 @@ describe('color-scheme-boot', () => {
             },
         );
 
+        it.each(DEFAULTS)('stamps what the service persisted for each choice under default %s', fallback => {
+            const storage = new MemoryStorage();
+            const script = createColorSchemeBootScript({ storageKey: 'app.scheme', defaultPreference: fallback });
+            const service = new ColorSchemeService({
+                storage,
+                storageKey: 'app.scheme',
+                defaultPreference: fallback,
+                source: { prefersDark: () => true, subscribe: () => () => undefined },
+                applier: { apply: () => undefined },
+            });
+
+            for (const choice of DEFAULTS) {
+                service.setPreference(choice);
+
+                expect(runBootScript(script, 'app.scheme', storage.get('app.scheme'))).toBe(
+                    choice === 'system' ? null : choice,
+                );
+            }
+        });
+
         it('reads only the configured key', () => {
             const script = createColorSchemeBootScript({ storageKey: 'app.scheme' });
 

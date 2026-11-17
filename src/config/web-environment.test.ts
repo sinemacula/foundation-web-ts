@@ -237,4 +237,15 @@ describe('createWebEnvironment in production', () => {
         expect(thrown).toBeInstanceOf(ConfigurationError);
         expect((thrown as ConfigurationError).message).toBe('Runtime configuration is missing required keys: API_URL.');
     });
+
+    it('treats a key inherited from the object prototype as missing', () => {
+        const thrown = capture(() => {
+            createWebEnvironment({ runtime: {}, dev: false, requiredKeys: ['toString', 'constructor'] });
+        });
+
+        expect(thrown).toBeInstanceOf(ConfigurationError);
+        expect((thrown as ConfigurationError).message).toBe(
+            'Runtime configuration is missing required keys: toString, constructor.',
+        );
+    });
 });

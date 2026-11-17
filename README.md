@@ -169,6 +169,8 @@ Defaults and behaviours worth knowing:
   runtime document ahead of the prefixed build-time variables (default prefix `VITE_`) in development and, in
   production, throws a `ConfigurationError` naming every missing `requiredKeys` entry. `config.runtimeUrl` (default
   `/runtime-env.json`) is one URL for both the runtime-environment fetch and the update monitor's default poll target.
+  A 404 boots over an empty document; any other failure, or no document within 5 seconds, rejects the boot with a
+  `RuntimeEnvironmentError`.
 - `http.unexpectedErrorToastKey` arms the default response-error handler: it skips validation failures and 401s,
   raises the application's toast and captures the error with request context. Without it (and without an
   `onResponseError` override) unexpected failures are captured only. The key is application copy - the kernel ships

@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { HttpRequest } from '@sinemacula/foundation/http/http-client';
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
@@ -32,6 +33,7 @@ import type { HarnessSetup, SessionHarness } from './test-support/session-harnes
 import { createSessionHarness } from './test-support/session-harness';
 
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
+const REQUEST: HttpRequest = { method: 'GET', url: '/x', headers: {}, body: undefined };
 
 /**
  * Settle every pending promise and zero-delay timer.
@@ -965,7 +967,7 @@ describe('session lifecycle', () => {
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error: failure });
 
-            await expect(target.contributions.onUnauthorized?.()).resolves.toBe(false);
+            await expect(target.contributions.onUnauthorized?.(REQUEST)).resolves.toBe(false);
             expect(connection.calls).toStrictEqual(['connect', 'disconnect']);
             expect(target.observability.errors).toStrictEqual([failure]);
             expect(target.store().isAuthenticated).toBe(true);

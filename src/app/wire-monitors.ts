@@ -5,6 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
+import type { DeepReadonly } from '@sinemacula/foundation/config/config-repository';
 import { BrowserConnectivityMonitor } from '../connectivity/browser-connectivity-monitor';
 import { TeardownStack } from '../module/teardown-stack';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
@@ -30,7 +31,7 @@ export interface MonitorWiringSettings {
  */
 export interface UpdateMonitorWiring<T> {
     /** Whether the update monitor runs. Default: the deployed version is not 'dev'. */
-    readonly enabled?: boolean | ((settings: Readonly<T>) => boolean);
+    readonly enabled?: boolean | ((settings: DeepReadonly<T>) => boolean);
 
     /** The version document location. Defaults to the runtime environment URL. */
     readonly url?: string;
@@ -50,7 +51,7 @@ export interface UpdateMonitorWiring<T> {
  */
 export interface WireMonitorsOptions<T extends MonitorWiringSettings> {
     /** The frozen application configuration. */
-    readonly settings: Readonly<T>;
+    readonly settings: DeepReadonly<T>;
 
     /** Update-monitor options; omit to take the version-derived defaults. */
     readonly updates?: UpdateMonitorWiring<T>;
@@ -202,8 +203,8 @@ function resolveUpdateHandler<T>(
  * Resolve whether the update monitor runs.
  */
 function resolveUpdatesEnabled<T extends MonitorWiringSettings>(
-    enabled: boolean | ((settings: Readonly<T>) => boolean) | undefined,
-    settings: Readonly<T>,
+    enabled: boolean | ((settings: DeepReadonly<T>) => boolean) | undefined,
+    settings: DeepReadonly<T>,
 ): boolean {
     if (enabled === undefined) {
         return settings.app.version !== DEV_VERSION_SENTINEL;

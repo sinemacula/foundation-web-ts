@@ -65,6 +65,7 @@ function baseOptions(overrides: Partial<WireColorSchemeOptions> = {}): WireColor
         storage: new MemoryStorage(),
         targetWindow: windowOf(makeMql(false)),
         targetDocument: document.implementation.createHTMLDocument('t'),
+        onError: () => undefined,
         ...overrides,
     };
 }
@@ -149,7 +150,7 @@ describe('wireColorScheme', () => {
 
         storage.set('theme', 'dark');
 
-        wireColorScheme({ config, storage, targetWindow: windowOf(makeMql(false)) });
+        wireColorScheme({ config, storage, targetWindow: windowOf(makeMql(false)), onError: () => undefined });
 
         expect(dataTheme(document)).toBe('dark');
     });
@@ -175,5 +176,25 @@ describe('wireColorScheme', () => {
         service.dispose();
 
         expect(mql.removeCount).toBe(1);
+    });
+
+    it('passes a throwing listener and a failed storage read to the error sink', () => {
+        const errors: unknown[] = [];
+        const readFailure = new Error('read');
+        const listenerFailure = new Error('listener');
+        const storage = new MemoryStorage();
+
+        storage.get = () => {
+            throw readFailure;
+        };
+
+        const service = wireColorScheme(baseOptions({ storage, onError: error => errors.push(error) }));
+
+        service.subscribe(() => {
+            throw listenerFailure;
+        });
+        service.setPreference('dark');
+
+        expect(errors).toStrictEqual([readFailure, listenerFailure]);
     });
 });

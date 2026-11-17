@@ -22,8 +22,10 @@ export interface ColorSchemeBootScriptOptions {
 
 /**
  * Build the inline script that resolves the preference the way the
- * colour-scheme service does and stamps `[data-theme]` for `light`/`dark`,
- * leaving `system` to CSS `prefers-color-scheme`, so nothing flashes.
+ * colour-scheme service does: a stored `light`, `dark` or `system` wins, and a
+ * missing, invalid or unreadable value takes the default. It stamps
+ * `[data-theme]` for `light`/`dark` and leaves `system` to CSS
+ * `prefers-color-scheme`, so nothing flashes.
  */
 export function createColorSchemeBootScript(options: ColorSchemeBootScriptOptions = {}): string {
     const key = toScriptLiteral(options.storageKey ?? COLOR_SCHEME_STORAGE_KEY);

@@ -14,7 +14,7 @@ import { createWebHistory } from 'vue-router';
 
 import type { AnalyticsTracker } from '@sinemacula/foundation/analytics/analytics-tracker';
 import { installPageTracking } from '@sinemacula/foundation/analytics/install-page-tracking';
-import type { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
+import type { ConfigRepository, DeepReadonly } from '@sinemacula/foundation/config/config-repository';
 import type { Environment } from '@sinemacula/foundation/config/environment';
 import { RUNTIME_ENVIRONMENT_URL } from '../config/runtime-environment';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
@@ -126,7 +126,7 @@ export interface WebCoreConfigOptions<T extends FoundationConfig> {
     /** Configuration definition over the environment; the result is deep-frozen. */
     readonly define: (environment: Environment) => T;
 
-    /** The runtime-environment URL, also the update monitor's default poll target. Default '/runtime-env.json'. */
+    /** The runtime-environment URL, also the update monitor's default poll target. Default '/runtime-env.json'. A 404 boots over an empty document; any other failure, or no document within 5 seconds, rejects the boot. */
     readonly runtimeUrl?: string;
 }
 
@@ -190,13 +190,13 @@ export interface WebCoreColorSchemeOptions {
  */
 export interface WebCoreObservabilityOptions<T extends FoundationConfig> {
     /** Error-reporter factory; wins over the environment default. */
-    readonly reporter?: (settings: Readonly<T>) => ErrorReporter;
+    readonly reporter?: (settings: DeepReadonly<T>) => ErrorReporter;
 
     /** Analytics-tracker factory; wins over the environment default. */
-    readonly analytics?: (settings: Readonly<T>) => AnalyticsTracker;
+    readonly analytics?: (settings: DeepReadonly<T>) => AnalyticsTracker;
 
     /** Logger factory; wins over the environment default. */
-    readonly logger?: (settings: Readonly<T>) => Logger;
+    readonly logger?: (settings: DeepReadonly<T>) => Logger;
 }
 
 /**
@@ -299,10 +299,10 @@ export interface WebCoreAppOptions<T extends FoundationConfig> {
     readonly observability?: WebCoreObservabilityOptions<T>;
 
     /** Feature-flag provider factory; defaults to the config-driven static adapter. */
-    readonly featureFlags?: (settings: Readonly<T>) => FeatureFlags;
+    readonly featureFlags?: (settings: DeepReadonly<T>) => FeatureFlags;
 
     /** Opt-in realtime connection, installed before the modules boot, handed to them unconnected and disconnected on dispose. */
-    readonly realtime?: (settings: Readonly<T>) => RealtimeConnection;
+    readonly realtime?: (settings: DeepReadonly<T>) => RealtimeConnection;
 
     /** State-only notification services. */
     readonly notifications?: WebCoreNotificationOptions;
@@ -317,9 +317,9 @@ export interface WebCoreAppOptions<T extends FoundationConfig> {
 /**
  * Direct typed references to every service the preset installed.
  */
-export interface WebCoreServices<T> {
+export interface WebCoreServices<T extends object> {
     /** The application configuration repository. */
-    readonly config: ConfigRepository<T & Record<string, unknown>>;
+    readonly config: ConfigRepository<T>;
 
     /** The installed HTTP client. */
     readonly http: HttpClient;
@@ -372,7 +372,7 @@ export interface WebCoreApp<T extends FoundationConfig> {
     readonly i18n: ApplicationI18n;
 
     /** The frozen configuration tree. */
-    readonly config: Readonly<T>;
+    readonly config: DeepReadonly<T>;
 
     /** Direct typed references to every service the preset installed. */
     readonly services: WebCoreServices<T>;
@@ -416,10 +416,10 @@ interface AppFoundation<T extends FoundationConfig> {
     readonly environment: Environment;
 
     /** The frozen configuration repository. */
-    readonly repository: ConfigRepository<T & Record<string, unknown>>;
+    readonly repository: ConfigRepository<T>;
 
     /** The frozen configuration tree. */
-    readonly settings: Readonly<T>;
+    readonly settings: DeepReadonly<T>;
 
     /** The installed storage adapter. */
     readonly storage: KeyValueStorage;
@@ -480,6 +480,8 @@ interface AppIntegration {
  * service holders it installed stay installed.
  *
  * @throws {ModuleRegistryError} when the module list fails validation
+ * @throws {RuntimeEnvironmentError} when the runtime document cannot be
+ * loaded; only a 404 boots over an empty document
  * @throws {FoundationBootError} when the monitor options cannot work
  */
 export async function createWebCoreApp<T extends FoundationConfig>(
@@ -489,12 +491,15 @@ export async function createWebCoreApp<T extends FoundationConfig>(
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
     const teardowns = new TeardownStack();
 
+    const colorSchemeErrors = new DeferredErrorSink('color-scheme');
+
     let reporter: ErrorReporter = new NullErrorReporter();
 
     try {
-        const foundation = await bootFoundation(options, platform, runtimeUrl, teardowns);
+        const foundation = await bootFoundation(options, platform, runtimeUrl, colorSchemeErrors.report, teardowns);
 
         reporter = foundation.observability.reporter;
+        colorSchemeErrors.attach(reporter);
 
         const moduleLayer = await bootModuleLayer(options, platform, foundation, teardowns);
         const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
@@ -505,6 +510,54 @@ export async function createWebCoreApp<T extends FoundationConfig>(
         reportRollbackFailures(teardowns.drain(), reporter);
 
         throw error;
+    }
+}
+
+/**
+ * Holds errors raised before the reporter is wired, then forwards them and
+ * every later one to it.
+ */
+class DeferredErrorSink {
+    /** The reporter context's source tag. */
+    readonly #source: string;
+
+    /** The errors raised before a reporter was attached. */
+    readonly #pending: unknown[] = [];
+
+    /** The attached reporter, or null until the boot wires one. */
+    #reporter: ErrorReporter | null = null;
+
+    constructor(source: string) {
+        this.#source = source;
+    }
+
+    /**
+     * Forward an error to the reporter, or hold it until one is attached.
+     */
+    readonly report = (error: unknown): void => {
+        if (this.#reporter === null) {
+            this.#pending.push(error);
+
+            return;
+        }
+
+        this.#reporter.captureError(error, { source: this.#source });
+    };
+
+    /**
+     * Attach the reporter and flush the held errors to it; a throwing reporter
+     * never fails the boot.
+     */
+    attach(reporter: ErrorReporter): void {
+        this.#reporter = reporter;
+
+        for (const error of this.#pending.splice(0)) {
+            try {
+                this.report(error);
+            } catch {
+                // Reporting is best-effort; the boot carries on.
+            }
+        }
     }
 }
 
@@ -530,6 +583,7 @@ async function bootFoundation<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
+    onColorSchemeError: (error: unknown) => void,
     teardowns: TeardownStack,
 ): Promise<AppFoundation<T>> {
     recordPhase('module-registry');
@@ -546,7 +600,7 @@ async function bootFoundation<T extends FoundationConfig>(
     recordPhase('color-scheme');
 
     const storage = options.platform?.storage ?? resolveBrowserStorage(platform.targetWindow);
-    const colorScheme = resolveColorScheme(storage, platform, options);
+    const colorScheme = resolveColorScheme(storage, platform, options, onColorSchemeError);
 
     teardowns.push(() => {
         colorScheme.dispose();
@@ -564,6 +618,7 @@ async function bootFoundation<T extends FoundationConfig>(
 
     const core = await bootFoundationCore<T>(
         {
+            runtime: { url: runtimeUrl },
             createEnvironment: options.config.createEnvironment,
             define: options.config.define,
             storage,
@@ -580,7 +635,6 @@ async function bootFoundation<T extends FoundationConfig>(
             onPhase: recordPhase,
         },
         { fetchFn: platform.fetchFn },
-        runtimeUrl,
     );
 
     return { ...core, storage, colorScheme, registry, app, pinia, toastService, confirmService };
@@ -648,13 +702,7 @@ async function wireAppIntegration<T extends FoundationConfig>(
             targetWindow: platform.targetWindow,
         }),
     );
-    teardowns.push(
-        installPageTracking({
-            router,
-            tracker: observability.analytics,
-            trail: observability.trail,
-        }),
-    );
+    teardowns.push(resolvePageTracking(router, observability));
 
     recordPhase('realtime');
 
@@ -894,6 +942,7 @@ function resolveColorScheme<T extends FoundationConfig>(
     storage: KeyValueStorage,
     platform: ResolvedPlatform,
     options: WebCoreAppOptions<T>,
+    onError: (error: unknown) => void,
 ): ColorSchemeService {
     const colorScheme = options.colorScheme;
 
@@ -904,6 +953,7 @@ function resolveColorScheme<T extends FoundationConfig>(
         ...(colorScheme?.themeColors === undefined ? {} : { themeColors: colorScheme.themeColors }),
         targetWindow: platform.targetWindow,
         targetDocument: platform.targetDocument,
+        onError,
     });
 }
 
@@ -911,7 +961,7 @@ function resolveColorScheme<T extends FoundationConfig>(
  * Wire internationalisation and install the locale switcher.
  */
 function resolveLocale<T extends FoundationConfig>(
-    settings: Readonly<T>,
+    settings: DeepReadonly<T>,
     modules: readonly ModuleDefinition[],
     storage: KeyValueStorage,
     platform: ResolvedPlatform,
@@ -935,12 +985,27 @@ function resolveLocale<T extends FoundationConfig>(
 }
 
 /**
+ * Track page views and navigation breadcrumbs, reporting a throwing tracker or
+ * trail.
+ */
+function resolvePageTracking(router: Router, observability: WiredObservability): () => void {
+    return installPageTracking({
+        router,
+        tracker: observability.analytics,
+        trail: observability.trail,
+        onError: error => {
+            observability.reporter.captureError(error, { source: 'page-tracking' });
+        },
+    });
+}
+
+/**
  * Build and install the opt-in realtime connection, unconnected; null when none
  * is configured.
  */
 function resolveRealtime<T extends FoundationConfig>(
-    settings: Readonly<T>,
-    factory: ((settings: Readonly<T>) => RealtimeConnection) | undefined,
+    settings: DeepReadonly<T>,
+    factory: ((settings: DeepReadonly<T>) => RealtimeConnection) | undefined,
     teardowns: TeardownStack,
 ): RealtimeConnection | null {
     if (factory === undefined) {
@@ -983,7 +1048,7 @@ function resolveChunkRecovery(
  * Wire the update and connectivity monitors.
  */
 function resolveMonitors<T extends FoundationConfig>(
-    settings: Readonly<T>,
+    settings: DeepReadonly<T>,
     runtimeUrl: string,
     platform: ResolvedPlatform,
     toastService: ToastService,

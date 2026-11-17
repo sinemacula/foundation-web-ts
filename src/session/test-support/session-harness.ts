@@ -13,6 +13,7 @@ import type { RouteLocationRaw, Router } from 'vue-router';
 
 import { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
 import { Environment } from '@sinemacula/foundation/config/environment';
+import type { FlagValue } from '@sinemacula/foundation/feature-flags/feature-flags';
 import type { HttpClient } from '@sinemacula/foundation/http/http-client';
 import type { ModuleHttpContributions } from '@sinemacula/foundation/http/module-http-contributions';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
@@ -237,7 +238,7 @@ export function installObservability(): Observability {
     });
     installFeatureFlags({
         isEnabled: () => false,
-        variant: (_key, fallback) => fallback,
+        variant: <Value extends FlagValue>(_key: string, fallback: Value): Value => fallback,
         setContext: context => {
             observability.flagContexts.push(context);
         },
