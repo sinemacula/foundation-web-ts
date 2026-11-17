@@ -185,5 +185,49 @@ describe('usePagination', () => {
 
             expect(page.value).toBe(3);
         });
+
+        it.each([
+            [2.9, 2],
+            [-0.5, 1],
+            [10.5, 10],
+        ])('truncates goTo(%s) to page %s', (target, expected) => {
+            const { page, offset, goTo } = usePagination({ total: ref(100), perPage: 10, initialPage: 4 });
+
+            goTo(target);
+
+            expect(page.value).toBe(expected);
+            expect(offset.value).toBe((expected - 1) * 10);
+        });
+
+        it.each([Number('abc'), Infinity, -Infinity])('ignores a non-finite goTo(%s)', target => {
+            const { page, goTo, next, previous } = usePagination({ total: ref(100), perPage: 10, initialPage: 4 });
+
+            goTo(target);
+
+            expect(page.value).toBe(4);
+
+            next();
+            previous();
+            previous();
+
+            expect(page.value).toBe(3);
+        });
+    });
+
+    describe('input validation', () => {
+        it.each([
+            [2.7, 2],
+            [0, 1],
+            [Number.NaN, 1],
+            [Infinity, 1],
+        ])('normalises initialPage %s to %s', (initialPage, expected) => {
+            const { page } = usePagination({ total: ref(100), perPage: 10, initialPage });
+
+            expect(page.value).toBe(expected);
+        });
+
+        it.each([0, -5, 2.5, Number.NaN])('rejects perPage %s', perPage => {
+            expect(() => usePagination({ total: ref(100), perPage })).toThrow(RangeError);
+        });
     });
 });
