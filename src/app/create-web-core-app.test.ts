@@ -12,11 +12,13 @@ import { defineComponent, h, onMounted, onUnmounted } from 'vue';
 import type { RouteRecordRaw, RouterHistory } from 'vue-router';
 import { createMemoryHistory, createWebHistory } from 'vue-router';
 
+import type * as PageTracking from '@sinemacula/foundation/analytics/install-page-tracking';
 import { NullAnalyticsTracker } from '@sinemacula/foundation/analytics/null-analytics-tracker';
 import type { Environment } from '@sinemacula/foundation/config/environment';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { UpdateMonitor } from '../updates/update-monitor';
 import { createWebEnvironment } from '../config/web-environment';
+import type * as DocumentTitle from '../i18n/document-title';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import type { HttpClient, RequestInterceptor, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
 import { NullLogger } from '@sinemacula/foundation/logging/null-logger';
@@ -27,12 +29,14 @@ import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
+import type * as GlobalErrorHandling from '../reporting/install-global-error-handling';
+import type * as ChunkErrorRecovery from '../router/chunk-error-recovery';
 import type { RouteMiddleware } from '../router/middleware';
 import { next } from '@sinemacula/foundation/router/middleware';
 import { BrowserStorage } from '../storage/browser-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { WebCoreApp, WebCoreAppOptions } from './create-web-core-app';
-import { createWebCoreApp, observeBootPhases } from './create-web-core-app';
+import { WebCoreAppError, createWebCoreApp, observeBootPhases } from './create-web-core-app';
 import {
     analytics,
     api,
@@ -51,14 +55,17 @@ import {
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
 import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
 
+/**
+ * Hoisted log that the mocked installers below record their teardowns into.
+ */
 const teardownLog = vi.hoisted(() => {
-    const log: { order: string[] | null } = { order: null };
+    const log = { order: null as string[] | null };
 
     return {
         log,
 
         /**
-         * Wrap an installer so its teardown records the step into the active log.
+         * Wrap an installer so its teardown records the step.
          */
         recorded<A extends unknown[]>(step: string, install: (...args: A) => () => void) {
             return (...args: A): (() => void) => {
@@ -74,7 +81,7 @@ const teardownLog = vi.hoisted(() => {
 });
 
 vi.mock('../reporting/install-global-error-handling', async importOriginal => {
-    const actual = await importOriginal<typeof import('../reporting/install-global-error-handling')>();
+    const actual = await importOriginal<typeof GlobalErrorHandling>();
 
     return {
         ...actual,
@@ -83,19 +90,19 @@ vi.mock('../reporting/install-global-error-handling', async importOriginal => {
 });
 
 vi.mock('@sinemacula/foundation/analytics/install-page-tracking', async importOriginal => {
-    const actual = await importOriginal<typeof import('@sinemacula/foundation/analytics/install-page-tracking')>();
+    const actual = await importOriginal<typeof PageTracking>();
 
     return { ...actual, installPageTracking: teardownLog.recorded('page-tracking', actual.installPageTracking) };
 });
 
 vi.mock('../i18n/document-title', async importOriginal => {
-    const actual = await importOriginal<typeof import('../i18n/document-title')>();
+    const actual = await importOriginal<typeof DocumentTitle>();
 
     return { ...actual, installDocumentTitleSync: teardownLog.recorded('title-sync', actual.installDocumentTitleSync) };
 });
 
 vi.mock('../router/chunk-error-recovery', async importOriginal => {
-    const actual = await importOriginal<typeof import('../router/chunk-error-recovery')>();
+    const actual = await importOriginal<typeof ChunkErrorRecovery>();
 
     return {
         ...actual,
@@ -392,7 +399,7 @@ interface Deferred<T> {
  * Create a promise the test settles on demand.
  */
 function deferred<T>(): Deferred<T> {
-    let resolve: (value: T) => void = () => undefined;
+    let resolve!: (value: T) => void;
 
     const promise = new Promise<T>(settle => {
         resolve = settle;
@@ -942,14 +949,14 @@ describe('createWebCoreApp', () => {
             const app = await bootApp({
                 modules: [
                     homeModule({
-                        locales: async locale => {
+                        locales: locale => {
                             if (locale === 'fr-FR' && offline) {
                                 offline = false;
 
-                                throw failure;
+                                return Promise.reject(failure);
                             }
 
-                            return { greeting: `hello-${locale}` };
+                            return Promise.resolve({ greeting: `hello-${locale}` });
                         },
                     }),
                 ],
@@ -1401,7 +1408,7 @@ describe('createWebCoreApp', () => {
         });
 
         it('silences an update check still in flight', async () => {
-            let respond: (response: Response) => void = () => undefined;
+            const response = deferred<Response>();
             const toastService = new ToastService();
             const fetchFn = makeFetch(wire([['APP_VERSION', '1.0.0']]));
 
@@ -1411,17 +1418,12 @@ describe('createWebCoreApp', () => {
                 platform: makeSeams(fetchFn),
             });
 
-            fetchFn.mockImplementationOnce(
-                () =>
-                    new Promise<Response>(resolve => {
-                        respond = resolve;
-                    }),
-            );
+            fetchFn.mockImplementationOnce(() => response.promise);
 
             const check = app.monitors.updates?.checkNow();
 
             app.dispose();
-            respond(jsonResponse(wire([['APP_VERSION', '2.0.0']])));
+            response.resolve(jsonResponse(wire([['APP_VERSION', '2.0.0']])));
             await check;
 
             expect(toastService.toasts.value).toHaveLength(0);
@@ -1728,13 +1730,13 @@ describe('createWebCoreApp', () => {
         it('rejects and leaves nothing mounted when a component disposes the handle while mounting', async () => {
             const seams = makeSeams();
             const host = seams.targetDocument.createElement('div');
-            const handle: { current: WebCoreApp<TestConfiguration> | null } = { current: null };
+            let mounting: WebCoreApp<TestConfiguration> | null = null;
 
-            handle.current = await bootApp({
+            const app = await bootApp({
                 root: defineComponent({
                     setup() {
                         onMounted(() => {
-                            handle.current?.dispose();
+                            mounting?.dispose();
                         });
 
                         return () => h('div', 'root');
@@ -1743,7 +1745,9 @@ describe('createWebCoreApp', () => {
                 platform: seams,
             });
 
-            await expect(handle.current.start(host)).rejects.toThrow('The application has been disposed.');
+            mounting = app;
+
+            await expect(app.start(host)).rejects.toThrow('The application has been disposed.');
             expect(host.innerHTML).toBe('');
         });
 
@@ -1752,9 +1756,11 @@ describe('createWebCoreApp', () => {
 
             app.dispose();
 
-            await expect(app.start(document.createElement('div'))).rejects.toThrow(
-                'The application has been disposed.',
-            );
+            const starting = app.start(document.createElement('div'));
+
+            await expect(starting).rejects.toBeInstanceOf(WebCoreAppError);
+            await expect(starting).rejects.toThrow('The application has been disposed.');
+            await expect(starting).rejects.toHaveProperty('name', 'WebCoreAppError');
         });
 
         it('reports disposal rather than a repeat start once a started handle is disposed', async () => {

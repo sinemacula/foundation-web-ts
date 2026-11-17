@@ -398,14 +398,20 @@ describe('registerModules', () => {
     it('rejects an async register hook before running later hooks', async () => {
         const later = vi.fn();
         const settled = deferred<undefined>();
+
+        /**
+         * Contribute only after awaiting, as an async hook would.
+         */
+        const asyncRegister = async ({ http }: ModuleRegisterContext): Promise<void> => {
+            await settled.promise;
+            http.setUnauthorizedHandler(async () => true);
+        };
+
         const modules: ModuleDefinition[] = [
             {
                 name: 'session',
                 routes: [],
-                register: async ({ http }) => {
-                    await settled.promise;
-                    http.setUnauthorizedHandler(async () => true);
-                },
+                register: asyncRegister as unknown as (context: ModuleRegisterContext) => void,
             },
             { name: 'other', routes: [], register: later },
         ];

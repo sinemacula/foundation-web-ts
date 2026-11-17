@@ -302,7 +302,7 @@ describe('wireMonitors update monitoring', () => {
     });
 
     it('raises nothing for a check still in flight at teardown', async () => {
-        let respond: (response: Response) => void = () => undefined;
+        let respond!: (response: Response) => void;
         const { options, service, toasts } = makeHarness({ updates: { toastKey: 'app.updates.available' } });
         const fetchFn = vi.fn(
             () =>

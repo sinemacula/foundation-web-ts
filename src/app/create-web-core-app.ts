@@ -106,6 +106,16 @@ function recordPhase(phase: BootPhase): void {
 }
 
 /**
+ * The application handle was used outside its start-then-dispose lifecycle.
+ */
+export class WebCoreAppError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'WebCoreAppError';
+    }
+}
+
+/**
  * Configuration construction options.
  */
 export interface WebCoreConfigOptions<T extends FoundationConfig> {
@@ -380,8 +390,8 @@ export interface WebCoreApp<T extends FoundationConfig> {
      * component renders. A handle starts at most once.
      *
      * @param selector - the mount target; default '#app'
-     * @throws Error when the handle was already started, or is disposed before
-     * it mounts
+     * @throws {WebCoreAppError} when the handle was already started, or is
+     * disposed before it mounts
      */
     start(selector?: string | Element): Promise<void>;
 
@@ -620,21 +630,7 @@ async function wireAppIntegration<T extends FoundationConfig>(
 
     recordPhase('router');
 
-    const history = options.platform?.history ?? createWebHistory();
-
-    teardowns.push(() => {
-        history.destroy();
-    });
-
-    const { router, titleSyncTeardown } = wireRouter({
-        modules: registry.modules,
-        i18n,
-        appName: settings.app.name,
-        history,
-        targetDocument: platform.targetDocument,
-    });
-
-    teardowns.push(titleSyncTeardown);
+    const router = resolveRouter(options, platform, foundation, i18n, teardowns);
 
     app.use(router);
 
@@ -772,11 +768,11 @@ function assembleApp<T extends FoundationConfig>(
         monitors: { updates: monitors.updates, connectivity: monitors.connectivity },
         async start(selector: string | Element = DEFAULT_MOUNT_SELECTOR): Promise<void> {
             if (disposal.signal.aborted) {
-                throw new Error(DISPOSED_MESSAGE);
+                throw new WebCoreAppError(DISPOSED_MESSAGE);
             }
 
             if (started) {
-                throw new Error(ALREADY_STARTED_MESSAGE);
+                throw new WebCoreAppError(ALREADY_STARTED_MESSAGE);
             }
 
             started = true;
@@ -784,7 +780,7 @@ function assembleApp<T extends FoundationConfig>(
             await Promise.race([router.isReady(), whenAborted(disposal.signal)]);
 
             if (disposal.signal.aborted) {
-                throw new Error(DISPOSED_MESSAGE);
+                throw new WebCoreAppError(DISPOSED_MESSAGE);
             }
 
             teardowns.push(() => {
@@ -793,11 +789,11 @@ function assembleApp<T extends FoundationConfig>(
 
             app.mount(selector);
 
-            // A component may dispose the handle while it mounts, before the root is attached.
+            // A component may dispose the handle while it mounts.
             if (disposal.signal.aborted) {
                 unmountIfMounted(app);
 
-                throw new Error(DISPOSED_MESSAGE);
+                throw new WebCoreAppError(DISPOSED_MESSAGE);
             }
         },
         dispose(): void {
@@ -850,6 +846,36 @@ function resolveBrowserStorage(targetWindow: Window): KeyValueStorage {
     } catch {
         return new MemoryStorage();
     }
+}
+
+/**
+ * Build the router over its history and install document-title sync,
+ * registering the history's release before the router can fail to build.
+ */
+function resolveRouter<T extends FoundationConfig>(
+    options: WebCoreAppOptions<T>,
+    platform: ResolvedPlatform,
+    foundation: AppFoundation<T>,
+    i18n: ApplicationI18n,
+    teardowns: TeardownStack,
+): Router {
+    const history = options.platform?.history ?? createWebHistory();
+
+    teardowns.push(() => {
+        history.destroy();
+    });
+
+    const { router, titleSyncTeardown } = wireRouter({
+        modules: foundation.registry.modules,
+        i18n,
+        appName: foundation.settings.app.name,
+        history,
+        targetDocument: platform.targetDocument,
+    });
+
+    teardowns.push(titleSyncTeardown);
+
+    return router;
 }
 
 /**
