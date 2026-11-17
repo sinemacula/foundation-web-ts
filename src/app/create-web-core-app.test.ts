@@ -1327,6 +1327,7 @@ describe('createWebCoreApp', () => {
             const fetchFn = makeFetch(wire([['APP_VERSION', '1.0.0']]));
             const seams = makeSeams(fetchFn);
             const toastService = new ToastService();
+            const confirmService = new ConfirmService();
             const host = seams.targetDocument.createElement('div');
 
             teardownLog.log.order = order;
@@ -1341,7 +1342,7 @@ describe('createWebCoreApp', () => {
                         return () => h('div', 'root');
                     },
                 }),
-                notifications: { toasts: toastService },
+                notifications: { toasts: toastService, confirm: confirmService },
                 modules: [
                     homeModule({
                         name: 'alpha',
@@ -1381,6 +1382,7 @@ describe('createWebCoreApp', () => {
             recordStep(order, 'connectivity.stop', app.monitors.connectivity as ConnectivityMonitor, 'stop');
             recordStep(order, 'history.destroy', seams.history, 'destroy');
             recordStep(order, 'toasts.clear', toastService, 'clear');
+            recordStep(order, 'confirm.cancelAll', confirmService, 'cancelAll');
             recordStep(order, 'color-scheme', app.services.colorScheme, 'dispose');
 
             app.dispose();
@@ -1399,6 +1401,7 @@ describe('createWebCoreApp', () => {
                 'history.destroy',
                 'dispose:store-2',
                 'dispose:store-1',
+                'confirm.cancelAll',
                 'toasts.clear',
                 'color-scheme',
             ]);
@@ -1406,7 +1409,7 @@ describe('createWebCoreApp', () => {
 
             app.dispose();
 
-            expect(order).toHaveLength(15);
+            expect(order).toHaveLength(16);
         });
 
         it('no longer recovers chunk failures once disposed', async () => {
@@ -1459,6 +1462,30 @@ describe('createWebCoreApp', () => {
             expect(() => {
                 app.dispose();
             }).not.toThrow();
+        });
+
+        it('declines every pending confirmation and clears timed toasts', async () => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+            try {
+                const toastService = new ToastService();
+                const confirmService = new ConfirmService();
+                const app = await bootApp({ notifications: { toasts: toastService, confirm: confirmService } });
+
+                toastService.success('saved');
+
+                const active = confirmService.confirm({ title: 'Delete?', message: 'This cannot be undone.' });
+                const queued = confirmService.confirm({ title: 'Archive?', message: 'Move it to the archive.' });
+
+                app.dispose();
+
+                expect(await active).toBe(false);
+                expect(await queued).toBe(false);
+                expect(toastService.toasts.value).toHaveLength(0);
+                expect(vi.getTimerCount()).toBe(0);
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('silences an update check still in flight', async () => {
@@ -1680,6 +1707,36 @@ describe('createWebCoreApp', () => {
                 adds.mockRestore();
                 removes.mockRestore();
             }
+        });
+
+        it('declines a confirmation a module opened before the boot failed', async () => {
+            const confirmService = new ConfirmService();
+            const opened: Array<Promise<boolean>> = [];
+
+            await expect(
+                bootApp({
+                    modules: [
+                        homeModule({
+                            name: 'alpha',
+                            boot: () => {
+                                opened.push(
+                                    confirmService.confirm({
+                                        title: 'Resume?',
+                                        message: 'Pick up where you left off.',
+                                    }),
+                                );
+
+                                return undefined;
+                            },
+                        }),
+                        failingModule(),
+                    ],
+                    notifications: { confirm: confirmService },
+                }),
+            ).rejects.toBe(failure);
+
+            expect(opened).toHaveLength(1);
+            expect(await opened[0]).toBe(false);
         });
 
         it('keeps the boot error when the reporter itself throws', async () => {

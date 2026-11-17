@@ -213,7 +213,8 @@ function resolveUpdatesEnabled<T extends MonitorWiringSettings>(
 }
 
 /**
- * Wire the connectivity monitor, pausing update polling while offline.
+ * Wire the connectivity monitor, pausing update polling while offline and
+ * checking for a new version as soon as the browser is back online.
  */
 function wireConnectivity<T extends MonitorWiringSettings>(
     options: WireMonitorsOptions<T>,
@@ -232,6 +233,7 @@ function wireConnectivity<T extends MonitorWiringSettings>(
     const unsubscribe = monitor.onChange(online => {
         if (online) {
             updates?.start();
+            void updates?.checkNow();
         } else {
             updates?.stop();
         }

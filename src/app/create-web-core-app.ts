@@ -558,6 +558,9 @@ async function bootFoundation<T extends FoundationConfig>(
     teardowns.push(() => {
         toastService.clear();
     });
+    teardowns.push(() => {
+        confirmService.cancelAll();
+    });
 
     const core = await bootFoundationCore<T>(
         {

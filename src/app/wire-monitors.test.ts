@@ -376,12 +376,35 @@ describe('wireMonitors connectivity', () => {
             targetWindow.dispatchEvent(new Event('online'));
             await vi.advanceTimersByTimeAsync(1_000);
 
-            expect(fetchFn).toHaveBeenCalledTimes(1);
+            expect(fetchFn).toHaveBeenCalledTimes(2);
 
             teardown();
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('checks for a new version as soon as the window comes back online', async () => {
+        const targetWindow = makeWindow();
+        const { options, fetchFn, service } = makeHarness({
+            updates: { toastKey: 'app.updates.available', pollIntervalMs: 600_000 },
+            targetWindow,
+        });
+
+        const { teardown } = wireMonitors(options);
+
+        targetWindow.dispatchEvent(new Event('offline'));
+
+        expect(fetchFn).not.toHaveBeenCalled();
+
+        targetWindow.dispatchEvent(new Event('online'));
+        await vi.waitFor(() => {
+            expect(service.toasts.value).toHaveLength(1);
+        });
+
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+
+        teardown();
     });
 
     it('polls regardless of connectivity when connectivity monitoring is disabled', async () => {
