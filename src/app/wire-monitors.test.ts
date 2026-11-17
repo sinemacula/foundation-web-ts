@@ -495,18 +495,29 @@ describe('wireMonitors connectivity', () => {
     });
 
     it('runs without an update monitor when enabled explicitly', () => {
-        const { options } = makeHarness({ connectivity: { enabled: true }, targetWindow: window });
+        const reportError = vi.fn();
+        const targetWindow = makeWindow();
 
-        const { updates, connectivity } = wireMonitors(options);
+        vi.stubGlobal('reportError', reportError);
 
-        expect(updates).toBeNull();
-        expect(connectivity).not.toBeNull();
-        expect(() => {
-            window.dispatchEvent(new Event('offline'));
-            window.dispatchEvent(new Event('online'));
-        }).not.toThrow();
+        try {
+            const { options } = makeHarness({ connectivity: { enabled: true }, targetWindow });
 
-        connectivity?.stop();
+            const { updates, connectivity, teardown } = wireMonitors(options);
+
+            expect(updates).toBeNull();
+            expect(connectivity).not.toBeNull();
+
+            targetWindow.dispatchEvent(new Event('offline'));
+            targetWindow.dispatchEvent(new Event('online'));
+
+            expect(connectivity?.online).toBe(true);
+            expect(reportError).not.toHaveBeenCalled();
+
+            teardown();
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
     it('uses the platform defaults when no seams are given', () => {
