@@ -8,6 +8,7 @@
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 import type { RouteLocation, RouteLocationNormalized, Router } from 'vue-router';
+import { isNavigationFailure, NavigationFailureType } from 'vue-router';
 
 /**
  * The reactive navigation-progress state returned by
@@ -37,7 +38,6 @@ export function createNavigationProgress(router: Router): NavigationProgress {
      */
     const settle = (to: RouteLocationNormalized): void => {
         if (navigationOf(to) === latest) {
-            latest = null;
             isNavigating.value = false;
         }
     };
@@ -47,7 +47,14 @@ export function createNavigationProgress(router: Router): NavigationProgress {
         isNavigating.value = true;
     });
 
-    const removeAfterEach = router.afterEach(settle);
+    const removeAfterEach = router.afterEach((to, _from, failure) => {
+        // A duplicated navigation skips the before hook yet supersedes any pending one.
+        if (isNavigationFailure(failure, NavigationFailureType.duplicated)) {
+            isNavigating.value = false;
+        } else {
+            settle(to);
+        }
+    });
 
     const removeOnError = router.onError((_error: unknown, to: RouteLocationNormalized) => {
         settle(to);

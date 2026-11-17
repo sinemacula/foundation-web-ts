@@ -236,4 +236,26 @@ describe('createNavigationProgress', () => {
 
         progress.stop();
     });
+
+    it('settles when the current location is pushed while a navigation is pending', async () => {
+        const pending = deferredComponent();
+        const router = buildRouter(pending.load);
+        const progress = createNavigationProgress(router);
+
+        await router.push('/');
+
+        const superseded = router.push('/lazy');
+
+        await flushRouterGuards();
+        await router.push('/');
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        pending.resolve();
+        await superseded;
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
+    });
 });
