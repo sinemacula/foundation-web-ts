@@ -50,8 +50,8 @@ interface PendingQuery {
     /** Every patch set since `base` committed, later keys winning. */
     readonly patch: Record<string, string | null>;
 
-    /** The number of patches merged into `patch`. */
-    sequence: number;
+    /** Identifies the latest `set` merged into `patch`. */
+    latest: object;
 }
 
 /** The accumulated query patch per router. */
@@ -65,8 +65,10 @@ const pendingQueries = new WeakMap<Router, PendingQuery>();
 function replaceQuery(router: Router, patch: Readonly<Record<string, string | null>>): Promise<void> {
     const base = router.currentRoute.value;
     const existing = pendingQueries.get(router);
-    const pending = existing?.base === base ? existing : { base, patch: {}, sequence: 0 };
-    const sequence = ++pending.sequence;
+    const token = {};
+    const pending = existing?.base === base ? existing : { base, patch: {}, latest: token };
+
+    pending.latest = token;
 
     pendingQueries.set(router, pending);
     Object.assign(pending.patch, patch);
@@ -74,7 +76,7 @@ function replaceQuery(router: Router, patch: Readonly<Record<string, string | nu
     return router
         .replace({ query: applyPatch(base.query, pending.patch) })
         .finally(() => {
-            if (pendingQueries.get(router) === pending && pending.sequence === sequence) {
+            if (pendingQueries.get(router) === pending && pending.latest === token) {
                 pendingQueries.delete(router);
             }
         })

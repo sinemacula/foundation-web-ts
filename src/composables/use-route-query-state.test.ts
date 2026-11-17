@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defineComponent } from 'vue';
 import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 
@@ -261,7 +261,7 @@ describe('useRouteQueryState', () => {
             const state = useRouteQueryState(router, { defaults: { page: '1' } });
             let navigations = 0;
 
-            router.beforeEach(() => {
+            router.afterEach(() => {
                 navigations++;
             });
 
@@ -372,6 +372,34 @@ describe('useRouteQueryState', () => {
             await Promise.all([search, page]);
 
             expect(router.currentRoute.value.fullPath).toBe('/other?tab=all');
+        });
+
+        it('keeps earlier keys when a superseded update settles before the next set', async () => {
+            const { router } = makeRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { search: '', page: '1', sort: 'name' } });
+            const releases: Array<() => void> = [];
+            const removeGuard = router.beforeEach(
+                () =>
+                    new Promise<void>(resolve => {
+                        releases.push(resolve);
+                    }),
+            );
+
+            const search = state.set({ search: 'ada' });
+            const page = state.set({ page: '2' });
+
+            await search;
+            await vi.waitFor(() => expect(releases).toHaveLength(1));
+
+            const sort = state.set({ sort: 'date' });
+
+            removeGuard();
+            releases[0]?.();
+            await Promise.all([page, sort]);
+
+            expect(router.currentRoute.value.query).toStrictEqual({ search: 'ada', page: '2', sort: 'date' });
         });
 
         it('lets a navigation away issued in the same tick win', async () => {
