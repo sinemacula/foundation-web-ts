@@ -12,6 +12,8 @@ import { createMemoryHistory } from 'vue-router';
 
 import type { RouteMiddleware } from './middleware';
 import { next, redirect } from '@sinemacula/foundation/router/middleware';
+import { createNavigationProgress } from './navigation-progress';
+import { RedirectLoopError } from './redirect-loop-error';
 import { createApplicationRouter, resolveScrollPosition } from './router-factory';
 
 const EmptyComponent = defineComponent({ render: () => null });
@@ -180,5 +182,177 @@ describe('createApplicationRouter', () => {
         await router.push('/');
 
         expect(globalHandle).toHaveBeenCalledTimes(2);
+    });
+
+    it('runs matched-record middleware parent-first after global middleware', async () => {
+        const order: string[] = [];
+
+        /**
+         * Build a middleware that records its name when it runs.
+         */
+        const recording = (name: string): RouteMiddleware => ({
+            handle: () => {
+                order.push(name);
+
+                return Promise.resolve(next());
+            },
+        });
+
+        const router = createApplicationRouter({
+            history: createMemoryHistory(),
+            globalMiddleware: [recording('global')],
+            routes: [
+                { path: '/', component: EmptyComponent },
+                {
+                    path: '/parent',
+                    component: EmptyComponent,
+                    meta: { middleware: [recording('parent')] },
+                    children: [
+                        { path: 'child', component: EmptyComponent, meta: { middleware: [recording('child')] } },
+                    ],
+                },
+            ],
+        });
+
+        await router.push('/parent/child');
+
+        expect(order).toStrictEqual(['global', 'parent', 'child']);
+    });
+
+    it('rejects with the middleware error, skips later middleware and notifies error listeners', async () => {
+        const failure = new Error('refresh failed');
+        const laterHandle = vi.fn(async () => next());
+        const onError = vi.fn();
+        const router = createApplicationRouter({
+            history: createMemoryHistory(),
+            globalMiddleware: [{ handle: () => Promise.reject(failure) }, { handle: laterHandle }],
+            routes: [{ path: '/', component: EmptyComponent }],
+        });
+
+        router.onError(onError);
+
+        const ready = router.isReady();
+
+        await expect(router.push('/')).rejects.toBe(failure);
+        await expect(ready).rejects.toBe(failure);
+        expect(laterHandle).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(failure, expect.objectContaining({ path: '/' }), expect.anything());
+    });
+
+    describe('redirect loops', () => {
+        /** Build a router whose middleware redirects `/ping` and `/pong` to each other. */
+        function pingPongRouter() {
+            const router = createApplicationRouter({
+                history: createMemoryHistory(),
+                globalMiddleware: [
+                    {
+                        handle: async ({ to }) => {
+                            if (to.path === '/ping') {
+                                return redirect('/pong');
+                            }
+
+                            return to.path === '/pong' ? redirect('/ping') : next();
+                        },
+                    },
+                ],
+                routes: [
+                    { path: '/', component: EmptyComponent },
+                    { path: '/ping', component: EmptyComponent },
+                    { path: '/pong', component: EmptyComponent },
+                ],
+            });
+
+            router.onError(() => undefined);
+
+            return router;
+        }
+
+        it('fails a navigation whose middleware redirect to each other', async () => {
+            const router = pingPongRouter();
+
+            await router.push('/');
+
+            const failure = await router.push('/ping').catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(RedirectLoopError);
+            expect(failure).toMatchObject({ name: 'RedirectLoopError', origin: '/ping', target: '/pong', limit: 10 });
+            expect(router.currentRoute.value.path).toBe('/');
+        });
+
+        it('fails a middleware redirect back to the same location', async () => {
+            const router = createApplicationRouter({
+                history: createMemoryHistory(),
+                globalMiddleware: [
+                    { handle: async ({ to }) => (to.path === '/self' ? redirect('/self?again=1') : next()) },
+                ],
+                routes: [
+                    { path: '/', component: EmptyComponent },
+                    { path: '/self', component: EmptyComponent },
+                ],
+            });
+
+            router.onError(() => undefined);
+
+            await expect(router.push('/self')).rejects.toBeInstanceOf(RedirectLoopError);
+        });
+
+        it('reports the loop to error listeners and resets navigation progress', async () => {
+            const router = pingPongRouter();
+            const onError = vi.fn();
+
+            await router.push('/');
+            router.onError(onError);
+
+            const progress = createNavigationProgress(router);
+
+            await router.push('/ping').catch(() => undefined);
+
+            expect(onError).toHaveBeenCalledWith(expect.any(RedirectLoopError), expect.anything(), expect.anything());
+            expect(progress.isNavigating.value).toBe(false);
+
+            progress.stop();
+        });
+
+        it('allows a chain of ten middleware redirects', async () => {
+            const router = createApplicationRouter({
+                history: createMemoryHistory(),
+                globalMiddleware: [
+                    {
+                        handle: async ({ to }) => {
+                            const step = Number(to.params['step']);
+
+                            return step < 10 ? redirect(`/step/${step + 1}`) : next();
+                        },
+                    },
+                ],
+                routes: [
+                    { path: '/', component: EmptyComponent },
+                    { path: '/step/:step', component: EmptyComponent },
+                ],
+            });
+
+            await router.push('/step/0');
+
+            expect(router.currentRoute.value.path).toBe('/step/10');
+        });
+
+        it('counts redirects per navigation, not across navigations', async () => {
+            const router = createApplicationRouter({
+                history: createMemoryHistory(),
+                globalMiddleware: [{ handle: async ({ to }) => (to.path === '/old' ? redirect('/new') : next()) }],
+                routes: [
+                    { path: '/', component: EmptyComponent },
+                    { path: '/old', component: EmptyComponent },
+                    { path: '/new', component: EmptyComponent },
+                ],
+            });
+
+            for (let attempt = 0; attempt < 12; attempt += 1) {
+                await router.push('/');
+                await router.push('/old');
+            }
+
+            expect(router.currentRoute.value.path).toBe('/new');
+        });
     });
 });
