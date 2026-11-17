@@ -1757,6 +1757,55 @@ describe('createWebCoreApp', () => {
             );
         });
 
+        it('reports disposal rather than a repeat start once a started handle is disposed', async () => {
+            const seams = makeSeams();
+            const app = await bootApp({ platform: seams });
+
+            await app.start(seams.targetDocument.createElement('div'));
+            app.dispose();
+
+            await expect(app.start(seams.targetDocument.createElement('div'))).rejects.toThrow(
+                'The application has been disposed.',
+            );
+        });
+
+        it('waits for a pending initial navigation before mounting', async () => {
+            const gate = deferred<undefined>();
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        guards: [
+                            {
+                                handle: async () => {
+                                    await gate.promise;
+
+                                    return next();
+                                },
+                            },
+                        ],
+                    }),
+                ],
+                platform: seams,
+            });
+
+            const starting = app.start(host);
+
+            await new Promise(resolve => {
+                setTimeout(resolve, 0);
+            });
+
+            expect(host.innerHTML).toBe('');
+
+            gate.resolve(undefined);
+            await starting;
+
+            expect(host.innerHTML).toContain('root');
+
+            app.dispose();
+        });
+
         it('rejects a second start and keeps the first mount', async () => {
             const seams = makeSeams();
             const host = seams.targetDocument.createElement('div');

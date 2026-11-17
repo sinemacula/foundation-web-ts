@@ -31,6 +31,7 @@ import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
+import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
 import { installGlobalErrorHandling } from '../reporting/install-global-error-handling';
 import { BrowserStorage } from '../storage/browser-storage';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
@@ -477,7 +478,7 @@ export async function createWebCoreApp<T extends FoundationConfig>(
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
     const teardowns = new TeardownStack();
 
-    let reporter: ErrorReporter | null = null;
+    let reporter: ErrorReporter = new NullErrorReporter();
 
     try {
         const foundation = await bootFoundation(options, platform, runtimeUrl, teardowns);
@@ -499,10 +500,10 @@ export async function createWebCoreApp<T extends FoundationConfig>(
 /**
  * Report teardown failures from a boot rollback without masking the boot error.
  */
-function reportRollbackFailures(failures: readonly unknown[], reporter: ErrorReporter | null): void {
+function reportRollbackFailures(failures: readonly unknown[], reporter: ErrorReporter): void {
     for (const failure of failures) {
         try {
-            reporter?.captureError(failure, { source: 'boot-rollback' });
+            reporter.captureError(failure, { source: 'boot-rollback' });
         } catch {
             // The boot error is the one that must surface.
         }
@@ -800,10 +801,6 @@ function assembleApp<T extends FoundationConfig>(
             }
         },
         dispose(): void {
-            if (disposal.signal.aborted) {
-                return;
-            }
-
             disposal.abort();
             teardowns.dispose();
         },
