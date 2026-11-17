@@ -786,13 +786,18 @@ function assembleApp<T extends FoundationConfig>(
                 throw new Error(DISPOSED_MESSAGE);
             }
 
+            teardowns.push(() => {
+                unmountIfMounted(app);
+            });
+
             app.mount(selector);
 
-            teardowns.push(() => {
-                if (app._container !== null) {
-                    app.unmount();
-                }
-            });
+            // A component may dispose the handle while it mounts, before the root is attached.
+            if (disposal.signal.aborted) {
+                unmountIfMounted(app);
+
+                throw new Error(DISPOSED_MESSAGE);
+            }
         },
         dispose(): void {
             if (disposal.signal.aborted) {
@@ -803,6 +808,15 @@ function assembleApp<T extends FoundationConfig>(
             teardowns.dispose();
         },
     };
+}
+
+/**
+ * Unmount the application when it is attached to a container.
+ */
+function unmountIfMounted(app: App<Element>): void {
+    if (app._container !== null) {
+        app.unmount();
+    }
 }
 
 /**

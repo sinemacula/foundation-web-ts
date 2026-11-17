@@ -1725,6 +1725,28 @@ describe('createWebCoreApp', () => {
             expect(host.innerHTML).toBe('');
         });
 
+        it('rejects and leaves nothing mounted when a component disposes the handle while mounting', async () => {
+            const seams = makeSeams();
+            const host = seams.targetDocument.createElement('div');
+            const handle: { current: WebCoreApp<TestConfiguration> | null } = { current: null };
+
+            handle.current = await bootApp({
+                root: defineComponent({
+                    setup() {
+                        onMounted(() => {
+                            handle.current?.dispose();
+                        });
+
+                        return () => h('div', 'root');
+                    },
+                }),
+                platform: seams,
+            });
+
+            await expect(handle.current.start(host)).rejects.toThrow('The application has been disposed.');
+            expect(host.innerHTML).toBe('');
+        });
+
         it('rejects a start after dispose', async () => {
             const app = await bootApp();
 
