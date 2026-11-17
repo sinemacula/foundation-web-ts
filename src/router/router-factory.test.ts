@@ -240,20 +240,37 @@ describe('createApplicationRouter', () => {
     });
 
     describe('redirect loops', () => {
+        /**
+         * Build a middleware that redirects through `redirectFor` but gives up
+         * after fifty calls, so a missing loop guard fails the test instead of
+         * hanging it.
+         */
+        function boundedRedirects(redirectFor: (path: string) => string | null): RouteMiddleware {
+            let calls = 0;
+
+            return {
+                handle: ({ to }) => {
+                    calls += 1;
+
+                    const target = calls > 50 ? null : redirectFor(to.path);
+
+                    return Promise.resolve(target === null ? next() : redirect(target));
+                },
+            };
+        }
+
         /** Build a router whose middleware redirects `/ping` and `/pong` to each other. */
         function pingPongRouter() {
             const router = createApplicationRouter({
                 history: createMemoryHistory(),
                 globalMiddleware: [
-                    {
-                        handle: async ({ to }) => {
-                            if (to.path === '/ping') {
-                                return redirect('/pong');
-                            }
+                    boundedRedirects(path => {
+                        if (path === '/ping') {
+                            return '/pong';
+                        }
 
-                            return to.path === '/pong' ? redirect('/ping') : next();
-                        },
-                    },
+                        return path === '/pong' ? '/ping' : null;
+                    }),
                 ],
                 routes: [
                     { path: '/', component: EmptyComponent },
@@ -282,9 +299,7 @@ describe('createApplicationRouter', () => {
         it('fails a middleware redirect back to the same location', async () => {
             const router = createApplicationRouter({
                 history: createMemoryHistory(),
-                globalMiddleware: [
-                    { handle: async ({ to }) => (to.path === '/self' ? redirect('/self?again=1') : next()) },
-                ],
+                globalMiddleware: [boundedRedirects(path => (path === '/self' ? '/self?again=1' : null))],
                 routes: [
                     { path: '/', component: EmptyComponent },
                     { path: '/self', component: EmptyComponent },
@@ -318,10 +333,10 @@ describe('createApplicationRouter', () => {
                 history: createMemoryHistory(),
                 globalMiddleware: [
                     {
-                        handle: async ({ to }) => {
+                        handle: ({ to }) => {
                             const step = Number(to.params['step']);
 
-                            return step < 10 ? redirect(`/step/${step + 1}`) : next();
+                            return Promise.resolve(step < 10 ? redirect(`/step/${step + 1}`) : next());
                         },
                     },
                 ],
