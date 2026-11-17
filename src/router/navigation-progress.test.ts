@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Component } from 'vue';
 import { defineComponent, effectScope } from 'vue';
 import type { Router } from 'vue-router';
@@ -54,13 +54,16 @@ async function flushRouterGuards(): Promise<void> {
 }
 
 describe('createNavigationProgress', () => {
-    it('starts with isNavigating false', () => {
+    it('starts with isNavigating false and no warning outside an effect scope', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const router = buildRouter(() => Promise.resolve(EmptyComponent));
         const progress = createNavigationProgress(router);
 
         expect(progress.isNavigating.value).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
 
         progress.stop();
+        warn.mockRestore();
     });
 
     it('sets isNavigating true while a lazy navigation is in flight and false once it completes', async () => {
@@ -152,5 +155,132 @@ describe('createNavigationProgress', () => {
 
         deferred.resolve();
         await navigation;
+    });
+
+    it('stays navigating while a newer navigation is in flight after a superseded one settles', async () => {
+        const first = deferredComponent();
+        const second = deferredComponent();
+        const router = createRouter({
+            history: createMemoryHistory(),
+            routes: [
+                { path: '/', component: EmptyComponent },
+                { path: '/first', component: first.load },
+                { path: '/second', component: second.load },
+            ],
+        });
+        const progress = createNavigationProgress(router);
+
+        const superseded = router.push('/first');
+
+        await flushRouterGuards();
+
+        const latest = router.push('/second');
+
+        await flushRouterGuards();
+        first.resolve();
+        await superseded;
+
+        expect(progress.isNavigating.value).toBe(true);
+
+        second.resolve();
+        await latest;
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
+    });
+
+    it('stays navigating when a superseded navigation fails while a newer one is in flight', async () => {
+        let failFirst!: (error: Error) => void;
+        const second = deferredComponent();
+        const router = createRouter({
+            history: createMemoryHistory(),
+            routes: [
+                { path: '/', component: EmptyComponent },
+                { path: '/first', component: () => new Promise<Component>((_resolve, reject) => (failFirst = reject)) },
+                { path: '/second', component: second.load },
+            ],
+        });
+        const progress = createNavigationProgress(router);
+
+        const superseded = router.push('/first').catch(() => undefined);
+
+        await flushRouterGuards();
+
+        const latest = router.push('/second');
+
+        await flushRouterGuards();
+        failFirst(new Error('chunk failed'));
+        await superseded;
+
+        expect(progress.isNavigating.value).toBe(true);
+
+        second.resolve();
+        await latest;
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
+    });
+
+    it('settles when a guard redirects to the current location', async () => {
+        const router = buildRouter(() => Promise.resolve(EmptyComponent));
+        const progress = createNavigationProgress(router);
+
+        await router.push('/');
+        router.beforeEach(to => (to.path === '/lazy' ? '/' : true));
+        await router.push('/lazy');
+
+        expect(router.currentRoute.value.path).toBe('/');
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
+    });
+
+    it('settles when the current location is pushed while a navigation is pending', async () => {
+        const pending = deferredComponent();
+        const router = buildRouter(pending.load);
+        const progress = createNavigationProgress(router);
+
+        await router.push('/');
+
+        const superseded = router.push('/lazy');
+
+        await flushRouterGuards();
+        await router.push('/');
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        pending.resolve();
+        await superseded;
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
+    });
+
+    it('settles when a newer navigation fails in a guard that runs before the progress hook', async () => {
+        const pending = deferredComponent();
+        const router = buildRouter(pending.load);
+
+        router.beforeEach(to => {
+            if (to.path === '/') {
+                throw new Error('guard failed');
+            }
+        });
+        router.onError(() => undefined);
+
+        const progress = createNavigationProgress(router);
+
+        void router.push('/lazy');
+        await flushRouterGuards();
+
+        expect(progress.isNavigating.value).toBe(true);
+
+        await router.push('/').catch(() => undefined);
+
+        expect(progress.isNavigating.value).toBe(false);
+
+        progress.stop();
     });
 });

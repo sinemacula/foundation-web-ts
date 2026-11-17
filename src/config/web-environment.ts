@@ -13,7 +13,7 @@ import { PrefixedEnvironmentSource } from '@sinemacula/foundation/config/prefixe
 const DEFAULT_BUILD_TIME_PREFIX = 'VITE_';
 
 /**
- * Thrown when required runtime configuration keys are missing or empty.
+ * Thrown when required runtime configuration keys are missing or blank.
  */
 export class ConfigurationError extends Error {
     /**
@@ -41,7 +41,7 @@ export interface WebEnvironmentOptions {
     /** The prefix carried by build-time variable keys. Defaults to `VITE_`. */
     readonly buildTimePrefix?: string;
 
-    /** Keys the runtime document must define as non-empty in production. Ignored in development. */
+    /** Keys the runtime document must define as non-blank in production. Ignored in development. */
     readonly requiredKeys?: readonly string[];
 }
 
@@ -49,17 +49,17 @@ export interface WebEnvironmentOptions {
  * Build the application environment from the runtime document.
  *
  * In development the runtime document is chained ahead of the prefixed
- * build-time variables, so a deployed value beats a local default. In
- * production the runtime document stands alone.
+ * build-time variables, so a deployed value beats a local default while a blank
+ * one falls through to it. In production the runtime document stands alone.
  *
  * @throws {ConfigurationError} in production when required runtime keys are
- * missing or empty
+ * missing or blank
  */
 export function createWebEnvironment(options: WebEnvironmentOptions): Environment {
     if (options.dev) {
         return new Environment(
             new ChainEnvironmentSource([
-                new ObjectEnvironmentSource(options.runtime),
+                new ObjectEnvironmentSource(withoutBlankValues(options.runtime)),
                 new PrefixedEnvironmentSource(
                     options.buildTimeEnv ?? {},
                     options.buildTimePrefix ?? DEFAULT_BUILD_TIME_PREFIX,
@@ -74,16 +74,26 @@ export function createWebEnvironment(options: WebEnvironmentOptions): Environmen
 }
 
 /**
- * Assert that every required key is present and non-empty.
+ * Whether a runtime value is absent, empty or whitespace only.
+ */
+function isBlank(value: string | undefined): boolean {
+    return value === undefined || value.trim() === '';
+}
+
+/**
+ * Copy the runtime document without its blank values.
+ */
+function withoutBlankValues(runtime: Readonly<Record<string, string>>): Record<string, string> {
+    return Object.fromEntries(Object.entries(runtime).filter(([, value]) => !isBlank(value)));
+}
+
+/**
+ * Assert that every required key is present and non-blank.
  *
- * @throws {ConfigurationError} when any required key is missing or empty
+ * @throws {ConfigurationError} when any required key is missing or blank
  */
 function assertRequiredKeys(runtime: Readonly<Record<string, string>>, requiredKeys: readonly string[]): void {
-    const missing = requiredKeys.filter(key => {
-        const value = runtime[key];
-
-        return value === undefined || value === '';
-    });
+    const missing = requiredKeys.filter(key => isBlank(runtime[key]));
 
     if (missing.length > 0) {
         throw new ConfigurationError(`Runtime configuration is missing required keys: ${missing.join(', ')}.`);

@@ -33,6 +33,7 @@ import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtim
 import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
 import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
 import { installGlobalErrorHandling } from '../reporting/install-global-error-handling';
+import { tabRecoveryStorage } from '../router/chunk-error-recovery';
 import { BrowserStorage } from '../storage/browser-storage';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
@@ -688,14 +689,14 @@ function wireReleaseMonitors<T extends FoundationConfig>(
     integration: AppIntegration,
     teardowns: TeardownStack,
 ): WiredMonitors {
-    const { settings, storage, observability, toastService } = foundation;
+    const { settings, observability, toastService } = foundation;
     const { router } = integration;
 
     recordPhase('chunk-recovery');
 
     const chunkRecoveryTeardown = resolveChunkRecovery(
         router,
-        storage,
+        tabRecoveryStorage(platform.targetWindow),
         observability.reporter,
         platform.clock,
         options.monitors?.chunkRecovery,
@@ -959,7 +960,7 @@ function resolveRealtime<T extends FoundationConfig>(
  */
 function resolveChunkRecovery(
     router: Router,
-    storage: KeyValueStorage,
+    storage: KeyValueStorage | null,
     reporter: ErrorReporter,
     clock: () => number,
     tuning: WebCoreChunkRecoveryOptions | undefined,

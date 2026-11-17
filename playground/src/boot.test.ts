@@ -57,6 +57,9 @@ interface BootOptions {
 
     /** The runtime document the fetch seam serves. */
     readonly runtime?: Record<string, string>;
+
+    /** The raw response the fetch seam serves instead of the runtime document. */
+    readonly response?: () => Response;
 }
 
 describe('application boot', () => {
@@ -68,7 +71,9 @@ describe('application boot', () => {
     async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
         const body = JSON.stringify(options.runtime ?? runtimeDocument());
         const fetchFn = vi.fn(
-            async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+            async () =>
+                options.response?.() ??
+                new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
         );
 
         booted = await createWebCoreApp({
@@ -145,5 +150,25 @@ describe('application boot', () => {
 
         await expect(boot({ dev: false, runtime })).rejects.toBeInstanceOf(ConfigurationError);
         await expect(boot({ dev: false, runtime })).rejects.toThrow('API_URL');
+    });
+
+    it.each([
+        ['is missing', (): Response => new Response('Not Found', { status: 404 })],
+        [
+            'carries non-string values',
+            (): Response =>
+                Response.json(
+                    Object.fromEntries([
+                        ['API_URL', 8000],
+                        ['APP_ENV', true],
+                    ]),
+                ),
+        ],
+    ])('fails closed in production naming every required key when the runtime document %s', async (_, response) => {
+        await expect(boot({ dev: false, response })).rejects.toStrictEqual(
+            new ConfigurationError(
+                'Runtime configuration is missing required keys: API_URL, APP_URL, APP_ENV, APP_VERSION.',
+            ),
+        );
     });
 });

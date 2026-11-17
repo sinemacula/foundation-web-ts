@@ -42,8 +42,29 @@ export interface EventSourceConnectionOptions {
 }
 
 /**
+ * The handlers registered for one event name and how to detach them.
+ */
+interface Subscription {
+    /** The handlers receiving the event name's frames. */
+    readonly handlers: Set<RealtimeMessageHandler>;
+
+    /** Removes the listener from the EventSource it was last attached to, or null before any. */
+    detach: (() => void) | null;
+}
+
+/**
+ * Whether `event` carries a server-sent frame rather than a transport event;
+ * checked structurally so events from another realm or a factory-supplied
+ * EventSource still qualify.
+ */
+function isServerFrame(event: Event): event is MessageEvent {
+    return 'data' in event;
+}
+
+/**
  * SSE connection that reconnects on error with backoff, re-attaching every
- * registered listener to each new EventSource.
+ * registered listener to each new EventSource. Frames named `open` or `error`
+ * are delivered to their subscribers like any other event.
  */
 export class EventSourceConnection implements RealtimeConnection {
     /** The endpoint URL, or a factory returning it per connect. */
@@ -64,8 +85,8 @@ export class EventSourceConnection implements RealtimeConnection {
     /** The optional sink for errors the connection contains. */
     readonly #onError: ((error: unknown) => void) | undefined;
 
-    /** Registered message handlers, keyed by event name. */
-    readonly #messageHandlers: Map<string, Set<RealtimeMessageHandler>> = new Map();
+    /** Subscriptions keyed by event name; a name is dropped once its last handler leaves. */
+    readonly #subscriptions: Map<string, Subscription> = new Map();
 
     /** Registered connection-state change handlers. */
     readonly #stateHandlers: Set<RealtimeStateHandler> = new Set();
@@ -137,21 +158,28 @@ export class EventSourceConnection implements RealtimeConnection {
      * @returns an unsubscribe function
      */
     on(event: string, handler: RealtimeMessageHandler): () => void {
-        let handlers = this.#messageHandlers.get(event);
+        let subscription = this.#subscriptions.get(event);
 
-        if (handlers === undefined) {
-            handlers = new Set();
-            this.#messageHandlers.set(event, handlers);
+        if (subscription === undefined) {
+            subscription = { handlers: new Set(), detach: null };
+            this.#subscriptions.set(event, subscription);
 
             if (this.#source !== null) {
-                this.#attachEventListener(this.#source, event, handlers);
+                this.#attachEventListener(this.#source, event, subscription);
             }
         }
 
-        handlers.add(handler);
+        const owner = subscription;
+
+        owner.handlers.add(handler);
 
         return () => {
-            handlers.delete(handler);
+            owner.handlers.delete(handler);
+
+            if (owner.handlers.size === 0 && this.#subscriptions.get(event) === owner) {
+                this.#subscriptions.delete(event);
+                owner.detach?.();
+            }
         };
     }
 
@@ -177,8 +205,10 @@ export class EventSourceConnection implements RealtimeConnection {
         const url = typeof this.#url === 'function' ? this.#url() : this.#url;
         const source = this.#factory(url, { withCredentials: this.#withCredentials });
 
-        source.onopen = () => {
-            if (this.#source === source) {
+        // A server frame named `open` or `error` also reaches these handlers;
+        // only the transport's own data-less events drive the lifecycle.
+        source.onopen = (event: Event) => {
+            if (this.#source === source && !isServerFrame(event)) {
                 this.#attempt = 0;
                 this.#setState('open');
             }
@@ -186,15 +216,15 @@ export class EventSourceConnection implements RealtimeConnection {
 
         // Native EventSource retries on its own; closing it hands reconnects to
         // the backoff and the beforeReconnect hook.
-        source.onerror = () => {
-            if (this.#source === source) {
+        source.onerror = (event: Event) => {
+            if (this.#source === source && !isServerFrame(event)) {
                 this.#closeSource();
                 this.#scheduleReconnect();
             }
         };
 
-        for (const [event, handlers] of this.#messageHandlers) {
-            this.#attachEventListener(source, event, handlers);
+        for (const [event, subscription] of this.#subscriptions) {
+            this.#attachEventListener(source, event, subscription);
         }
 
         this.#source = source;
@@ -205,13 +235,18 @@ export class EventSourceConnection implements RealtimeConnection {
      * Fan one event name's frames out to its live handler set while `source` is
      * still the active EventSource.
      */
-    #attachEventListener(source: EventSource, event: string, handlers: Set<RealtimeMessageHandler>): void {
-        source.addEventListener(event, (messageEvent: MessageEvent) => {
-            if (this.#source !== source) {
+    #attachEventListener(source: EventSource, event: string, subscription: Subscription): void {
+        const { handlers } = subscription;
+
+        /**
+         * Deliver a server frame to every handler, isolating throwing ones.
+         */
+        const listener = (frame: Event): void => {
+            if (this.#source !== source || !isServerFrame(frame)) {
                 return;
             }
 
-            const message = { event, data: String(messageEvent.data) };
+            const message = { event, data: String(frame.data) };
 
             for (const handler of handlers) {
                 try {
@@ -220,7 +255,16 @@ export class EventSourceConnection implements RealtimeConnection {
                     this.#report(error);
                 }
             }
-        });
+        };
+
+        source.addEventListener(event, listener);
+
+        /**
+         * Remove the listener from the EventSource it was attached to.
+         */
+        subscription.detach = (): void => {
+            source.removeEventListener(event, listener);
+        };
     }
 
     /**

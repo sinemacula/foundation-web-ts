@@ -94,6 +94,39 @@ describe('DomColorSchemeApplier', () => {
         expect(metaColor(doc)).toBe('#111111');
     });
 
+    it('overrides a host light/dark meta pair with the resolved colour', () => {
+        const doc = makeDoc();
+
+        const pair: ReadonlyArray<readonly [string, string]> = [
+            ['(prefers-color-scheme: light)', '#eeeeee'],
+            ['(prefers-color-scheme: dark)', '#222222'],
+        ];
+
+        for (const [media, content] of pair) {
+            const meta = doc.createElement('meta');
+
+            meta.setAttribute('name', 'theme-color');
+            meta.setAttribute('media', media);
+            meta.setAttribute('content', content);
+            doc.head.appendChild(meta);
+        }
+
+        const applier = new DomColorSchemeApplier({ targetDocument: doc });
+
+        applier.apply('dark', 'dark');
+
+        const metas = [...doc.head.querySelectorAll('meta[name="theme-color"]')];
+
+        expect(metas.map(meta => [meta.getAttribute('media'), meta.getAttribute('content')])).toStrictEqual([
+            [null, '#0f172a'],
+            [null, '#0f172a'],
+        ]);
+
+        applier.apply('light', 'system');
+
+        expect(metas.map(meta => meta.getAttribute('content'))).toStrictEqual(['#f8fafc', '#f8fafc']);
+    });
+
     describe('ambient document', () => {
         afterEach(() => {
             document.documentElement.removeAttribute('data-theme');

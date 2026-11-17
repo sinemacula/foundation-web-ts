@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { createApp, defineComponent } from 'vue';
+import { createApp, defineComponent, h } from 'vue';
 
 import { BreadcrumbTrail } from '@sinemacula/foundation/reporting/breadcrumb-trail';
 import type { ErrorReporter, ReportedUser } from '@sinemacula/foundation/reporting/error-reporter';
@@ -261,7 +261,7 @@ describe('installGlobalErrorHandling', () => {
 
             win.dispatchRejection('string reason');
 
-            expect(reporter.captureErrorCalls[0]?.context).not.toHaveProperty('breadcrumbs');
+            expect(reporter.captureErrorCalls[0]?.context).toStrictEqual({ source: 'unhandledrejection' });
         });
 
         it('includes breadcrumbs snapshot when a trail is provided', () => {
@@ -434,6 +434,124 @@ describe('installGlobalErrorHandling', () => {
             win.dispatchRejection('reason');
 
             expect(reporter.captureErrorCalls).toHaveLength(0);
+        });
+    });
+
+    describe('several installations', () => {
+        it.each([
+            ['first then second', [0, 1]],
+            ['second then first', [1, 0]],
+        ])('hands errors to the live installation and leaves no handler when torn down %s', (_label, order) => {
+            const app = createApp(Stub);
+            const first = makeReporter();
+            const second = makeReporter();
+            const teardowns = [
+                installGlobalErrorHandling({ app, reporter: first, targetWindow: makeWindow() }),
+                installGlobalErrorHandling({ app, reporter: second, targetWindow: makeWindow() }),
+            ];
+
+            teardowns[order[0] as number]?.();
+
+            app.config.errorHandler?.(new Error('between'), null, 'setup function');
+
+            expect(first.captureErrorCalls).toHaveLength(order[0] === 1 ? 1 : 0);
+            expect(second.captureErrorCalls).toHaveLength(order[0] === 0 ? 1 : 0);
+
+            teardowns[order[1] as number]?.();
+
+            expect(app.config.errorHandler).toBeUndefined();
+        });
+
+        it('restores the handler that was in place before both', () => {
+            const app = createApp(Stub);
+            const original = vi.fn();
+
+            app.config.errorHandler = original;
+
+            const first = installGlobalErrorHandling({ app, reporter: makeReporter(), targetWindow: makeWindow() });
+            const second = installGlobalErrorHandling({ app, reporter: makeReporter(), targetWindow: makeWindow() });
+
+            first();
+            second();
+
+            expect(app.config.errorHandler).toBe(original);
+        });
+
+        it('lets a torn-down handler kept by another wrapper pass errors to the nearest live one', () => {
+            const app = createApp(Stub);
+            const original = vi.fn();
+            const reporter = makeReporter();
+
+            app.config.errorHandler = original;
+
+            const teardown = installGlobalErrorHandling({ app, reporter, targetWindow: makeWindow() });
+            const kept = app.config.errorHandler;
+            const error = new Error('late');
+
+            app.config.errorHandler = vi.fn();
+            teardown();
+            kept?.(error, null, 'render function');
+
+            expect(reporter.captureErrorCalls).toHaveLength(0);
+            expect(original).toHaveBeenCalledWith(error, null, 'render function');
+        });
+
+        it('rethrows from a torn-down handler with nothing live behind it', () => {
+            const app = createApp(Stub);
+            const teardown = installGlobalErrorHandling({ app, reporter: makeReporter(), targetWindow: makeWindow() });
+            const kept = app.config.errorHandler;
+            const error = new Error('late');
+
+            app.config.errorHandler = vi.fn();
+            teardown();
+
+            expect(() => kept?.(error, null, 'render function')).toThrow(error);
+        });
+
+        it('reports a window error once to each installation on the same window', () => {
+            const win = makeWindow();
+            const first = makeReporter();
+            const second = makeReporter();
+
+            installGlobalErrorHandling({ app: createApp(Stub), reporter: first, targetWindow: win });
+            installGlobalErrorHandling({ app: createApp(Stub), reporter: second, targetWindow: win });
+
+            win.dispatchError({ error: new Error('x'), message: 'x' });
+
+            expect(first.captureErrorCalls).toHaveLength(1);
+            expect(second.captureErrorCalls).toHaveLength(1);
+        });
+    });
+
+    describe('mounted application', () => {
+        it('reports an error thrown by a component event handler exactly once', () => {
+            const error = new Error('click failed');
+            const Thrower = defineComponent({
+                render: () =>
+                    h('button', {
+                        onClick: () => {
+                            throw error;
+                        },
+                    }),
+            });
+            const root = document.createElement('div');
+            const app = createApp(Thrower);
+            const reporter = makeReporter();
+
+            document.body.appendChild(root);
+
+            const teardown = installGlobalErrorHandling({ app, reporter });
+
+            app.mount(root);
+            root.querySelector('button')?.click();
+
+            expect(reporter.captureErrorCalls).toStrictEqual([
+                { error, context: { source: 'vue', info: expect.any(String) } },
+            ]);
+
+            app.unmount();
+            teardown();
+            root.remove();
         });
     });
 });

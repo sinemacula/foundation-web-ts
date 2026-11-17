@@ -13,6 +13,9 @@ import type {
 export interface ConnectivityMonitorOptions {
     /** The window whose connectivity events are observed; defaults to the global window. */
     readonly targetWindow?: Window;
+
+    /** Receives an error thrown by a subscriber, which never stops the others; defaults to the global `reportError`. */
+    readonly onError?: (error: unknown) => void;
 }
 
 /**
@@ -24,6 +27,9 @@ export class BrowserConnectivityMonitor implements ConnectivityMonitor {
 
     /** The registered connectivity subscribers. */
     readonly #handlers = new Set<ConnectivityHandler>();
+
+    /** Receives errors thrown by subscribers. */
+    readonly #onError: (error: unknown) => void;
 
     /**
      * Records the online state when an online event fires.
@@ -48,6 +54,7 @@ export class BrowserConnectivityMonitor implements ConnectivityMonitor {
     constructor(options: ConnectivityMonitorOptions = {}) {
         this.#targetWindow = options.targetWindow ?? globalThis.window;
         this.#online = this.#targetWindow.navigator.onLine;
+        this.#onError = options.onError ?? (error => globalThis.reportError(error));
     }
 
     /**
@@ -58,7 +65,9 @@ export class BrowserConnectivityMonitor implements ConnectivityMonitor {
     }
 
     /**
-     * Begin observing connectivity events; no-op when running.
+     * Begin observing connectivity events and re-read the current state,
+     * notifying subscribers of any change missed while stopped; no-op when
+     * running.
      */
     start(): void {
         if (this.#started) {
@@ -69,6 +78,8 @@ export class BrowserConnectivityMonitor implements ConnectivityMonitor {
 
         this.#targetWindow.addEventListener('online', this.#onOnline);
         this.#targetWindow.addEventListener('offline', this.#onOffline);
+
+        this.#setOnline(this.#targetWindow.navigator.onLine);
     }
 
     /**
@@ -109,7 +120,22 @@ export class BrowserConnectivityMonitor implements ConnectivityMonitor {
         this.#online = online;
 
         for (const handler of this.#handlers) {
-            handler(online);
+            try {
+                handler(online);
+            } catch (error) {
+                this.#report(error);
+            }
+        }
+    }
+
+    /**
+     * Pass a subscriber's error to the sink, ignoring a throwing sink.
+     */
+    #report(error: unknown): void {
+        try {
+            this.#onError(error);
+        } catch {
+            // The sink is the last resort; nothing is left to report to.
         }
     }
 }

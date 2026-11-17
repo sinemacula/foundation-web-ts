@@ -164,6 +164,7 @@ describe('wireMonitors update monitoring', () => {
         expect(fetchFn).toHaveBeenCalledWith('/runtime-env.json', {
             cache: 'no-store',
             headers: { accept: 'application/json' },
+            signal: expect.any(AbortSignal),
         });
 
         updates?.stop();
@@ -182,6 +183,7 @@ describe('wireMonitors update monitoring', () => {
         expect(fetchFn).toHaveBeenCalledWith('/version.json', {
             cache: 'no-store',
             headers: { accept: 'application/json' },
+            signal: expect.any(AbortSignal),
         });
 
         updates?.stop();
