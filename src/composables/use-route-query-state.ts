@@ -34,7 +34,8 @@ export interface RouteQueryState {
      * Merge a patch of managed keys into the URL query, null clearing a key;
      * unmanaged keys in the patch are ignored and other parameters preserved.
      * Patches set in the same tick, from any instance on the router, land in
-     * one navigation that waits for the previous one to settle.
+     * one navigation that waits for the previous one to settle; they are
+     * dropped if the route path has changed by then.
      */
     set(patch: Readonly<Record<string, string | null>>): Promise<void>;
 }
@@ -66,13 +67,17 @@ function enqueuePatch(router: Router, patch: Readonly<Record<string, string | nu
 
     if (state.pending === null) {
         const pending: Record<string, string | null> = {};
+        const path = router.currentRoute.value.path;
 
         state.pending = pending;
         state.tail = state.tail
             .catch(() => undefined)
             .then(async () => {
                 state.pending = null;
-                await router.replace({ query: applyPatch(router.currentRoute.value.query, pending) });
+
+                if (router.currentRoute.value.path === path) {
+                    await router.replace({ query: applyPatch(router.currentRoute.value.query, pending) });
+                }
             });
     }
 

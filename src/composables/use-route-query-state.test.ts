@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { defineComponent } from 'vue';
-import { createMemoryHistory, createRouter } from 'vue-router';
+import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 
 import { useRouteQueryState } from './use-route-query-state';
 
@@ -24,6 +24,43 @@ function makeRouter(initialQuery: Record<string, string> = {}) {
     const url = qs.length > 0 ? `/?${qs}` : '/';
 
     return { router, url };
+}
+
+/** A navigation guard that holds navigations until released. */
+interface NavigationGate {
+    /** Settles once a navigation reaches the guard. */
+    readonly entered: Promise<void>;
+
+    /**
+     * Let held navigations continue.
+     */
+    release(): void;
+
+    /**
+     * Remove the guard so later navigations pass straight through.
+     */
+    remove(): void;
+}
+
+/**
+ * Hold every navigation on `router` in a guard until the gate is released.
+ */
+function holdNavigations(router: Router): NavigationGate {
+    let enter: () => void = () => undefined;
+    let release: () => void = () => undefined;
+    const entered = new Promise<void>(resolve => {
+        enter = resolve;
+    });
+    const open = new Promise<void>(resolve => {
+        release = resolve;
+    });
+    const remove = router.beforeEach(() => {
+        enter();
+
+        return open;
+    });
+
+    return { entered, release, remove };
 }
 
 describe('useRouteQueryState', () => {
@@ -274,24 +311,44 @@ describe('useRouteQueryState', () => {
             await router.push('/');
 
             const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
-            let release: () => void = () => undefined;
-            const gate = new Promise<void>(resolve => {
-                release = resolve;
-            });
-
-            const removeGuard = router.beforeEach(() => gate);
+            const gate = holdNavigations(router);
             const search = state.set({ search: 'ada' });
 
-            await Promise.resolve();
-            await Promise.resolve();
+            await gate.entered;
 
             const page = state.set({ page: '2' });
 
-            removeGuard();
-            release();
+            gate.remove();
+            gate.release();
             await Promise.all([search, page]);
 
             expect(router.currentRoute.value.query).toStrictEqual({ search: 'ada', page: '2' });
+        });
+
+        it('drops a queued patch once the route has moved to another page', async () => {
+            const router = createRouter({
+                history: createMemoryHistory(),
+                routes: [
+                    { path: '/', component: EmptyComponent },
+                    { path: '/other', component: EmptyComponent },
+                ],
+            });
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
+            const gate = holdNavigations(router);
+            const search = state.set({ search: 'ada' });
+
+            await gate.entered;
+
+            const page = state.set({ page: '2' });
+
+            gate.remove();
+            await router.push('/other?tab=all');
+            gate.release();
+            await Promise.all([search, page]);
+
+            expect(router.currentRoute.value.fullPath).toBe('/other?tab=all');
         });
 
         it('drops a patch a guard cancels and still applies the next one', async () => {
