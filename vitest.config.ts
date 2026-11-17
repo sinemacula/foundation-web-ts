@@ -53,7 +53,6 @@ export default defineConfig({
                 'playground/src/main.ts',
                 '**/test-support/**',
                 '**/*.d.ts',
-                'repos/**',
             ],
             thresholds: {
                 lines: 100,
