@@ -5,8 +5,10 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import type { ApiQuery } from '@sinemacula/foundation/query/api-query';
+import type { ListFilter } from '@sinemacula/foundation/query/list-filter';
 import { filter } from '@sinemacula/foundation/query/list-filter';
 import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
 import type { ListQuery } from './use-list-query';
@@ -178,6 +180,28 @@ describe('useListQuery', () => {
         });
     });
 
+    describe('setFilter - throwing filter', () => {
+        it('throws without committing the filter or resetting the page', () => {
+            const definition = defineListQuery({
+                filters: {
+                    status: filter.equals('status'),
+                    broken: filter.custom<string>(() => {
+                        throw new RangeError('unsupported value');
+                    }),
+                },
+            });
+            const { parameters, filterValues, page, setFilter, goTo } = useListQuery(definition);
+
+            setFilter('status', 'active');
+            goTo(3);
+
+            expect(() => setFilter('broken', 'x')).toThrowError(RangeError);
+            expect(filterValues.value).toEqual({ status: 'active' });
+            expect(page.value).toBe(3);
+            expect(parsedFilters(parameters.value)).toEqual({ status: 'active' });
+        });
+    });
+
     describe('setFilter - dot-path relation nesting', () => {
         it('nests posts.author.name correctly', () => {
             const { parameters, setFilter } = useListQuery(sharedDefinition);
@@ -272,12 +296,14 @@ describe('useListQuery', () => {
         });
 
         it('is a no-op when the filter is not set', () => {
-            const { page, clearFilter, goTo } = useListQuery(sharedDefinition);
+            const { page, filterValues, clearFilter, goTo } = useListQuery(sharedDefinition);
+            const before = filterValues.value;
 
             goTo(3);
             clearFilter('status');
 
             expect(page.value).toBe(3);
+            expect(filterValues.value).toBe(before);
         });
     });
 
@@ -304,12 +330,14 @@ describe('useListQuery', () => {
         });
 
         it('is a no-op when no filters are active (page not reset)', () => {
-            const { page, clearFilters, goTo } = useListQuery(sharedDefinition);
+            const { page, filterValues, clearFilters, goTo } = useListQuery(sharedDefinition);
+            const before = filterValues.value;
 
             goTo(3);
             clearFilters();
 
             expect(page.value).toBe(3);
+            expect(filterValues.value).toBe(before);
         });
     });
 
@@ -354,6 +382,23 @@ describe('useListQuery', () => {
             const { parameters } = useListQuery(sharedDefinition);
 
             expect(parameters.value['search']).toBeUndefined();
+        });
+
+        it('invokes a custom search filter only with a non-empty term', () => {
+            const apply = vi.fn((query: ApiQuery, term: string) => query.where('name', term));
+            const { parameters, search } = useListQuery(defineListQuery({ search: filter.custom(apply) }));
+
+            expect(parameters.value['filters']).toBeUndefined();
+
+            search('');
+
+            expect(parameters.value['filters']).toBeUndefined();
+            expect(apply).not.toHaveBeenCalled();
+
+            search('x');
+
+            expect(parsedFilters(parameters.value)).toEqual({ name: 'x' });
+            expect(apply).toHaveBeenLastCalledWith(expect.anything(), 'x');
         });
     });
 
@@ -466,8 +511,9 @@ describe('useListQuery', () => {
         it('throws an Error naming the rejected column and the allowed list', () => {
             const { sortBy } = useListQuery(sharedDefinition);
 
-            expect(() => sortBy('unknown')).toThrowError(/unknown/);
-            expect(() => sortBy('unknown')).toThrowError(/name.*createdAt.*age|createdAt.*name.*age/);
+            expect(() => sortBy('unknown')).toThrowError(
+                "Cannot sort by 'unknown'. Allowed columns: 'name', 'createdAt', 'age'.",
+            );
         });
 
         it('allows any column when sortable is undefined', () => {
@@ -535,6 +581,36 @@ describe('useListQuery', () => {
             expect(page.value).toBe(1);
         });
 
+        it('truncates a fractional page', () => {
+            const { page, parameters, goTo } = useListQuery(sharedDefinition);
+
+            goTo(2.9);
+
+            expect(page.value).toBe(2);
+            expect(parameters.value['page']).toBe(2);
+        });
+
+        it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+            'ignores the non-finite page %s',
+            target => {
+                const { page, goTo, next, previous } = useListQuery(sharedDefinition);
+
+                goTo(3);
+                goTo(target);
+
+                expect(page.value).toBe(3);
+
+                next();
+
+                expect(page.value).toBe(4);
+
+                previous();
+                previous();
+
+                expect(page.value).toBe(2);
+            },
+        );
+
         it('does not touch filters', () => {
             const { filterValues, setFilter, goTo } = useListQuery(sharedDefinition);
 
@@ -571,6 +647,16 @@ describe('useListQuery', () => {
             sortBy('createdAt', 'desc');
 
             expect(page.value).toBe(1);
+        });
+
+        it('keeps the page when a refinement overrides the change', () => {
+            const { page, refine, search, goTo } = useListQuery(sharedDefinition);
+
+            refine(q => q.search('fixed'));
+            goTo(3);
+            search('ignored');
+
+            expect(page.value).toBe(3);
         });
 
         it('does not reset on next/previous/goTo', () => {
@@ -791,6 +877,63 @@ describe('useListQuery', () => {
             setFilter('priority', 5);
 
             expect(parsedFilters(parameters.value)).toEqual(wire([['priority', wire([['$ge', 5]])]]));
+        });
+    });
+
+    describe('class-based filters and values', () => {
+        /**
+         * A money value object holding its amount in a private field.
+         */
+        class Money {
+            /** The amount in minor units. */
+            readonly #minor: number;
+
+            /**
+             * Create a money value from minor units.
+             */
+            constructor(minor: number) {
+                this.#minor = minor;
+            }
+
+            /**
+             * Return the amount in minor units.
+             */
+            toMinor(): number {
+                return this.#minor;
+            }
+        }
+
+        /**
+         * A minimum-price filter holding its field in a private field.
+         */
+        class MinimumPriceFilter implements ListFilter<Money> {
+            /** The API field the filter applies to. */
+            readonly #field: string;
+
+            /**
+             * Create the filter for an API field.
+             */
+            constructor(field: string) {
+                this.#field = field;
+            }
+
+            /**
+             * Apply a lower bound on the field.
+             */
+            apply(query: ApiQuery, value: Money): ApiQuery {
+                return query.where(this.#field, '$ge', value.toMinor());
+            }
+        }
+
+        it('compiles a filter class and a value object with private fields', () => {
+            const definition = defineListQuery({ filters: { minPrice: new MinimumPriceFilter('price') } });
+            const { parameters, filterValues, setFilter } = useListQuery(definition);
+            const price = new Money(1500);
+
+            setFilter('minPrice', price);
+
+            expect(parsedFilters(parameters.value)).toEqual(wire([['price', wire([['$ge', 1500]])]]));
+            expect(filterValues.value.minPrice).toBe(price);
         });
     });
 
