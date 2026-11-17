@@ -7,7 +7,7 @@
 
 import type { ComputedRef } from 'vue';
 import { computed } from 'vue';
-import type { LocationQuery, Router } from 'vue-router';
+import type { LocationQuery, RouteLocationNormalizedLoaded, Router } from 'vue-router';
 
 /**
  * Options accepted by {@link useRouteQueryState}.
@@ -33,57 +33,52 @@ export interface RouteQueryState {
     /**
      * Merge a patch of managed keys into the URL query, null clearing a key;
      * unmanaged keys in the patch are ignored and other parameters preserved.
-     * Patches set in the same tick, from any instance on the router, land in
-     * one navigation that waits for the previous one to settle; they are
-     * dropped if the route path has changed by then.
+     * Patches set before the route commits, from any instance on the router,
+     * accumulate, so a later call carries every earlier key; a patch with no
+     * managed keys does not navigate.
      */
     set(patch: Readonly<Record<string, string | null>>): Promise<void>;
 }
 
 /**
- * Query patches waiting for the next navigation on one router.
+ * Query patches set on one router since its current route committed.
  */
-interface QueryBatchState {
-    /** The merged patch for the batch not yet navigated, or null when none is open. */
-    pending: Record<string, string | null> | null;
+interface PendingQuery {
+    /** The committed route the accumulated patch applies to. */
+    readonly base: RouteLocationNormalizedLoaded;
 
-    /** The latest batch's navigation, which the next batch waits behind. */
-    tail: Promise<void>;
+    /** Every patch set since `base` committed, later keys winning. */
+    readonly patch: Record<string, string | null>;
+
+    /** The number of patches merged into `patch`. */
+    sequence: number;
 }
 
-/** Pending query patches per router. */
-const batches = new WeakMap<Router, QueryBatchState>();
+/** The accumulated query patch per router. */
+const pendingQueries = new WeakMap<Router, PendingQuery>();
 
 /**
- * Merge `patch` into the router's open batch, opening one behind the previous
- * navigation when none is open.
- *
- * @returns the navigation that applies the batch
+ * Merge `patch` into the router's accumulated patch and replace the query with
+ * every key set since the current route committed; the accumulation is
+ * dropped once its latest navigation settles, whatever the outcome.
  */
-function enqueuePatch(router: Router, patch: Readonly<Record<string, string | null>>): Promise<void> {
-    const state = batches.get(router) ?? { pending: null, tail: Promise.resolve() };
+function replaceQuery(router: Router, patch: Readonly<Record<string, string | null>>): Promise<void> {
+    const base = router.currentRoute.value;
+    const existing = pendingQueries.get(router);
+    const pending = existing?.base === base ? existing : { base, patch: {}, sequence: 0 };
+    const sequence = ++pending.sequence;
 
-    batches.set(router, state);
+    pendingQueries.set(router, pending);
+    Object.assign(pending.patch, patch);
 
-    if (state.pending === null) {
-        const pending: Record<string, string | null> = {};
-        const path = router.currentRoute.value.path;
-
-        state.pending = pending;
-        state.tail = state.tail
-            .catch(() => undefined)
-            .then(async () => {
-                state.pending = null;
-
-                if (router.currentRoute.value.path === path) {
-                    await router.replace({ query: applyPatch(router.currentRoute.value.query, pending) });
-                }
-            });
-    }
-
-    Object.assign(state.pending, patch);
-
-    return state.tail;
+    return router
+        .replace({ query: applyPatch(base.query, pending.patch) })
+        .finally(() => {
+            if (pendingQueries.get(router) === pending && pending.sequence === sequence) {
+                pendingQueries.delete(router);
+            }
+        })
+        .then(() => undefined);
 }
 
 /**
@@ -145,12 +140,14 @@ export function useRouteQueryState(router: Router, options: RouteQueryStateOptio
     }
 
     /**
-     * Queue the managed keys of a patch for the router's next query update.
+     * Merge the managed keys of a patch into the router's query.
      */
-    function set(patch: Readonly<Record<string, string | null>>): Promise<void> {
-        const managed = Object.fromEntries(Object.entries(patch).filter(([key]) => Object.hasOwn(defaults, key)));
+    async function set(patch: Readonly<Record<string, string | null>>): Promise<void> {
+        const managed = Object.entries(patch).filter(([key]) => Object.hasOwn(defaults, key));
 
-        return enqueuePatch(router, managed);
+        if (managed.length > 0) {
+            await replaceQuery(router, Object.fromEntries(managed));
+        }
     }
 
     return { values, get, set };

@@ -26,6 +26,19 @@ function makeRouter(initialQuery: Record<string, string> = {}) {
     return { router, url };
 }
 
+/**
+ * Build a memory router with a list page and another page.
+ */
+function makeTwoPageRouter(): Router {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [
+            { path: '/', component: EmptyComponent },
+            { path: '/other', component: EmptyComponent },
+        ],
+    });
+}
+
 /** A navigation guard that holds navigations until released. */
 interface NavigationGate {
     /** Settles once a navigation reaches the guard. */
@@ -246,8 +259,15 @@ describe('useRouteQueryState', () => {
             await router.push(url);
 
             const state = useRouteQueryState(router, { defaults: { page: '1' } });
+            let navigations = 0;
+
+            router.beforeEach(() => {
+                navigations++;
+            });
 
             await state.set({ unknown: 'value' });
+
+            expect(navigations).toBe(0);
 
             expect(router.currentRoute.value.query['unknown']).toBeUndefined();
             expect(router.currentRoute.value.query['page']).toBe('1');
@@ -268,15 +288,17 @@ describe('useRouteQueryState', () => {
     });
 
     describe('concurrent set', () => {
-        it('applies patches set in the same tick in one navigation', async () => {
+        it('commits patches set in the same tick together', async () => {
             const { router } = makeRouter();
             await router.push('/?a=1');
 
             const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
             let navigations = 0;
 
-            router.afterEach(() => {
-                navigations++;
+            router.afterEach((_to, _from, failure) => {
+                if (failure === undefined) {
+                    navigations++;
+                }
             });
 
             const search = state.set({ search: 'ada' });
@@ -333,13 +355,7 @@ describe('useRouteQueryState', () => {
         });
 
         it('drops a queued patch once the route has moved to another page', async () => {
-            const router = createRouter({
-                history: createMemoryHistory(),
-                routes: [
-                    { path: '/', component: EmptyComponent },
-                    { path: '/other', component: EmptyComponent },
-                ],
-            });
+            const router = makeTwoPageRouter();
             await router.push('/');
 
             const state = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
@@ -356,6 +372,43 @@ describe('useRouteQueryState', () => {
             await Promise.all([search, page]);
 
             expect(router.currentRoute.value.fullPath).toBe('/other?tab=all');
+        });
+
+        it('lets a navigation away issued in the same tick win', async () => {
+            const router = makeTwoPageRouter();
+            await router.push('/');
+
+            const state = useRouteQueryState(router, { defaults: { page: '1' } });
+            const page = state.set({ page: '2' });
+
+            await router.push('/other');
+            await page;
+
+            expect(router.currentRoute.value.fullPath).toBe('/other');
+        });
+
+        it('applies a patch set on the new page while an old-page update is held', async () => {
+            const router = makeTwoPageRouter();
+            await router.push('/');
+
+            const listState = useRouteQueryState(router, { defaults: { search: '', page: '1' } });
+            const gate = holdNavigations(router);
+            const search = listState.set({ search: 'ada' });
+
+            await gate.entered;
+
+            const page = listState.set({ page: '2' });
+
+            gate.remove();
+            await router.push('/other');
+
+            const otherState = useRouteQueryState(router, { defaults: { tab: 'all' } });
+
+            await otherState.set({ tab: 'new' });
+            gate.release();
+            await Promise.all([search, page]);
+
+            expect(router.currentRoute.value.fullPath).toBe('/other?tab=new');
         });
 
         it('drops a patch a guard cancels and still applies the next one', async () => {
