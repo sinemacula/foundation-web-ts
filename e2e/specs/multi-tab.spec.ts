@@ -32,7 +32,7 @@ test.describe('session across tabs', { tag: '@engine' }, () => {
             expect(await storedTokens(other)).toBeNull();
         });
 
-        test('a refresh in one tab keeps the other signed in on the rotated token', async ({
+        test('a refresh in one tab keeps the other signed in on the rotated token, without reloading its user', async ({
             context,
             page,
             api,
@@ -61,6 +61,7 @@ test.describe('session across tabs', { tag: '@engine' }, () => {
             await expect(otherUsers.rows).toHaveCount(2);
             await expect(other).toHaveURL(/\/users$/u);
             expect(api.requestsTo('/auth/refresh')).toHaveLength(1);
+            expect(api.requestsTo('/users/self')).toHaveLength(2);
         });
     });
 

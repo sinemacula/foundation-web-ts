@@ -64,9 +64,12 @@ interface Reply {
 type StorageState = Exclude<BrowserContextOptions['storageState'], string | undefined>;
 
 /** The session snapshot the app persists. */
-interface PersistedSession {
-    /** The persisted token pair, or null once signed out. */
-    readonly tokens?: SessionTokens | null;
+interface PersistedSnapshot {
+    /** The persisted session, or null once signed out. */
+    readonly session?: {
+        /** The persisted token pair. */
+        readonly tokens: SessionTokens;
+    } | null;
 }
 
 /** The permissions the default fake user holds. */
@@ -81,7 +84,12 @@ export function signedInStorageState(tokens: SessionTokens = SEEDED_SESSION): St
         origins: [
             {
                 origin: BASE_URL,
-                localStorage: [{ name: SESSION_STORAGE_KEY, value: JSON.stringify({ revision: 1, tokens }) }],
+                localStorage: [
+                    {
+                        name: SESSION_STORAGE_KEY,
+                        value: JSON.stringify({ revision: 1, session: { lineage: 'e2e-seeded', tokens } }),
+                    },
+                ],
             },
         ],
     };
@@ -265,18 +273,20 @@ export class MockApi {
     }
 
     /**
-     * Serve POST auth/logout, revoking the presented refresh token.
+     * Serve POST auth/logout, revoking the presented bearer and refresh tokens.
      */
     async logout(): Promise<void> {
-        await this.endpoint('POST', '/auth/logout', request => {
-            const refreshToken = this.refreshTokenIn(request);
+        await this.endpoint('POST', '/auth/logout', request =>
+            this.protectedReply(request, { status: 204 }, token => {
+                const refreshToken = this.refreshTokenIn(request);
 
-            if (refreshToken !== null) {
-                this.refreshTokens.delete(refreshToken);
-            }
+                this.accessTokens.delete(token);
 
-            return { status: 204 };
-        });
+                if (refreshToken !== null) {
+                    this.refreshTokens.delete(refreshToken);
+                }
+            }),
+        );
     }
 
     /**
@@ -391,14 +401,16 @@ export class MockApi {
 
     /**
      * Answer with `reply` when the request carries an honoured bearer token,
-     * and with a 401 otherwise.
+     * after running `accepted` with it, and with a 401 otherwise.
      */
-    private protectedReply(request: RecordedRequest, reply: Reply): Reply {
+    private protectedReply(request: RecordedRequest, reply: Reply, accepted?: (token: string) => void): Reply {
         const token = /^Bearer (.+)$/u.exec(request.authorization ?? '')?.[1];
 
         if (token === undefined || !this.accessTokens.has(token)) {
             return { status: 401, json: { message: 'Unauthenticated.' } };
         }
+
+        accepted?.(token);
 
         return reply;
     }
@@ -473,7 +485,7 @@ export async function storedTokens(page: Page): Promise<SessionTokens | null> {
         return null;
     }
 
-    const snapshot = JSON.parse(raw) as PersistedSession;
+    const snapshot = JSON.parse(raw) as PersistedSnapshot;
 
-    return snapshot.tokens ?? null;
+    return snapshot.session?.tokens ?? null;
 }
