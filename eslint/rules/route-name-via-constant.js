@@ -18,11 +18,13 @@ function isRouteObject(objectExpression) {
     });
 }
 
-/** The nearest ancestor that is not an `as` or `satisfies` wrapper. */
+const PASS_THROUGH = new Set(['TSAsExpression', 'TSSatisfiesExpression', 'ConditionalExpression']);
+
+/** The nearest ancestor that is not an `as`/`satisfies` wrapper or a conditional. */
 function unwrappedParent(node) {
     let parent = node.parent;
 
-    while (parent.type === 'TSAsExpression' || parent.type === 'TSSatisfiesExpression') {
+    while (PASS_THROUGH.has(parent.type)) {
         parent = parent.parent;
     }
 
