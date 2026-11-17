@@ -78,9 +78,14 @@ function typecheck() {
     let output = '';
 
     try {
-        typecheck();
+        bin('tsc', ['--noEmit']);
     } catch (error) {
-        output = String(error.stdout);
+        output = String(error.stdout ?? '');
+
+        // Failing without diagnostics means nothing was typechecked.
+        if (!/error TS\d+/u.test(output)) {
+            throw error;
+        }
     }
 
     const ours = output.split('\n').filter(line => /^(src\/|node_modules\/@sinemacula\/)/u.test(line));

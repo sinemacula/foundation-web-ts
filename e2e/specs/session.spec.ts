@@ -64,7 +64,7 @@ test.describe('proactive refresh', { tag: '@engine' }, () => {
 
         await page.clock.runFor(EXPIRES_IN_MS - REFRESH_SKEW_MS - CLOCK_STEP_MS);
 
-        // Step through the window; one long jump would fire the request timeout.
+        // Step through the window; one jump would fire the request timeout.
         for (let elapsed = 0; elapsed < REFRESH_SKEW_MS && api.requestsTo('/auth/refresh').length === 0; ) {
             await page.clock.runFor(CLOCK_STEP_MS);
             elapsed += CLOCK_STEP_MS;

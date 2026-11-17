@@ -12,20 +12,29 @@ import { expect, test } from '../fixtures/app';
 import { SEEDED_SESSION } from '../support/api-mock';
 import type { FailureGuard } from '../support/failure-guard';
 
+/** The users view module, as a built chunk or a dev server source module. */
+const USERS_CHUNK = /\/users-view[^/]*\.(?:js|vue)$/u;
+
 /**
- * Answer the users view chunk with a 404, `times` times or for good.
+ * Answer the users view chunk with a 404, for good or, when `untilReload`, only
+ * until the first document is replaced, as after a deploy the reload picks up.
  */
-async function removeUsersChunk(context: BrowserContext, guard: FailureGuard, times = Infinity): Promise<void> {
-    let removed = 0;
+async function removeUsersChunk(context: BrowserContext, guard: FailureGuard, untilReload = false): Promise<void> {
+    let documents = 0;
+
+    context.on('request', request => {
+        if (request.isNavigationRequest()) {
+            documents += 1;
+        }
+    });
 
     await context.route(
-        url => url.pathname.includes('users-view'),
+        url => USERS_CHUNK.test(url.pathname),
         route => {
-            if (route.request().resourceType() !== 'script' || removed >= times) {
+            if (untilReload && documents > 1) {
                 return route.fallback();
             }
 
-            removed += 1;
             guard.expectFailedResource(route.request().url(), 404);
 
             return route.fulfill({ status: 404, body: 'Not found' });
@@ -60,7 +69,7 @@ test.describe('chunk-load recovery', { tag: '@engine' }, () => {
         usersPage,
     }) => {
         await api.usersList();
-        await removeUsersChunk(context, guard, 1);
+        await removeUsersChunk(context, guard, true);
 
         const documentLoads = recordDocumentLoads(page);
 
@@ -113,7 +122,7 @@ test.describe('chunk-load recovery', { tag: '@engine' }, () => {
         await dashboardPage.goto();
         await expect(dashboardPage.heading).toBeVisible();
 
-        const chunkRequest = page.waitForResponse(response => response.url().includes('users-view'));
+        const chunkRequest = page.waitForResponse(response => USERS_CHUNK.test(new URL(response.url()).pathname));
 
         await page.getByRole('link', { name: 'Users' }).click();
         await chunkRequest;

@@ -46,20 +46,24 @@ function countWaves(startTimes: readonly number[]): number {
 }
 
 test.describe('first load', () => {
-    test('a guest on the login screen loads no French messages and no signed-in views', async ({ page, loginPage }) => {
+    test('a guest loads the login view as its own chunk, without French or signed-in views', async ({
+        page,
+        loginPage,
+    }) => {
         const requests = recordRequests(page);
 
         await loginPage.goto();
         await expect(loginPage.heading).toBeVisible();
         await page.waitForLoadState('networkidle');
 
+        expect(requests.filter(url => /login-view/u.test(url))).not.toEqual([]);
         expect(requests.filter(url => /fr-fr|dashboard-view|users-view/iu.test(url))).toEqual([]);
     });
 
     test.describe('signed in', () => {
         test.use({ seededSession: SEEDED_SESSION });
 
-        test('the dashboard loads neither the login view, its validators nor French messages', async ({
+        test('the dashboard loads neither the login view nor French messages until asked', async ({
             page,
             dashboardPage,
         }) => {
@@ -69,7 +73,12 @@ test.describe('first load', () => {
             await expect(dashboardPage.heading).toBeVisible();
             await page.waitForLoadState('networkidle');
 
+            expect(requests.filter(url => /dashboard-view/u.test(url))).not.toEqual([]);
             expect(requests.filter(url => /login-view|zod|vee-validate|fr-fr/iu.test(url))).toEqual([]);
+
+            await page.getByLabel('Language').selectOption('fr-FR');
+
+            await expect.poll(() => requests.filter(url => /fr-fr/u.test(url))).not.toEqual([]);
         });
 
         test('the dashboard renders within a fixed number of serial request waves', async ({

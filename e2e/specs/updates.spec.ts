@@ -56,7 +56,12 @@ test.describe('deployed-version updates', () => {
         await expect(toast).toBeVisible();
 
         await page.clock.runFor(10_000);
+
+        const recheck = page.waitForResponse(response => new URL(response.url()).pathname === '/runtime-env.json');
+
         await refocus(page);
+        await recheck;
+        await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
 
         await expect(toast).toBeVisible();
         await expect(toast).toHaveCount(1);
