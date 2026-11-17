@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { describeSessionLockContract } from '@sinemacula/foundation/session/test-support/session-lock-contract';
 import { WebLocksSessionLock } from './web-locks-session-lock';
 
 /** A lock request as the lock manager received it. */
@@ -54,6 +55,14 @@ function makeLockManager(): RecordingLockManager {
 
     return manager as RecordingLockManager;
 }
+
+describeSessionLockContract({
+    create: () => {
+        const manager = makeLockManager();
+
+        return () => new WebLocksSessionLock(manager, 'auth.session:lock');
+    },
+});
 
 describe('WebLocksSessionLock', () => {
     it('runs the task under the named lock and resolves with its result', async () => {
