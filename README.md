@@ -3,9 +3,13 @@
 <div align="center">
 
 [![Latest Stable Version](https://img.shields.io/npm/v/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
+[![Node Version](https://img.shields.io/node/v/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
 [![Build Status](https://github.com/sinemacula/web-core-ts/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/sinemacula/web-core-ts/actions/workflows/tests.yml)
 [![Quality Gates](https://github.com/sinemacula/web-core-ts/actions/workflows/quality-gates.yml/badge.svg?branch=master)](https://github.com/sinemacula/web-core-ts/actions/workflows/quality-gates.yml)
+[![Maintainability](https://qlty.sh/gh/sinemacula/projects/web-core-ts/maintainability.svg)](https://qlty.sh/gh/sinemacula/projects/web-core-ts)
 [![Code Coverage](https://qlty.sh/gh/sinemacula/projects/web-core-ts/coverage.svg)](https://qlty.sh/gh/sinemacula/projects/web-core-ts)
+[![Total Downloads](https://img.shields.io/npm/dt/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
+[![License](https://img.shields.io/github/license/sinemacula/web-core-ts.svg)](LICENSE)
 
 </div>
 
@@ -13,11 +17,14 @@
 bindings - the composition root, feature modules, routing, i18n, the session module, realtime and release monitoring -
 over the platform-agnostic `@sinemacula/foundation`, with no product code and no UI.
 
-The repository root is the package: `src/` is the published kernel source. The playground application under
-`playground/` is the reference consumer: it shows how a real product wires the kernel, and is the template consuming
-apps follow.
+The playground application under `playground/` is the reference consumer: it shows how a real product wires the
+kernel, and is the template consuming apps follow.
 
-## What lives here
+## How It Works
+
+An application hands `createWebCoreApp` its root component, an ordered list of feature modules and its configuration.
+The preset boots the foundation core, binds it to Vue, Vue Router and vue-i18n, and installs the browser adapters and
+services below.
 
 | Area                 | What it provides                                                                                                      | Port / service                    | Vue       |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------- |
@@ -46,26 +53,20 @@ apps follow.
 npm install @sinemacula/web-core vue vue-router vue-i18n pinia
 ```
 
-`vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies. The package is ESM-only and ships compiled `dist/`
-with type declarations.
+`vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies. The `exports` map resolves to the compiled `dist/`
+and the `prepare` script builds it, so a git dependency (`github:sinemacula/web-core-ts#<ref>`) installs the same
+output as the registry tarball.
 
-## Import style
-
-There are no barrel exports. Import each file by its subpath:
+There is no barrel: import each module by its subpath. The `exports` map is the public surface; anything unlisted is
+internal.
 
 ```ts
 import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
 ```
 
-Only the subpaths listed in the `exports` map of `package.json` are public; everything else under `src/` (the module
-registry, the router factory, the theme and connectivity adapters, ...) is wired by `createWebCoreApp` or used
-internally. Each subpath resolves to compiled output (`{ "types": "./dist/<path>.d.ts", "import":
-"./dist/<path>.js" }`), and the `prepare` script builds `dist/`, so the package also installs straight from git
-(`github:sinemacula/web-core-ts#master`). Inside this repository the TypeScript, Vite and Vitest configs map the same
-specifiers to `src/`, so the playground and tests run with no build step. The framework-agnostic layer (http, query,
-session core, storage, config, ...) lives in `@sinemacula/foundation`.
+## Usage
 
-## Modules
+### Modules
 
 An application is composed of feature modules. A module is a plain object satisfying `ModuleDefinition`
 (`src/module/module.ts`); the application owns an explicit, ordered array of them and hands it to `createWebCoreApp`.
@@ -108,7 +109,7 @@ application handle's `dispose()`.
 locale wiring loads module messages in parallel, memoised per locale; the preset threads all of them, so applications
 rarely call them directly.
 
-### Splitting a module's translations
+#### Splitting a module's translations
 
 A module's `locales` loader only has to resolve to a `LocaleMessages` (`Record<string, unknown>`) for each locale, so a
 large translation tree can be split across files with no kernel change: point the loader at a directory whose
@@ -130,7 +131,7 @@ file. Reserve the directory's `index.ts` for the composition entry and give each
 named file. Keep a single flat `<locale>.ts` per module as the default, and split only the locales that have grown
 large.
 
-## Bootstrapping an application
+### Bootstrapping an application
 
 `createWebCoreApp` (`src/app/create-web-core-app.ts`) assembles a complete application from the kernel: it fetches the
 runtime environment document, freezes the configuration, installs every service singleton, runs the module lifecycle
@@ -143,7 +144,7 @@ The application's configuration definition must structurally satisfy `Foundation
 `app.name`/`app.environment`/`app.version`, `featureFlags.flags` and `locales.default`/`locales.enabled`/
 `locales.supported`. Applications define richer trees around it.
 
-### Options
+#### Options
 
 Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an optional
 `pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
@@ -185,7 +186,7 @@ Defaults and behaviours worth knowing:
   `schedule` (delayed work, cancelled through the function it returns; defaults to the global timers) and an injected
   pinia.
 
-### Entry point
+#### Entry point
 
 The whole composition root is one call. The canonical example is the playground's entry (`playground/src/main.ts`),
 shown here with its imports de-aliased:
@@ -232,7 +233,7 @@ start().catch(() => {
 `import.meta.env` appears only here, as input to the caller-supplied `createEnvironment` - no kernel file evaluates
 it. The two translation keys are application copy passed as options.
 
-### start() and dispose()
+#### start() and dispose()
 
 `createWebCoreApp` resolves once every phase has run; nothing is mounted yet. `start(selector?)` awaits
 `router.isReady()` and then mounts (default `#app`), so initialisation completes before any component renders. The
@@ -244,7 +245,7 @@ recovery, module boot teardowns, store disposals, the page-tracking, global-erro
 and finally the colour-scheme listener. Service holders are left installed; `resetWebCoreServices()` clears them
 between tests.
 
-### Service accessors
+#### Service accessors
 
 The preset installs every service into a holder exposed by `@sinemacula/web-core/app/services` (`src/app/services.ts`,
 which re-exports the foundation holders and adds the locale switcher). Components, stores and module services read
@@ -328,126 +329,51 @@ mapping when the wire shape diverges (`mapUser` on the foundation default gatewa
 ## ESLint preset
 
 `@sinemacula/web-core/eslint` is a flat-config layer that enforces the feature-module contract, enabled alongside the
-shared `@sinemacula/coding-standards` presets. On TypeScript and Vue source (tests exempt) it forbids snake_case object-literal
-keys and keeps imports on other modules' public surfaces (`@/modules/<name>`) and on kernel subpaths rather than
-package barrels. Under `modules/` it also checks that a module's name matches its folder, that `module.ts`, `routes.ts`
-and `route-names.ts` export their canonical names, and that route names are namespaced and referenced through
-constants. `eslint`, `typescript-eslint`, `@typescript-eslint/utils` and `vue-eslint-parser` are optional peer
-dependencies, needed only by consumers of the preset.
+shared `@sinemacula/coding-standards` presets. On TypeScript and Vue source (tests exempt) it forbids snake_case
+object-literal keys and keeps imports on other modules' public surfaces (`@/modules/<name>`) and on kernel subpaths
+rather than package barrels. Under `modules/` it also checks that a module's name matches its folder, that
+`module.ts`, `routes.ts` and `route-names.ts` export their canonical names, and that route names are namespaced and
+referenced through constants.
 
-## Design rules
+## Requirements
 
-- Every behavioural dependency is a port (interface); adapters are substituted in tests.
-- No Vue component code in the kernel - it must stay usable by any Sine Macula frontend, whatever its shell.
-- Tests are colocated (`*.test.ts`) and the package is covered to 100%.
+- Node.js 22+
+- Vue 3.5+, Vue Router 4+, vue-i18n 11+ and Pinia 3+ (peers)
+- ESLint 9+, typescript-eslint 8, `@typescript-eslint/utils` 8 and vue-eslint-parser 10+, only for the ESLint preset
+  (optional peers)
 
-## Recorded design decisions
-
-- **Service access is application-singleton, not provide/inject.** The preset installs services into holders exposed
-  as typed accessors (`api()`, `toasts()`, ... in `src/app/services.ts`). Kernel-level `InjectionKey`s were rejected:
-  accessors keep services usable outside component context (stores, middleware, plain modules) and make test
-  substitution explicit (`resetWebCoreServices()`). Holders are process-global by design - one application per page;
-  SSR and multi-app scoping are out of scope. Revisit only if a consumer needs per-subtree service scoping.
-- **Time is a function seam, not a Clock port.** The preset threads `platform.clock` and `platform.schedule`, and each
-  time-dependent unit accepts a clock or timer override where tests need determinism. Introduce a Clock abstraction
-  only if cross-cutting time control (e.g. app-wide time travel) becomes a requirement.
-- **No success-side response interceptors.** The error side has a seam (`onResponseError`); response header access
-  and global response transforms wait for a concrete consumer (ETag caching, rate-limit surfacing).
-
-## Stack
-
-| Concern   | Choice                                                            |
-|-----------|-------------------------------------------------------------------|
-| Framework | Vue 3 (Composition API) - vue/vue-router/vue-i18n/pinia as peers  |
-| Language  | TypeScript (strict)                                               |
-| Build     | mkdist (kernel -> `dist/`) + Vite (playground)                    |
-| State     | Pinia - application module stores plus the kernel session store   |
-| Routing   | Vue Router + Laravel-style middleware pipeline                    |
-| i18n      | vue-i18n, locales loaded on activation                            |
-| Styling   | Design tokens (`--sm-*` custom properties) + scoped CSS           |
-| Tests     | Vitest (100% coverage enforced), Stryker mutation testing         |
-| Quality   | qlty (Biome, ESLint, security scans), Knip                        |
-
-## Repository layout
-
-```text
-src/           The kernel package source - one directory per area, tests colocated
-eslint/        The module-contract ESLint preset, published as @sinemacula/web-core/eslint
-playground/    Reference application + dev harness (@sinemacula/web-core-playground)
-e2e/           Playwright suite driving the playground application
-scripts/       Package build and mutation-scope scripts
-```
-
-The playground consumes the kernel as `"@sinemacula/web-core": "file:.."`, through the package's real export
-specifiers. Only exported subpaths are mapped to source, so its imports are exactly what an external consumer writes
-and the reference application doubles as an integration test of the published surface.
-
-For the application-side details - boot sequence, runtime environment mechanics, adding a feature module - see
-[playground/README.md](playground/README.md).
-
-## Getting started
+## Testing
 
 ```bash
-nvm use                                      # Node 24
-npm install
-cp playground/.env.example playground/.env   # local development variables (VITE_*)
-npm run dev
+npm test                      # unit suite
+npm run test:coverage         # unit suite with 100% coverage enforced
+npm run test:mutation         # Stryker mutation gate (break 90)
+npm run typecheck             # type-check
+npm run check                 # static analysis and lint via qlty
+npm run fmt                   # format via qlty
+npm run smells                # duplication / complexity smells via qlty
+npm run deadcode              # dead-code detection via knip
+npm run check:pkg             # publint + attw on the packed tarball
+npm run test:eslint           # ESLint preset rule tests only
+npm run test:mutation:eslint  # ESLint preset mutation gate (break 85)
+npm run lint:structure        # ESLint preset over src, playground/src and e2e
+npm run test:e2e              # Playwright suite against the playground
+npm run size                  # size-limit budgets on the playground build
 ```
 
-| Script                         | Purpose                                                  |
-|--------------------------------|----------------------------------------------------------|
-| `npm run dev`                  | Playground dev server (Vite)                             |
-| `npm run build`                | Playground production build                              |
-| `npm run build:dist`           | Compile the kernel package to `dist/`                    |
-| `npm run preview`              | Preview the playground production build                  |
-| `npm run typecheck`            | `vue-tsc` over the kernel, playground and e2e suite      |
-| `npm run test`                 | Unit tests (kernel, playground and ESLint preset)        |
-| `npm run test:watch`           | Unit tests in watch mode                                 |
-| `npm run test:coverage`        | Unit tests with 100% thresholds                          |
-| `npm run test:eslint`          | ESLint preset unit tests only                            |
-| `npm run test:mutation`        | Stryker mutation testing (kernel + playground)           |
-| `npm run test:mutation:eslint` | Stryker mutation testing (ESLint preset)                 |
-| `npm run test:e2e`             | Playwright end-to-end suite                              |
-| `npm run test:e2e:ui`          | Playwright end-to-end suite in UI mode                   |
-| `npm run check`                | qlty lint + security suite                               |
-| `npm run fmt`                  | qlty auto-format                                         |
-| `npm run smells`               | qlty duplication + complexity analysis                   |
-| `npm run lint:structure`       | The ESLint preset over `src`, `playground/src` and `e2e` |
-| `npm run deadcode`             | Knip dead-code detection                                 |
-| `npm run size`                 | size-limit bundle budgets (playground build)             |
-| `npm run check:pkg`            | Pack + validate the published surface                    |
+## Changelog
 
-## Quality gates
-
-- **Tests**: colocated tests, 100% line/branch/function/statement coverage enforced by Vitest over `src/**`,
-  `playground/src/**` and `eslint/**`.
-- **Mutation**: Stryker over kernel + playground with a 90% break threshold, scoped to changed files on pull requests
-  and run in full on a weekly schedule; the ESLint preset has its own mutation gate.
-- **Lint/format**: Biome and ESLint via qlty, rules from `sinemacula/coding-standards`.
-- **Structure**: the ESLint preset runs against this repository (`npm run lint:structure`).
-- **Dead code**: Knip across all workspaces, run outside qlty.
-- **Bundle size**: size-limit budgets on the playground build.
-- **Hooks**: `.qlty/hooks/` - format on pre-commit, check on pre-push.
-
-## Releases
-
-The package is published to npm from CI, never by hand.
-
-- **Versioning**: release-please reads the Conventional Commit history and maintains a standing release PR that bumps
-  `package.json` and `CHANGELOG.md`. Merging it tags the release and cuts a GitHub Release.
-- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which checks the tag against `package.json`, compiles
-  `dist/` through the `prepare` lifecycle and runs `npm publish --provenance` under npm trusted publishing (OIDC, no
-  token).
-- **Local checks**: `npm run build:dist` compiles the package; `npm run check:pkg` packs it and validates the published
-  surface with publint and are-the-types-wrong.
+See [CHANGELOG.md](CHANGELOG.md) for a list of notable changes.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for branching, commits, code quality and pull requests.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on branching, commits, code
+quality, and pull requests.
 
 ## Security
 
-Report vulnerabilities privately. See [SECURITY.md](SECURITY.md) for the disclosure policy and contact details.
+If you discover a security vulnerability, please report it responsibly. See [SECURITY.md](SECURITY.md) for the
+disclosure policy and contact details.
 
 ## License
 
