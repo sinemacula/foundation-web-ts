@@ -92,7 +92,10 @@ function seedSignedInSession(): void {
         'auth.session',
         JSON.stringify({
             revision: 1,
-            tokens: { accessToken: 'access', refreshToken: 'refresh', expiresAtEpochMs: null },
+            session: {
+                lineage: 'seeded',
+                tokens: { accessToken: 'access', refreshToken: 'refresh', expiresAtEpochMs: null },
+            },
         }),
     );
 }

@@ -290,6 +290,8 @@ holder between tests.
 opt-in and installs itself through the module contract, with no preset special case. At register it installs the
 session context and contributes the bearer-token interceptor plus the single unauthorized handler (a
 `SessionRefreshCoordinator`, so the reactive 401 path, the proactive refresh timer and realtime reconnects never race).
+A 401 for a request sent with a session token the session has since replaced is retried on the current token without
+refreshing again, while a current token is held; any other 401 refreshes first.
 At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor, refreshes and
 the boot hook all wait for that hydration, so the first navigation never sees a half-loaded session. At boot it wires
 the session-loss redirect (login route plus the sanitised current path under the `redirect` query key), cross-tab
@@ -300,22 +302,32 @@ connection's session binding.
 
 The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`, `interactionRequired`
 with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A refused or pending refresh clears
-the session itself; the module never clears it a second time.
+the session itself; the module never clears it a second time. A refresh whose session another sign-in replaced by the
+time it settles reports `superseded`. `logout()` clears the session locally at once, then signs it out on the server
+with its own captured tokens, skipped when a newer sign-in has been persisted meanwhile; a sign-in presents the held
+refresh token so the server can supersede that session.
 
 Every option defaults to the reference application's behaviour: `name` (`session`), `storeId` (`auth`), `api` (the
 foundation default gateway on the platform clock; required when the application declares its own user type),
-`storageKeys`, `routes`, `persistence`, `refreshSkewMs` (60 seconds), `deviceOs` (`WEB`), `generateUuid`
+`storageKeys`, `routes`, `persistence`, `exchangeLock`, `refreshSkewMs` (60 seconds), `deviceOs` (`WEB`), `generateUuid`
 (`crypto.randomUUID()`), the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect`/`realtimeFollowsSession` toggles
 (all true) and `identity` (per-channel mappings, or `false` to disable).
 
-The session persists as one revisioned snapshot in `localStorage`, written through `StrictWebStorage` (storage failures
-surface instead of being swallowed) under a `WebLocksSessionLock` shared by every tab. The module refuses to register
-when the Web Locks API is unavailable rather than falling back to an unshared lock; supply `persistence` to store the
-session elsewhere, and pair it with `crossTabSync: false` plus your own calls to the store's `hydrate()` when that store
-does not raise `storage` events. Where the browser blocks site storage (reading `localStorage` throws), the default
-keeps the session in memory instead: sign-in works until the page reloads, no Web Lock is taken, cross-tab sync is
-skipped whatever `crossTabSync` says, and one warning goes to the logger. A `persistence` you supply is never replaced;
-its failures surface. The storage keys are a public contract:
+The session persists as one revisioned snapshot in `localStorage`, `{ revision, session: { lineage, tokens } }`,
+written through `StrictWebStorage` (storage failures surface instead of being swallowed) under a `WebLocksSessionLock`
+(`<key>:lock`) shared by every tab. Every sign-in starts a new lineage (`crypto.randomUUID()`) that its rotations keep,
+so another tab's rotation only updates the tokens, keeping the user, `sessionIdentity()`, the identity fan-out and the
+realtime connection, while another tab's sign-in replaces the session. Sign-in, refresh and sign-out exchanges run
+under a second Web Lock (`<key>:exchange`), so a refresh first adopts a rotation another tab persisted instead of
+presenting a token that tab has spent. The module refuses to register when the Web Locks API is unavailable rather
+than falling back to an unshared lock; supply `persistence` to store the session elsewhere, and pair it with
+`crossTabSync: false` plus your own calls to the store's `hydrate()` when that store does not raise `storage` events.
+A supplied `persistence` serialises only this tab's exchanges unless `exchangeLock` supplies a lock its sharers hold.
+Where the browser blocks site storage (reading `localStorage` throws), the default keeps the session in memory
+instead: sign-in works until the page reloads, no Web Lock is taken, cross-tab sync is skipped whatever
+`crossTabSync` says, and one warning goes to the logger. A `persistence` you supply is never replaced; its failures
+surface. A snapshot that cannot be read, such as one stored in an earlier format, is reported once and leaves the
+session signed out until the next sign-in overwrites it. The storage keys are a public contract:
 
 | Key          | Default            |
 |--------------|--------------------|
@@ -332,7 +344,8 @@ teardown when it opened the connection. A refresh on any path that is refused, r
 fails disconnects it and cancels pending retries, leaving the session as the refresh left it; it stays down until the
 session is replaced. Proactive refreshes and retries run on the platform `schedule`. Pass `sessionReconnectGuard()`
 from `src/session/session-realtime.ts` as the connection's `beforeReconnect` so each reconnect refreshes an expiring
-token first and stops for good when the session ends.
+token first and stops for good when the session ends; an attempt the connection abandoned, or whose session another
+sign-in replaced meanwhile, skips without disconnecting.
 
 Route identity is one configurable source feeding the guards, the session-loss redirect and the redirect sanitiser's
 loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set together with `login` when renaming),

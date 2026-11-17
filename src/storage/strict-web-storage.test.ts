@@ -7,7 +7,12 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import { describeSessionPersistenceContract } from '@sinemacula/foundation/session/test-support/session-persistence-contract';
+import { describeKeyValueStorageContract } from '@sinemacula/foundation/storage/test-support/key-value-storage-contract';
+import { createLockManager } from '../session/test-support/session-fixtures';
 import { StrictWebStorage } from './strict-web-storage';
+import { WebLocksSessionLock } from './web-locks-session-lock';
 
 /** Build an in-memory Web Storage area. */
 function makeStorage(): Storage {
@@ -38,6 +43,23 @@ function makeFailingStorage(error: Error): Storage {
 
     return { length: 0, key: fail, getItem: fail, setItem: fail, removeItem: fail, clear: fail };
 }
+
+describeKeyValueStorageContract({ create: () => new StrictWebStorage(makeStorage()) });
+
+describe('the session persistence over StrictWebStorage and a Web Locks lock', () => {
+    describeSessionPersistenceContract({
+        create: () => {
+            const area = makeStorage();
+            const locks = createLockManager();
+
+            return () =>
+                new KeyValueSessionPersistence(new StrictWebStorage(area), {
+                    lock: new WebLocksSessionLock(locks, 'auth.session:lock'),
+                });
+        },
+        broken: () => new KeyValueSessionPersistence(new StrictWebStorage(makeFailingStorage(new Error('blocked')))),
+    });
+});
 
 describe('StrictWebStorage', () => {
     it('reads null for an absent key', () => {

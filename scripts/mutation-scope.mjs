@@ -21,7 +21,7 @@ const FULL_SCOPE_TRIGGERS = [
 
 const TEST_FILE = /\.test\.ts$/u;
 const TEST_SUPPORT = '/test-support/';
-const FOUNDATION_ENTRY = /(?:^|\/)node_modules\/@sinemacula\/foundation$/u;
+const FULL_SCOPE_PACKAGE = /(?:^|\/)node_modules\/(?:@sinemacula\/foundation|@stryker-mutator\/[^/]+)$/u;
 
 /**
  * A failure that leaves the scope unknown, so nothing may be printed.
@@ -42,15 +42,16 @@ export function isMutable(path, mutate) {
 }
 
 /**
- * Serialise the installed Foundation entries of a parsed lockfile, so two
- * lockfiles compare equal exactly when they install the same Foundation.
+ * Serialise the installed Foundation and mutation-engine entries of a parsed
+ * lockfile, so two lockfiles compare equal exactly when they install both
+ * identically.
  */
-export function foundationFingerprint(lockfile) {
+export function fullScopeFingerprint(lockfile) {
     const packages = lockfile?.packages ?? {};
 
     return JSON.stringify(
         Object.keys(packages)
-            .filter(key => FOUNDATION_ENTRY.test(key))
+            .filter(key => FULL_SCOPE_PACKAGE.test(key))
             .sort()
             .map(key => [key, packages[key].version ?? null, packages[key].resolved ?? null]),
     );
@@ -61,12 +62,12 @@ export function foundationFingerprint(lockfile) {
  * with a rename carrying its old path: the full `mutate` list when a change can
  * alter every mutant, otherwise the sorted mutable paths.
  */
-export function mutationScope({ changes, tracked, mutate, foundationChanged }) {
+export function mutationScope({ changes, tracked, mutate, packagesChanged }) {
     const paths = changes.flatMap(change =>
         change.previous === undefined ? [change.path] : [change.path, change.previous],
     );
 
-    if (foundationChanged || paths.some(path => FULL_SCOPE_TRIGGERS.includes(path))) {
+    if (packagesChanged || paths.some(path => FULL_SCOPE_TRIGGERS.includes(path))) {
         return [...mutate];
     }
 
@@ -141,9 +142,10 @@ function readMutatePatterns() {
 }
 
 /**
- * Whether the installed Foundation differs between `mergeBase` and HEAD.
+ * Whether the installed Foundation or mutation engine differs between
+ * `mergeBase` and HEAD.
  */
-function foundationChangedSince(mergeBase) {
+function packagesChangedSince(mergeBase) {
     /**
      * Parse the lockfile at `ref`, or null when it has none.
      */
@@ -155,7 +157,7 @@ function foundationChangedSince(mergeBase) {
         }
     };
 
-    return foundationFingerprint(lockfileAt(mergeBase)) !== foundationFingerprint(lockfileAt('HEAD'));
+    return fullScopeFingerprint(lockfileAt(mergeBase)) !== fullScopeFingerprint(lockfileAt('HEAD'));
 }
 
 /**
@@ -181,8 +183,7 @@ function main() {
             .split('\n')
             .filter(path => path !== ''),
         mutate: readMutatePatterns(),
-        foundationChanged:
-            changes.some(change => change.path === 'package-lock.json') && foundationChangedSince(mergeBase),
+        packagesChanged: changes.some(change => change.path === 'package-lock.json') && packagesChangedSince(mergeBase),
     });
 
     for (const entry of scope) {

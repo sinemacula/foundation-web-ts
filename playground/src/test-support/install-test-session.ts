@@ -37,6 +37,7 @@ export function installTestSession(storage: KeyValueStorage): void {
         schedule: scheduleOnTimers,
         refreshSkewMs: 60_000,
         device: () => ({ uuid: 'test-device-uuid', os: 'WEB' }),
+        createLineage: () => crypto.randomUUID(),
         // Resolved per access so a test can swap the installed client later.
         get api(): SessionApi {
             return createDefaultSessionApi(api());

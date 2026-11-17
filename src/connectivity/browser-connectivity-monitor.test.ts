@@ -7,6 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { describeConnectivityMonitorContract } from '@sinemacula/foundation/connectivity/test-support/connectivity-monitor-contract';
 import { BrowserConnectivityMonitor } from './browser-connectivity-monitor';
 
 /**
@@ -57,6 +58,17 @@ function fakeWindow(onLine: boolean): {
         listenerCount: type => listeners.get(type)?.size ?? 0,
     };
 }
+
+describeConnectivityMonitorContract({
+    create: initial => {
+        const target = fakeWindow(initial);
+
+        return {
+            monitor: new BrowserConnectivityMonitor({ targetWindow: target.window }),
+            report: online => target.emit(online ? 'online' : 'offline'),
+        };
+    },
+});
 
 describe('BrowserConnectivityMonitor', () => {
     afterEach(() => {

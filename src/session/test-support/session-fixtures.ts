@@ -11,6 +11,7 @@ import { vi } from 'vitest';
 import type { RealtimeConnection, RealtimeState } from '@sinemacula/foundation/realtime/realtime-connection';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
+import type { SessionSnapshot } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
@@ -23,6 +24,9 @@ import { useSessionStore } from '../session-store';
 
 /** The default key the session snapshot persists under. */
 export const SESSION_KEY = 'auth.session';
+
+/** The lineage {@link persistSnapshot} writes unless given another. */
+export const LINEAGE = 'lineage-1';
 
 /** A gateway whose every method is a mock. */
 export type FakeSessionApi = {
@@ -108,20 +112,28 @@ export function user(overrides: Partial<SessionUser> = {}): SessionUser {
 
 /**
  * Write a session snapshot the way the persistence adapter does; null tokens
- * write a cleared snapshot.
+ * write a cleared snapshot, and another lineage marks another sign-in.
  */
 export function persistSnapshot(
     storage: KeyValueStorage | Storage,
     snapshotTokens: SessionTokens | null,
     revision = 1,
+    lineage = LINEAGE,
 ): void {
-    const value = JSON.stringify({ revision, tokens: snapshotTokens });
+    const value = JSON.stringify(snapshot(snapshotTokens, revision, lineage));
 
     if ('setItem' in storage) {
         storage.setItem(SESSION_KEY, value);
     } else {
         storage.set(SESSION_KEY, value);
     }
+}
+
+/**
+ * Build the stored form of a session snapshot; null tokens build a cleared one.
+ */
+export function snapshot(snapshotTokens: SessionTokens | null, revision = 1, lineage = LINEAGE): SessionSnapshot {
+    return { revision, session: snapshotTokens === null ? null : { lineage, tokens: snapshotTokens } };
 }
 
 /**
@@ -239,6 +251,20 @@ export function createManualScheduler(): ManualScheduler {
 }
 
 /**
+ * Build a lineage factory yielding `lineage-2`, `lineage-3` and so on, so a
+ * sign-in never shares the lineage {@link persistSnapshot} writes by default.
+ */
+export function createLineageSequence(): () => string {
+    let next = 1;
+
+    return () => {
+        next += 1;
+
+        return `lineage-${String(next)}`;
+    };
+}
+
+/**
  * Build a session context over in-memory persistence, hydrating the active
  * store on first readiness and refreshing through it.
  */
@@ -249,6 +275,7 @@ export function createTestSessionContext(overrides: Partial<SessionContext> = {}
         persistence: new KeyValueSessionPersistence(new MemoryStorage()),
         api: createFakeSessionApi(),
         device: () => ({ uuid: 'device-uuid', os: 'WEB' }),
+        createLineage: createLineageSequence(),
         routes: { login: { name: 'auth.login' }, loginPath: '/login', home: '/', forbidden: '/forbidden' },
         storeId: 'auth',
         coordinator: new SessionRefreshCoordinator(() => useSessionStore().refresh()),

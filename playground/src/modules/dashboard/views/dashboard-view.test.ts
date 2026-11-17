@@ -124,7 +124,10 @@ describe('DashboardView', () => {
             SESSION_KEY,
             JSON.stringify({
                 revision: 1,
-                tokens: { accessToken: 'valid-token', refreshToken: 'refresh-token', expiresAtEpochMs: null },
+                session: {
+                    lineage: 'seeded',
+                    tokens: { accessToken: 'valid-token', refreshToken: 'refresh-token', expiresAtEpochMs: null },
+                },
             }),
         );
         initialiseStorage(storage);
@@ -214,11 +217,15 @@ describe('DashboardView', () => {
                 method: 'POST',
                 path: 'auth/logout',
                 body: wire([['refresh_token', 'refresh-token']]),
-                options: { notifyOnError: false, retryOnUnauthorized: false },
+                options: {
+                    headers: { Authorization: 'Bearer valid-token' },
+                    notifyOnError: false,
+                    retryOnUnauthorized: false,
+                },
             },
         ]);
         expect(useSessionStore().isAuthenticated).toBe(false);
-        expect(JSON.parse(storage.get(SESSION_KEY) ?? 'null')).toEqual({ revision: 2, tokens: null });
+        expect(JSON.parse(storage.get(SESSION_KEY) ?? 'null')).toEqual({ revision: 2, session: null });
 
         unmount();
     });

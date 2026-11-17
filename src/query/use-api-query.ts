@@ -30,7 +30,10 @@ export interface ApiQueryState {
     readonly parameters: ComputedRef<QueryParameters>;
 
     /**
-     * Replace the held query with the result of applying `mutate` to it.
+     * Replace the held query with the result of applying `mutate` to it. Edits
+     * build on the held query, so a filter call on a field that already holds a
+     * condition ANDs beside it rather than replacing it; to change a condition,
+     * `reset()` and apply it again.
      */
     apply(mutate: (query: ApiQuery) => ApiQuery): void;
 

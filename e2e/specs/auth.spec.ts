@@ -34,7 +34,7 @@ test.describe('authentication', { tag: '@engine' }, () => {
         await expect(page).toHaveURL(/\/users$/u);
     });
 
-    for (const target of ['https://evil.example', '//evil.example', '/login']) {
+    for (const target of ['https://evil.example', '//evil.example', '/%09/evil.example', '/login']) {
         test(`ignores the redirect target ${target} and lands on the dashboard`, async ({
             page,
             api,
@@ -44,7 +44,7 @@ test.describe('authentication', { tag: '@engine' }, () => {
         }) => {
             await api.signInSucceeds();
 
-            await page.goto(`/login?redirect=${encodeURIComponent(target)}`);
+            await page.goto(`/login?redirect=${encodeURIComponent(decodeURIComponent(target))}`);
             await loginPage.signIn(EMAIL, PASSWORD);
 
             await expect(dashboardPage.heading).toBeVisible();
@@ -146,7 +146,7 @@ test.describe('signed-in visitor', { tag: '@engine' }, () => {
         await expect(page).toHaveURL(/\/$/u);
     });
 
-    test('signs out back to the login screen, revoking the refresh token', async ({
+    test('signs out back to the login screen, revoking the session with its own tokens', async ({
         page,
         api,
         loginPage,
@@ -160,8 +160,13 @@ test.describe('signed-in visitor', { tag: '@engine' }, () => {
         await expect(loginPage.heading).toBeVisible();
         await expect(page).toHaveURL(/\/login$/u);
         await expect
-            .poll(() => api.requestsTo('/auth/logout').map(request => request.body))
-            .toEqual([Object.fromEntries([['refresh_token', SEEDED_SESSION.refreshToken]])]);
+            .poll(() => api.requestsTo('/auth/logout').map(request => [request.authorization, request.body]))
+            .toEqual([
+                [
+                    `Bearer ${SEEDED_SESSION.accessToken}`,
+                    Object.fromEntries([['refresh_token', SEEDED_SESSION.refreshToken]]),
+                ],
+            ]);
         expect(await storedTokens(page)).toBeNull();
     });
 

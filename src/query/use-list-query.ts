@@ -22,6 +22,8 @@ const DEFAULT_PAGE_SIZE = 25;
 
 const MIN_PAGE = 1;
 
+const MAX_PAGE = Number.MAX_SAFE_INTEGER;
+
 /**
  * The reactive list-query state returned by {@link useListQuery}.
  *
@@ -85,7 +87,7 @@ export interface ListQuery<Filters extends Record<string, ListFilter<never>>> {
     sortBy(column: string, direction?: 'asc' | 'desc'): void;
 
     /**
-     * Advance to the next page.
+     * Advance to the next page, stopping at the largest safe integer.
      */
     next(): void;
 
@@ -95,8 +97,8 @@ export interface ListQuery<Filters extends Record<string, ListFilter<never>>> {
     previous(): void;
 
     /**
-     * Jump to an arbitrary page, truncated to an integer and clamped at page 1;
-     * a non-finite page is ignored.
+     * Jump to an arbitrary page, truncated to an integer and clamped between
+     * page 1 and the largest safe integer; a non-finite page is ignored.
      */
     goTo(page: number): void;
 
@@ -117,11 +119,22 @@ export interface ListQuery<Filters extends Record<string, ListFilter<never>>> {
  * Create reactive list-query state from a {@link ListQueryDefinition}.
  *
  * The query compiles in order: base shaping, active filters in insertion order,
- * search, sort (explicit, then default), pagination and refinements.
+ * search, sort (explicit, then default), pagination and refinements. Each
+ * filter and the search AND with the base scope and one another, so none can
+ * widen what the base selects.
+ *
+ * @throws {QueryError} when `definition.pageSize` is not a positive safe
+ * integer
  */
 export function useListQuery<Filters extends Record<string, ListFilter<never>>>(
     definition: ListQueryDefinition<Filters>,
 ): ListQuery<Filters> {
+    const pageSize = definition.pageSize ?? DEFAULT_PAGE_SIZE;
+
+    if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+        throw new QueryError(`The page size must be a positive safe integer, received ${pageSize}.`);
+    }
+
     const activeFilters = shallowRef<Map<string, ActiveFilterEntry>>(new Map());
     const activeSearch = ref('');
     const activeSort = ref<SortDefault | null>(null);
@@ -418,10 +431,10 @@ function createNavigationMutations<Filters extends Record<string, ListFilter<nev
     }
 
     /**
-     * Advance to the next page.
+     * Advance to the next page, stopping at the largest safe integer.
      */
     function next(): void {
-        state.currentPage.value += 1;
+        state.currentPage.value = Math.min(MAX_PAGE, state.currentPage.value + 1);
     }
 
     /**
@@ -432,15 +445,15 @@ function createNavigationMutations<Filters extends Record<string, ListFilter<nev
     }
 
     /**
-     * Jump to an arbitrary page, truncated and clamped at page 1, ignoring a
-     * non-finite page.
+     * Jump to an arbitrary page, truncated and clamped between page 1 and the
+     * largest safe integer, ignoring a non-finite page.
      */
     function goTo(targetPage: number): void {
         if (!Number.isFinite(targetPage)) {
             return;
         }
 
-        state.currentPage.value = Math.max(MIN_PAGE, Math.trunc(targetPage));
+        state.currentPage.value = Math.min(MAX_PAGE, Math.max(MIN_PAGE, Math.trunc(targetPage)));
     }
 
     /**

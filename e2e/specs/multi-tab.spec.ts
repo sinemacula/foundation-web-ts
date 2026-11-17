@@ -32,7 +32,7 @@ test.describe('session across tabs', { tag: '@engine' }, () => {
             expect(await storedTokens(other)).toBeNull();
         });
 
-        test('a refresh in one tab keeps the other signed in on the rotated token', async ({
+        test('a refresh in one tab keeps the other signed in on the rotated token, without reloading its user', async ({
             context,
             page,
             api,
@@ -61,6 +61,52 @@ test.describe('session across tabs', { tag: '@engine' }, () => {
             await expect(otherUsers.rows).toHaveCount(2);
             await expect(other).toHaveURL(/\/users$/u);
             expect(api.requestsTo('/auth/refresh')).toHaveLength(1);
+            expect(api.requestsTo('/users/self')).toHaveLength(2);
+        });
+
+        test('tabs refreshing at once share one rotation', async ({ browserName, context, page, api, usersPage }) => {
+            test.skip(
+                browserName !== 'chromium',
+                'WebKit and Firefox can grant the exchange lock before the other tab sees the rotation written to localStorage.',
+            );
+
+            /**
+             * Release the held refresh responses.
+             */
+            let release: () => void = () => undefined;
+            const held = new Promise<void>(resolve => {
+                release = resolve;
+            });
+
+            await api.usersList();
+            await api.refreshRotates(held);
+
+            const other = await context.newPage();
+            const otherUsers = new UsersPage(other);
+
+            await new DashboardPage(page).goto();
+            await new DashboardPage(other).goto();
+            await expect(new DashboardPage(other).heading).toBeVisible();
+
+            api.expireAccessToken(SEEDED_SESSION.accessToken);
+
+            await page.getByRole('link', { name: 'Users' }).click();
+            await expect.poll(() => api.requestsTo('/auth/refresh')).toHaveLength(1);
+
+            await other.getByRole('link', { name: 'Users' }).click();
+            await expect.poll(() => api.requestsTo('/users')).toHaveLength(2);
+
+            release();
+
+            await expect(usersPage.rows).toHaveCount(2);
+            await expect(otherUsers.rows).toHaveCount(2);
+            expect(api.requestsTo('/auth/refresh')).toHaveLength(1);
+            expect(api.requestsTo('/users').map(request => request.authorization)).toStrictEqual([
+                `Bearer ${SEEDED_SESSION.accessToken}`,
+                `Bearer ${SEEDED_SESSION.accessToken}`,
+                'Bearer e2e-access-token-1',
+                'Bearer e2e-access-token-1',
+            ]);
         });
     });
 

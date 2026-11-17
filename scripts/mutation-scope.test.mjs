@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { foundationFingerprint, isMutable, mutationScope, parseNameStatus } from './mutation-scope.mjs';
+import { fullScopeFingerprint, isMutable, mutationScope, parseNameStatus } from './mutation-scope.mjs';
 
 const MUTATE = JSON.parse(readFileSync('stryker.config.json', 'utf8')).mutate;
 
@@ -36,8 +36,8 @@ const TRACKED = [
 /**
  * Compute the scope of `changes` against the fixture repository.
  */
-function scopeOf(changes, foundationChanged = false) {
-    return mutationScope({ changes, tracked: TRACKED, mutate: MUTATE, foundationChanged });
+function scopeOf(changes, packagesChanged = false) {
+    return mutationScope({ changes, tracked: TRACKED, mutate: MUTATE, packagesChanged });
 }
 
 /**
@@ -106,35 +106,39 @@ describe('mutationScope', () => {
         },
     );
 
-    it('mutates everything when the installed Foundation changes', () => {
+    it('mutates everything when the installed Foundation or mutation engine changes', () => {
         expect(scopeOf([{ path: 'package-lock.json' }], true)).toEqual(MUTATE);
     });
 });
 
-describe('foundationFingerprint', () => {
+describe('fullScopeFingerprint', () => {
     /**
-     * Build a lockfile installing Foundation from `resolved`, beside an
-     * unrelated package.
+     * Build a lockfile installing Foundation from `resolved` and the mutation
+     * engine core and runner at the given versions, beside another package.
      */
-    const lockfile = (resolved, other = '1.0.0') => ({
+    const lockfile = (resolved, { core = '10.0.0', runner = core, other = '1.0.0' } = {}) => ({
         packages: {
             'node_modules/@sinemacula/foundation': { version: '0.0.0', resolved },
+            'node_modules/@stryker-mutator/core': { version: core },
+            'node_modules/@stryker-mutator/vitest-runner': { version: runner },
             'node_modules/vue': { version: other },
         },
     });
 
-    it('matches lockfiles installing the same Foundation', () => {
-        expect(foundationFingerprint(lockfile('git#a', '1.0.0'))).toBe(
-            foundationFingerprint(lockfile('git#a', '2.0.0')),
+    it('matches lockfiles installing the same Foundation and mutation engine', () => {
+        expect(fullScopeFingerprint(lockfile('git#a', { other: '1.0.0' }))).toBe(
+            fullScopeFingerprint(lockfile('git#a', { other: '2.0.0' })),
         );
     });
 
     it.each([
-        ['a different commit', lockfile('git#b')],
+        ['a different Foundation commit', lockfile('git#b')],
+        ['a different engine core', lockfile('git#a', { core: '10.1.0', runner: '10.0.0' })],
+        ['a different engine runner', lockfile('git#a', { runner: '10.1.0' })],
         ['no lockfile', null],
-        ['no Foundation entry', { packages: {} }],
+        ['no Foundation or engine entry', { packages: {} }],
     ])('tells %s apart', (_case, other) => {
-        expect(foundationFingerprint(other)).not.toBe(foundationFingerprint(lockfile('git#a')));
+        expect(fullScopeFingerprint(other)).not.toBe(fullScopeFingerprint(lockfile('git#a')));
     });
 });
 
