@@ -85,25 +85,58 @@ export interface WiredMonitors {
 
     /** The running connectivity monitor, or null when disabled. */
     readonly connectivity: ConnectivityMonitor | null;
+
+    /** Stops both monitors and detaches their handlers, silencing any update check still in flight. */
+    readonly teardown: () => void;
 }
 
 /**
- * Wire the update and connectivity monitors.
+ * A wired monitor, not yet started, and the unsubscribe for its handler.
+ */
+interface Subscribed<M> {
+    /** The wired monitor. */
+    readonly monitor: M;
+
+    /** Detaches the handler the wiring subscribed. */
+    readonly unsubscribe: () => void;
+}
+
+/**
+ * Wire the update and connectivity monitors; with connectivity monitoring on,
+ * update polling runs only while the browser reports itself online.
  *
  * @throws {FoundationBootError} when updates are explicitly enabled with
  * neither a toast key nor an update handler
  */
 export function wireMonitors<T extends MonitorWiringSettings>(options: WireMonitorsOptions<T>): WiredMonitors {
     const updates = wireUpdates(options);
+    const updateMonitor = updates?.monitor ?? null;
+    const connectivity = wireConnectivity(options, updateMonitor);
+    const connectivityMonitor = connectivity?.monitor ?? null;
 
-    return { updates, connectivity: wireConnectivity(options, updates) };
+    if (connectivityMonitor?.online ?? true) {
+        updateMonitor?.start();
+    }
+
+    return {
+        updates: updateMonitor,
+        connectivity: connectivityMonitor,
+        teardown: () => {
+            connectivity?.unsubscribe();
+            connectivityMonitor?.stop();
+            updates?.unsubscribe();
+            updateMonitor?.stop();
+        },
+    };
 }
 
 /**
  * Wire the deployed-version monitor, which stays off without a toast key or
  * handler because the kernel ships no translation keys.
  */
-function wireUpdates<T extends MonitorWiringSettings>(options: WireMonitorsOptions<T>): UpdateMonitor | null {
+function wireUpdates<T extends MonitorWiringSettings>(
+    options: WireMonitorsOptions<T>,
+): Subscribed<UpdateMonitor> | null {
     const wiring = options.updates;
     const handler = resolveUpdateHandler(wiring, options.toasts);
     const enabled = resolveUpdatesEnabled(wiring?.enabled, options.settings);
@@ -131,10 +164,7 @@ function wireUpdates<T extends MonitorWiringSettings>(options: WireMonitorsOptio
         ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
     });
 
-    monitor.onUpdate(handler);
-    monitor.start();
-
-    return monitor;
+    return { monitor, unsubscribe: monitor.onUpdate(handler) };
 }
 
 /**
@@ -179,7 +209,7 @@ function resolveUpdatesEnabled<T extends MonitorWiringSettings>(
 function wireConnectivity<T extends MonitorWiringSettings>(
     options: WireMonitorsOptions<T>,
     updates: UpdateMonitor | null,
-): ConnectivityMonitor | null {
+): Subscribed<ConnectivityMonitor> | null {
     const enabled = options.connectivity?.enabled ?? updates !== null;
 
     if (!enabled) {
@@ -190,17 +220,15 @@ function wireConnectivity<T extends MonitorWiringSettings>(
         ...(options.targetWindow === undefined ? {} : { targetWindow: options.targetWindow }),
     });
 
-    if (updates !== null) {
-        monitor.onChange(online => {
-            if (online) {
-                updates.start();
-            } else {
-                updates.stop();
-            }
-        });
-    }
+    const unsubscribe = monitor.onChange(online => {
+        if (online) {
+            updates?.start();
+        } else {
+            updates?.stop();
+        }
+    });
 
     monitor.start();
 
-    return monitor;
+    return { monitor, unsubscribe };
 }
