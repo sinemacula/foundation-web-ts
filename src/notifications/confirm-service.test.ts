@@ -153,6 +153,32 @@ describe('ConfirmService', () => {
             expect(service.active.value).toBeNull();
         });
 
+        it('ignores a repeated answer scoped to a request that already settled', async () => {
+            const service = new ConfirmService();
+            const first = service.confirm({ title: 'first', message: 'msg' });
+            const second = service.confirm({ title: 'destructive', message: 'msg' });
+            const id = service.active.value?.id;
+
+            service.settle(true, id);
+            service.settle(true, id);
+
+            await expect(first).resolves.toBe(true);
+            expect(service.active.value?.title).toBe('destructive');
+
+            service.settle(false, service.active.value?.id);
+
+            await expect(second).resolves.toBe(false);
+        });
+
+        it('ignores an answer scoped to an unknown id', () => {
+            const service = new ConfirmService();
+
+            void service.confirm({ title: 'title', message: 'msg' });
+            service.settle(true, 'confirm-99');
+
+            expect(service.active.value?.id).toBe('confirm-1');
+        });
+
         it('assigns a fresh id to each queued request when surfaced', async () => {
             const service = new ConfirmService();
 
@@ -165,6 +191,36 @@ describe('ConfirmService', () => {
             await first;
 
             expect(service.active.value?.id).toBe('confirm-2');
+        });
+    });
+
+    describe('cancelAll', () => {
+        it('resolves the active and every queued request false', async () => {
+            const service = new ConfirmService();
+            const outcomes = [
+                service.confirm({ title: 'first', message: 'msg' }),
+                service.confirm({ title: 'second', message: 'msg' }),
+                service.confirm({ title: 'third', message: 'msg' }),
+            ];
+
+            service.cancelAll();
+
+            await expect(Promise.all(outcomes)).resolves.toStrictEqual([false, false, false]);
+            expect(service.active.value).toBeNull();
+        });
+
+        it('leaves the service ready for new requests', async () => {
+            const service = new ConfirmService();
+
+            service.cancelAll();
+
+            const outcome = service.confirm({ title: 'later', message: 'msg' });
+
+            expect(service.active.value?.title).toBe('later');
+
+            service.settle(true);
+
+            await expect(outcome).resolves.toBe(true);
         });
     });
 });

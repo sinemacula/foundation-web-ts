@@ -67,10 +67,13 @@ export class ConfirmService implements Confirmer {
 
     /**
      * Resolve the active request with the outcome and surface the next queued
-     * one; no-op when none is active.
+     * one; no-op when none is active or when `id` names a request that is no
+     * longer active, so a stale or repeated answer never reaches the next one.
      */
-    settle(outcome: boolean): void {
-        if (this.#active.value === null || this.#currentResolve === null) {
+    settle(outcome: boolean, id?: string): void {
+        const active = this.#active.value;
+
+        if (active === null || this.#currentResolve === null || (id !== undefined && id !== active.id)) {
             return;
         }
 
@@ -85,6 +88,23 @@ export class ConfirmService implements Confirmer {
 
         if (next !== undefined) {
             this.#surface(next);
+        }
+    }
+
+    /**
+     * Cancel the active request and every queued one, resolving each `false`.
+     */
+    cancelAll(): void {
+        const pending = this.#queue.splice(0);
+        const resolve = this.#currentResolve;
+
+        this.#active.value = null;
+        this.#currentResolve = null;
+
+        resolve?.(false);
+
+        for (const entry of pending) {
+            entry.resolve(false);
         }
     }
 
