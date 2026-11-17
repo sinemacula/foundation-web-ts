@@ -10,6 +10,7 @@ import { createPinia } from 'pinia';
 import type { App, Component } from 'vue';
 import { createApp } from 'vue';
 import type { Router, RouterHistory } from 'vue-router';
+import { createWebHistory } from 'vue-router';
 
 import type { AnalyticsTracker } from '@sinemacula/foundation/analytics/analytics-tracker';
 import { installPageTracking } from '@sinemacula/foundation/analytics/install-page-tracking';
@@ -21,28 +22,25 @@ import type { FeatureFlags } from '@sinemacula/foundation/feature-flags/feature-
 import type { HttpClient, RequestInterceptor, ResponseErrorHandler } from '@sinemacula/foundation/http/http-client';
 import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
 import type { Logger } from '@sinemacula/foundation/logging/logger';
-import type {
-    LocaleMessages,
-    ModuleDefinition,
-    ModuleStoreFactory,
-    ResolvedPlatform,
-    ScheduleTask,
-} from '../module/module';
+import type { LocaleMessages, ModuleDefinition, ResolvedPlatform, ScheduleTask } from '../module/module';
 import { scheduleOnTimers } from '../module/module';
 import type { ModuleRegistry } from '../module/module-registry';
 import { bootModules, createModuleRegistry, registerModules } from '../module/module-registry';
+import { TeardownStack } from '../module/teardown-stack';
 import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
+import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
 import { installGlobalErrorHandling } from '../reporting/install-global-error-handling';
 import { tabRecoveryStorage } from '../router/chunk-error-recovery';
 import { BrowserStorage } from '../storage/browser-storage';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { ColorSchemePreference } from '@sinemacula/foundation/theme/color-scheme';
 import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import type { UpdateMonitor } from '../updates/update-monitor';
-import { installRealtime, toasts } from './services';
+import { installRealtime } from './services';
 import { bootFoundationCore } from '@sinemacula/foundation/app/boot-foundation-core';
 import type { FoundationConfig } from '@sinemacula/foundation/app/foundation-config';
 import { wireChunkRecovery } from './wire-chunk-recovery';
@@ -56,6 +54,8 @@ import type { WiredObservability } from '@sinemacula/foundation/app/wire-observa
 import { wireRouter } from './wire-router';
 
 const DEFAULT_MOUNT_SELECTOR = '#app';
+const DISPOSED_MESSAGE = 'The application has been disposed.';
+const ALREADY_STARTED_MESSAGE = 'The application has already been started.';
 
 // Internal by design: phase insertions must never be breaking API changes.
 const BOOT_PHASES = [
@@ -104,6 +104,16 @@ export function observeBootPhases(recorder: (phase: string) => void): () => void
  */
 function recordPhase(phase: BootPhase): void {
     phaseRecorder?.(phase);
+}
+
+/**
+ * The application handle was used outside its start-then-dispose lifecycle.
+ */
+export class WebCoreAppError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'WebCoreAppError';
+    }
 }
 
 /**
@@ -378,15 +388,22 @@ export interface WebCoreApp<T extends FoundationConfig> {
 
     /**
      * Mount once the router is ready, so initial navigation resolves before any
-     * component renders.
+     * component renders. A handle starts at most once.
      *
      * @param selector - the mount target; default '#app'
+     * @throws {WebCoreAppError} when the handle was already started, or is
+     * disposed before it mounts
      */
     start(selector?: string | Element): Promise<void>;
 
     /**
-     * Idempotently tear down everything the boot installed, in reverse order.
-     * Service holders stay installed; `resetWebCoreServices` clears them.
+     * Idempotently unmount the application and tear down everything the boot
+     * installed, in reverse order, including the router history. Every step
+     * runs even when an earlier one throws. Service holders stay installed;
+     * call `resetWebCoreServices` before booting a replacement application.
+     *
+     * @throws the failing step's error, or an AggregateError when several
+     * steps fail
      */
     dispose(): void;
 }
@@ -436,12 +453,9 @@ interface AppFoundation<T extends FoundationConfig> {
 }
 
 /**
- * The eager store handles and locale wiring from the module phases.
+ * The locale wiring from the module phases.
  */
 interface ModuleLayer {
-    /** The eager store handles instantiated during boot. */
-    readonly storeHandles: readonly ReturnType<ModuleStoreFactory>[];
-
     /** The wired i18n instance. */
     readonly i18n: ApplicationI18n;
 
@@ -450,41 +464,20 @@ interface ModuleLayer {
 }
 
 /**
- * The router and teardown handles from the app-integration phases.
+ * The router and realtime connection from the app-integration phases.
  */
 interface AppIntegration {
     /** The wired application router. */
     readonly router: Router;
-
-    /** Removes the document-title synchronisation hook. */
-    readonly titleSyncTeardown: () => void;
-
-    /** Removes the global error handling. */
-    readonly errorHandlingTeardown: () => void;
-
-    /** Removes the page-tracking subscription. */
-    readonly pageTrackingTeardown: () => void;
-
-    /** Runs the module boot teardowns. */
-    readonly moduleTeardown: () => void;
 
     /** The installed realtime connection, or null when none. */
     readonly realtime: RealtimeConnection | null;
 }
 
 /**
- * The monitors and chunk-recovery teardown from the release phases.
- */
-interface ReleaseLayer {
-    /** Removes the chunk-recovery error handler, or null when disabled. */
-    readonly chunkRecoveryTeardown: (() => void) | null;
-
-    /** The started release monitors. */
-    readonly monitors: WiredMonitors;
-}
-
-/**
- * Boot a web application through the kernel's phase sequence.
+ * Boot a web application through the kernel's phase sequence. A failed boot
+ * tears down everything it installed before rethrowing the original error;
+ * service holders it installed stay installed.
  *
  * @throws {ModuleRegistryError} when the module list fails validation
  * @throws {FoundationBootError} when the monitor options cannot work
@@ -494,13 +487,38 @@ export async function createWebCoreApp<T extends FoundationConfig>(
 ): Promise<WebCoreApp<T>> {
     const platform = resolvePlatform(options.platform);
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
+    const teardowns = new TeardownStack();
 
-    const foundation = await bootFoundation(options, platform, runtimeUrl);
-    const moduleLayer = await bootModuleLayer(options, platform, foundation);
-    const integration = await wireAppIntegration(options, platform, foundation, moduleLayer);
-    const release = wireReleaseMonitors(options, platform, runtimeUrl, foundation, integration);
+    let reporter: ErrorReporter = new NullErrorReporter();
 
-    return assembleApp(foundation, moduleLayer, integration, release);
+    try {
+        const foundation = await bootFoundation(options, platform, runtimeUrl, teardowns);
+
+        reporter = foundation.observability.reporter;
+
+        const moduleLayer = await bootModuleLayer(options, platform, foundation, teardowns);
+        const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
+        const monitors = wireReleaseMonitors(options, platform, runtimeUrl, foundation, integration, teardowns);
+
+        return assembleApp(foundation, moduleLayer, integration, monitors, teardowns);
+    } catch (error) {
+        reportRollbackFailures(teardowns.drain(), reporter);
+
+        throw error;
+    }
+}
+
+/**
+ * Report teardown failures from a boot rollback without masking the boot error.
+ */
+function reportRollbackFailures(failures: readonly unknown[], reporter: ErrorReporter): void {
+    for (const failure of failures) {
+        try {
+            reporter.captureError(failure, { source: 'boot-rollback' });
+        } catch {
+            // The boot error is the one that must surface.
+        }
+    }
 }
 
 /**
@@ -512,6 +530,7 @@ async function bootFoundation<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
+    teardowns: TeardownStack,
 ): Promise<AppFoundation<T>> {
     recordPhase('module-registry');
 
@@ -526,11 +545,22 @@ async function bootFoundation<T extends FoundationConfig>(
 
     recordPhase('color-scheme');
 
-    const storage = options.platform?.storage ?? new BrowserStorage(platform.targetWindow.localStorage);
+    const storage = options.platform?.storage ?? resolveBrowserStorage(platform.targetWindow);
     const colorScheme = resolveColorScheme(storage, platform, options);
+
+    teardowns.push(() => {
+        colorScheme.dispose();
+    });
 
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
+
+    teardowns.push(() => {
+        toastService.clear();
+    });
+    teardowns.push(() => {
+        confirmService.cancelAll();
+    });
 
     const core = await bootFoundationCore<T>(
         {
@@ -563,14 +593,21 @@ async function bootModuleLayer<T extends FoundationConfig>(
     options: WebCoreAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
+    teardowns: TeardownStack,
 ): Promise<ModuleLayer> {
     const { settings, storage, registry, app, pinia } = foundation;
 
     recordPhase('stores');
 
-    const storeHandles = registry.modules.flatMap(definition =>
-        (definition.stores ?? []).map(factory => factory(pinia)),
-    );
+    for (const definition of registry.modules) {
+        for (const factory of definition.stores ?? []) {
+            const handle = factory(pinia);
+
+            teardowns.push(() => {
+                handle.$dispose();
+            });
+        }
+    }
 
     recordPhase('locale');
 
@@ -578,7 +615,7 @@ async function bootModuleLayer<T extends FoundationConfig>(
 
     app.use(i18n);
 
-    return { storeHandles, i18n, switcher };
+    return { i18n, switcher };
 }
 
 /**
@@ -590,55 +627,58 @@ async function wireAppIntegration<T extends FoundationConfig>(
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
     moduleLayer: ModuleLayer,
+    teardowns: TeardownStack,
 ): Promise<AppIntegration> {
     const { settings, repository, storage, registry, app, pinia, observability, http } = foundation;
     const { i18n } = moduleLayer;
 
     recordPhase('router');
 
-    const { router, titleSyncTeardown } = wireRouter({
-        modules: registry.modules,
-        i18n,
-        appName: settings.app.name,
-        ...(options.platform?.history === undefined ? {} : { history: options.platform.history }),
-        targetDocument: platform.targetDocument,
-    });
+    const router = resolveRouter(options, platform, foundation, i18n, teardowns);
 
     app.use(router);
 
     recordPhase('error-handling');
 
-    const errorHandlingTeardown = installGlobalErrorHandling({
-        app,
-        reporter: observability.reporter,
-        trail: observability.trail,
-        targetWindow: platform.targetWindow,
-    });
-    const pageTrackingTeardown = installPageTracking({
-        router,
-        tracker: observability.analytics,
-        trail: observability.trail,
-    });
+    teardowns.push(
+        installGlobalErrorHandling({
+            app,
+            reporter: observability.reporter,
+            trail: observability.trail,
+            targetWindow: platform.targetWindow,
+        }),
+    );
+    teardowns.push(
+        installPageTracking({
+            router,
+            tracker: observability.analytics,
+            trail: observability.trail,
+        }),
+    );
 
     recordPhase('realtime');
 
-    const realtime = resolveRealtime(settings, options.realtime);
+    const realtime = resolveRealtime(settings, options.realtime, teardowns);
 
     recordPhase('boot-modules');
 
-    const moduleTeardown = await bootModules(registry.modules, {
-        app,
-        router,
-        pinia,
-        i18n,
-        http,
-        storage,
-        config: repository,
-        platform,
-        realtime,
-    });
+    await bootModules(
+        registry.modules,
+        {
+            app,
+            router,
+            pinia,
+            i18n,
+            http,
+            storage,
+            config: repository,
+            platform,
+            realtime,
+        },
+        teardowns,
+    );
 
-    return { router, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, moduleTeardown, realtime };
+    return { router, realtime };
 }
 
 /**
@@ -650,8 +690,9 @@ function wireReleaseMonitors<T extends FoundationConfig>(
     runtimeUrl: string,
     foundation: AppFoundation<T>,
     integration: AppIntegration,
-): ReleaseLayer {
-    const { settings, observability } = foundation;
+    teardowns: TeardownStack,
+): WiredMonitors {
+    const { settings, observability, toastService } = foundation;
     const { router } = integration;
 
     recordPhase('chunk-recovery');
@@ -664,11 +705,17 @@ function wireReleaseMonitors<T extends FoundationConfig>(
         options.monitors?.chunkRecovery,
     );
 
+    if (chunkRecoveryTeardown !== null) {
+        teardowns.push(chunkRecoveryTeardown);
+    }
+
     recordPhase('monitors');
 
-    const monitors = resolveMonitors(settings, runtimeUrl, platform, options.monitors);
+    const monitors = resolveMonitors(settings, runtimeUrl, platform, toastService, options.monitors);
 
-    return { chunkRecoveryTeardown, monitors };
+    teardowns.push(monitors.teardown);
+
+    return monitors;
 }
 
 /**
@@ -704,14 +751,16 @@ function assembleApp<T extends FoundationConfig>(
     foundation: AppFoundation<T>,
     moduleLayer: ModuleLayer,
     integration: AppIntegration,
-    release: ReleaseLayer,
+    monitors: WiredMonitors,
+    teardowns: TeardownStack,
 ): WebCoreApp<T> {
-    const { app, pinia, settings, colorScheme } = foundation;
+    const { app, pinia, settings } = foundation;
     const { i18n } = moduleLayer;
     const { router } = integration;
-    const { monitors } = release;
 
-    let disposed = false;
+    const disposal = new AbortController();
+
+    let started = false;
 
     return {
         app,
@@ -720,51 +769,62 @@ function assembleApp<T extends FoundationConfig>(
         i18n,
         config: settings,
         services: buildServices(foundation, moduleLayer, integration),
-        monitors,
+        monitors: { updates: monitors.updates, connectivity: monitors.connectivity },
         async start(selector: string | Element = DEFAULT_MOUNT_SELECTOR): Promise<void> {
-            await router.isReady();
-
-            app.mount(selector);
-        },
-        dispose(): void {
-            if (disposed) {
-                return;
+            if (disposal.signal.aborted) {
+                throw new WebCoreAppError(DISPOSED_MESSAGE);
             }
 
-            disposed = true;
+            if (started) {
+                throw new WebCoreAppError(ALREADY_STARTED_MESSAGE);
+            }
 
-            teardownApp(moduleLayer, integration, release, colorScheme);
+            started = true;
+
+            await Promise.race([router.isReady(), whenAborted(disposal.signal)]);
+
+            if (disposal.signal.aborted) {
+                throw new WebCoreAppError(DISPOSED_MESSAGE);
+            }
+
+            teardowns.push(() => {
+                unmountIfMounted(app);
+            });
+
+            app.mount(selector);
+
+            // A component may dispose the handle while it mounts.
+            if (disposal.signal.aborted) {
+                unmountIfMounted(app);
+
+                throw new WebCoreAppError(DISPOSED_MESSAGE);
+            }
+        },
+        dispose(): void {
+            disposal.abort();
+            teardowns.dispose();
         },
     };
 }
 
 /**
- * Tear down everything the boot installed, in reverse order.
+ * Unmount the application when it is attached to a container.
  */
-function teardownApp(
-    moduleLayer: ModuleLayer,
-    integration: AppIntegration,
-    release: ReleaseLayer,
-    colorScheme: ColorSchemeService,
-): void {
-    const { storeHandles } = moduleLayer;
-    const { moduleTeardown, titleSyncTeardown, errorHandlingTeardown, pageTrackingTeardown, realtime } = integration;
-    const { chunkRecoveryTeardown, monitors } = release;
-
-    monitors.connectivity?.stop();
-    monitors.updates?.stop();
-    realtime?.disconnect();
-    chunkRecoveryTeardown?.();
-    moduleTeardown();
-
-    for (const handle of [...storeHandles].reverse()) {
-        handle.$dispose();
+function unmountIfMounted(app: App<Element>): void {
+    if (app._container !== null) {
+        app.unmount();
     }
+}
 
-    pageTrackingTeardown();
-    errorHandlingTeardown();
-    titleSyncTeardown();
-    colorScheme.dispose();
+/**
+ * Resolve once the signal aborts.
+ */
+function whenAborted(signal: AbortSignal): Promise<void> {
+    return new Promise(resolve => {
+        signal.addEventListener('abort', () => {
+            resolve();
+        });
+    });
 }
 
 /**
@@ -778,6 +838,53 @@ function resolvePlatform(platform: WebCorePlatformOptions | undefined): Resolved
         clock: platform?.clock ?? ((): number => Date.now()),
         schedule: platform?.schedule ?? scheduleOnTimers,
     };
+}
+
+/**
+ * Wrap the window's local storage, falling back to in-memory storage that is
+ * lost on reload when the browser blocks access to it.
+ */
+function resolveBrowserStorage(targetWindow: Window): KeyValueStorage {
+    try {
+        return new BrowserStorage(targetWindow.localStorage);
+    } catch {
+        return new MemoryStorage();
+    }
+}
+
+/**
+ * Build the router over its history and install document-title sync,
+ * registering the history's release before the router can fail to build.
+ */
+function resolveRouter<T extends FoundationConfig>(
+    options: WebCoreAppOptions<T>,
+    platform: ResolvedPlatform,
+    foundation: AppFoundation<T>,
+    i18n: ApplicationI18n,
+    teardowns: TeardownStack,
+): Router {
+    const history = options.platform?.history ?? createWebHistory();
+
+    teardowns.push(() => {
+        history.destroy();
+    });
+
+    const { router, titleSyncTeardown } = wireRouter({
+        modules: foundation.registry.modules,
+        i18n,
+        appName: foundation.settings.app.name,
+        history,
+        targetDocument: platform.targetDocument,
+    });
+
+    teardowns.push(titleSyncTeardown);
+
+    // A navigation still awaiting a guard must not land once the app is gone.
+    teardowns.push(() => {
+        router.beforeResolve(() => false);
+    });
+
+    return router;
 }
 
 /**
@@ -834,12 +941,17 @@ function resolveLocale<T extends FoundationConfig>(
 function resolveRealtime<T extends FoundationConfig>(
     settings: Readonly<T>,
     factory: ((settings: Readonly<T>) => RealtimeConnection) | undefined,
+    teardowns: TeardownStack,
 ): RealtimeConnection | null {
     if (factory === undefined) {
         return null;
     }
 
     const connection = factory(settings);
+
+    teardowns.push(() => {
+        connection.disconnect();
+    });
 
     installRealtime(connection);
 
@@ -874,12 +986,13 @@ function resolveMonitors<T extends FoundationConfig>(
     settings: Readonly<T>,
     runtimeUrl: string,
     platform: ResolvedPlatform,
+    toastService: ToastService,
     monitors: WebCoreMonitorOptions<T> | undefined,
 ): WiredMonitors {
     return wireMonitors({
         settings,
         runtimeUrl,
-        toasts,
+        toasts: () => toastService,
         ...(monitors?.updates === undefined ? {} : { updates: monitors.updates }),
         ...(monitors?.connectivity === undefined ? {} : { connectivity: monitors.connectivity }),
         fetchFn: platform.fetchFn,
