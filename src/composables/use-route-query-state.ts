@@ -59,8 +59,8 @@ const pendingQueries = new WeakMap<Router, PendingQuery>();
 
 /**
  * Merge `patch` into the router's accumulated patch and replace the query with
- * every key set since the current route committed; the accumulation is
- * dropped once its latest navigation settles, whatever the outcome.
+ * every key set since the current route committed; the accumulation is dropped
+ * once its latest navigation settles, whatever the outcome.
  */
 function replaceQuery(router: Router, patch: Readonly<Record<string, string | null>>): Promise<void> {
     const base = router.currentRoute.value;
