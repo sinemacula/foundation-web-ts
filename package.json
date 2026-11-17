@@ -131,6 +131,7 @@
         "test:mutation": "stryker run",
         "test:mutation:eslint": "stryker run stryker.eslint.config.json",
         "mutation:scope": "node scripts/mutation-scope.mjs",
+        "test:scripts": "vitest run --config scripts/vitest.config.mjs",
         "check": "qlty check",
         "fmt": "qlty fmt",
         "smells": "qlty smells",
@@ -138,7 +139,9 @@
         "lint:structure": "eslint --no-config-lookup --no-inline-config --config eslint.structure.mjs src playground/src e2e",
         "test:eslint": "vitest run --config eslint/vitest.config.mjs",
         "check:pkg": "rm -rf .pack && mkdir -p .pack && npm pack --pack-destination .pack --silent && publint .pack/*.tgz && attw .pack/*.tgz --profile esm-only --exclude-entrypoints ./eslint",
-        "test:e2e": "playwright test",
+        "test:consumer": "node scripts/consumer-smoke.mjs",
+        "test:e2e": "playwright test --project=chromium --project=mobile-chromium",
+        "test:e2e:engines": "playwright test --project=firefox --project=webkit --project=mobile-webkit",
         "test:e2e:ui": "playwright test --ui",
         "size": "npm run size --workspace playground",
         "prepare": "node scripts/build.mjs"
