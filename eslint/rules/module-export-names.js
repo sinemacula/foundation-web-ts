@@ -1,10 +1,5 @@
 /**
- * Require each module file to export the canonically named binding.
- *
- * `module.ts` exports `<camel>Module`, `routes.ts` exports `<camel>Routes`, and
- * `route-names.ts` exports `<UPPER_SNAKE>_ROUTE_NAMES`, each derived from the
- * folder. Consistent export names let the module registry and cross-module
- * consumers rely on the shape without per-module knowledge.
+ * Require each module contract file to export its folder-derived binding name.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -42,14 +37,14 @@ function declaredNames(node) {
         .map(declarator => declarator.id.name);
 }
 
-/** Value names re-exported through an `export { ... }` clause (type specifiers skipped). */
+/** Value names exported through an `export { ... }` clause. */
 function specifierNames(node) {
     return node.specifiers
         .filter(specifier => specifier.exported.type === 'Identifier' && specifier.exportKind !== 'type')
         .map(specifier => specifier.exported.name);
 }
 
-/** Every runtime-value name exported by a program (type-only exports do not count). */
+/** Every runtime-value name a program exports. */
 function exportedNames(program) {
     const names = new Set();
 
@@ -66,7 +61,7 @@ function exportedNames(program) {
     return names;
 }
 
-// Stryker disable all: declarative rule metadata, not behaviour (verified via messageId and data)
+// Stryker disable all: declarative rule metadata
 export default createRule({
     name: 'module-export-names',
     meta: {

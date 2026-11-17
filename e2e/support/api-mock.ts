@@ -1,9 +1,5 @@
 /**
- * Browser-boundary API mocking for end-to-end specs.
- *
- * The e2e suite never talks to a real backend: every API call is intercepted at
- * the network layer with `page.route`, so specs exercise the full application
- * (router, stores, HTTP layer, rendering) against deterministic responses.
+ * Network-boundary API stubs for end-to-end specs; no real backend is used.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -12,26 +8,15 @@
 import type { Page } from '@playwright/test';
 
 /**
- * Build a `Record<string, unknown>` from an array of `[key, value]` pairs.
- *
- * Wraps `Object.fromEntries` so callers can write wire-field names as plain
- * string literals inside array elements rather than as object-literal keys -
- * keeping snake_case API field names out of any position that Biome's
- * naming-convention or literal-keys rules inspect.
- *
- * @param entries - key-value pairs for the record
- * @returns a plain `Record<string, unknown>`
+ * Build a record from `[key, value]` pairs, keeping snake_case wire names out
+ * of object-literal keys.
  */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
 }
 
 /**
- * Build a session response in the default session gateway's wire shape.
- *
- * @param accessToken - the issued access token
- * @param refreshToken - the issued refresh token
- * @returns the response body
+ * Build a session response body in the default session gateway's wire shape.
  */
 function sessionResponse(accessToken: string, refreshToken: string): string {
     return JSON.stringify(
@@ -44,11 +29,7 @@ function sessionResponse(accessToken: string, refreshToken: string): string {
 }
 
 /**
- * Stub the GET users/self endpoint with a deterministic user record.
- *
- * @param page - the browser page under test
- * @param permissions - the permission strings granted to the seeded user;
- * defaults to the single permission the guarded users route requires
+ * Stub GET users/self with a fixed user holding `permissions`.
  */
 async function mockGetCurrentUser(page: Page, permissions: readonly string[] = ['users.view']): Promise<void> {
     await page.route('**/users/self', route =>
@@ -70,10 +51,7 @@ async function mockGetCurrentUser(page: Page, permissions: readonly string[] = [
 }
 
 /**
- * Stub the login endpoint with a successful session response and also stub the
- * current-user endpoint that login triggers.
- *
- * @param page - the browser page under test
+ * Stub a successful sign-in and the current-user fetch it triggers.
  */
 export async function mockLoginSuccess(page: Page): Promise<void> {
     await page.route('**/auth/sign-in', route =>
@@ -88,9 +66,7 @@ export async function mockLoginSuccess(page: Page): Promise<void> {
 }
 
 /**
- * Stub the login endpoint with an invalid-credentials rejection.
- *
- * @param page - the browser page under test
+ * Stub sign-in with an invalid-credentials rejection.
  */
 export async function mockLoginFailure(page: Page): Promise<void> {
     await page.route('**/auth/sign-in', route =>
@@ -103,9 +79,7 @@ export async function mockLoginFailure(page: Page): Promise<void> {
 }
 
 /**
- * Stub the login endpoint with a pending session that owes a second factor.
- *
- * @param page - the browser page under test
+ * Stub sign-in with a pending session that owes a second factor.
  */
 export async function mockLoginInteractionRequired(page: Page): Promise<void> {
     await page.route('**/auth/sign-in', route =>
@@ -123,9 +97,7 @@ export async function mockLoginInteractionRequired(page: Page): Promise<void> {
 }
 
 /**
- * Stub the logout endpoint with a 204 No Content response.
- *
- * @param page - the browser page under test
+ * Stub logout with a 204 No Content response.
  */
 export async function mockLogout(page: Page): Promise<void> {
     await page.route('**/auth/logout', route => route.fulfill({ status: 204 }));
@@ -142,16 +114,10 @@ function userRow(id: string, fullName: string): Record<string, unknown> {
 }
 
 /**
- * Stub the GET users endpoint with two deterministic pages of user rows.
+ * Stub GET users with two pages of rows, the second served for `page=2`.
  *
- * Requests whose URL contains `page=2` receive the second page, carrying a row
- * unique to that page so specs can assert pagination advanced; every other
- * request receives the first page. The glob also matches the application's own
- * `/users` route and its `users-view.vue` module, so only genuine `fetch`
- * requests (the API gateway) are stubbed - document navigations and
- * dynamically-imported script modules are let through.
- *
- * @param page - the browser page under test
+ * The glob also matches the app's `/users` route and `users-view.vue` module,
+ * so only `fetch` requests are stubbed.
  */
 export async function mockUsersList(page: Page): Promise<void> {
     await page.route('**/users*', route => {
@@ -188,12 +154,7 @@ export async function mockUsersList(page: Page): Promise<void> {
 }
 
 /**
- * Stub the GET users endpoint with a 500 server error.
- *
- * A 500 is neither a validation failure nor a 401, so the kernel's default
- * response-error handler raises the application's unexpected-error toast.
- *
- * @param page - the browser page under test
+ * Stub GET users with a 500, which the default error handler raises as a toast.
  */
 export async function mockUsersListServerError(page: Page): Promise<void> {
     await page.route('**/users*', route => {
@@ -210,16 +171,7 @@ export async function mockUsersListServerError(page: Page): Promise<void> {
 }
 
 /**
- * Seed an authenticated session before the application boots.
- *
- * Writes the persisted session snapshot to local storage from an init script,
- * so the session store hydrates as signed-in on first load. Also registers the
- * current-user mock so any GET users/self triggered by the seeded session is
- * handled.
- *
- * @param page - the browser page under test
- * @param permissions - the permission strings granted to the seeded user; pass
- * an empty list to seed a signed-in user who is denied the guarded routes
+ * Persist a signed-in session before boot and stub the current user it loads.
  */
 export async function seedAuthenticatedSession(
     page: Page,
@@ -236,15 +188,9 @@ export async function seedAuthenticatedSession(
 }
 
 /**
- * Stub GET users/self to fail with 401 once, then succeed.
+ * Stub GET users/self to 401 once, then succeed, forcing a refresh-and-retry.
  *
- * Registered after {@link seedAuthenticatedSession}'s own current-user mock, so
- * it is checked first and takes over: the boot-time request that follows an
- * authenticated visit finds a session the server has already rejected, forcing
- * the bearer-token interceptor's refresh-and-retry path to engage; the retried
- * request that follows a successful refresh finds the session accepted.
- *
- * @param page - the browser page under test
+ * Register it after {@link seedAuthenticatedSession}: the latest route wins.
  */
 export async function mockUsersSelfUnauthorizedOnce(page: Page): Promise<void> {
     let requestCount = 0;
@@ -281,9 +227,8 @@ export async function mockUsersSelfUnauthorizedOnce(page: Page): Promise<void> {
 }
 
 /**
- * Stub the auth refresh endpoint with a fresh session envelope.
+ * Stub the auth refresh endpoint with a fresh session.
  *
- * @param page - the browser page under test
  * @returns an accessor for the number of refresh requests observed so far
  */
 export async function mockAuthRefreshSuccess(page: Page): Promise<() => number> {
@@ -303,18 +248,9 @@ export async function mockAuthRefreshSuccess(page: Page): Promise<() => number> 
 }
 
 /**
- * Stub the runtime environment document to report one deployed version at boot
- * and a different version on every request after that.
+ * Stub the runtime environment to report a new version after the boot fetch.
  *
- * Models a release rolling out while a tab is already open: the boot fetch
- * observes the first version, and the update monitor's next poll (a
- * visibility-triggered check, in the e2e suite) observes the second and
- * notifies its subscribers.
- *
- * @param page - the browser page under test
- * @param appUrl - the application's own origin, echoed back as APP_URL so the
- * required-runtime-key check passes when the suite runs against a
- * production-style build
+ * @param appUrl - echoed as APP_URL to satisfy the required-key check in builds
  */
 export async function mockRuntimeEnvironmentVersionChange(page: Page, appUrl: string): Promise<void> {
     let requestCount = 0;

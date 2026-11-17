@@ -1,13 +1,5 @@
 /**
- * Enforce the module import boundary.
- *
- * A file reaches another feature module only through its public surface
- * (`@/modules/<name>`), never a deep internal path
- * (`@/modules/<name>/<file>`) - but a module may freely import its OWN
- * internals. The kernel packages are imported by subpath
- * (`@sinemacula/web-core/<area>/<file>`,
- * `@sinemacula/foundation/<area>/<file>`), never a bare package barrel. Test
- * files are exempt: they may reach across boundaries to assert internals.
+ * Keep imports on other modules' public surfaces and on kernel subpaths.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -19,12 +11,10 @@ import { createRule, isTestPath, moduleFolder } from './lib.js';
 
 const KERNEL_BARRELS = new Set(['@sinemacula/web-core', '@sinemacula/foundation']);
 
-// `@/modules/<name>/<anything-deeper>` - the deep-internal form.
-// `@/modules/<name>` alone (the public surface) has no trailing segment and is
-// allowed.
+// The bare `@/modules/<name>` public surface does not match.
 const MODULE_INTERNAL = /^@\/modules\/([^/]+)\/.+/;
 
-// Stryker disable all: declarative rule metadata, not behaviour (verified via messageId and data)
+// Stryker disable all: declarative rule metadata
 export default createRule({
     name: 'module-import-boundary',
     meta: {
@@ -52,8 +42,7 @@ export default createRule({
 
         /** Report on an import/export source that crosses a boundary. */
         function check(source) {
-            // A local `export { x }` has a null source; import/export sources
-            // are otherwise always string literals.
+            // A local `export { x }` has a null source.
             if (source?.type !== 'Literal') {
                 return;
             }

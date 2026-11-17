@@ -1,10 +1,6 @@
 /**
  * End-to-end specs for runtime locale switching.
  *
- * The switcher lives in the authenticated layout, so a seeded session is
- * required. Switching a locale loads that locale's shared and module
- * translations and re-renders the interface.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -23,8 +19,6 @@ test.describe('locale switching', () => {
 
         await page.getByLabel('Language').selectOption('fr-FR');
 
-        // The shared navigation re-renders in French, and the switcher's own
-        // label localises too.
         await expect(page.getByRole('link', { name: 'Utilisateurs' })).toBeVisible();
         await expect(page.getByLabel('Langue')).toBeVisible();
     });

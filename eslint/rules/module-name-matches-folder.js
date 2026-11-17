@@ -1,11 +1,5 @@
 /**
- * Require a module's declared name to match its folder.
- *
- * A `ModuleDefinition` in `modules/<folder>/module.ts` must declare
- * `name: '<folder>'`. The name is the module's identity and its i18n namespace,
- * so a mismatch silently misroutes translations and route names. The runtime
- * registry only rejects duplicate names, never a name that disagrees with its
- * folder, so this closes that gap statically.
+ * Require a module's declared name (its i18n namespace) to match its folder.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -26,9 +20,8 @@ function isNameProperty(property) {
 }
 
 /**
- * Whether a declarator asserts module identity - annotated `: ModuleDefinition`
- * (including a qualified `ns.ModuleDefinition`),
- * `... satisfies ModuleDefinition`, or an `... as ModuleDefinition` cast.
+ * Whether a declarator is typed `ModuleDefinition` (or `ns.ModuleDefinition`)
+ * by annotation, `satisfies` or `as`.
  */
 function declaresModule(node) {
     if (typeReferenceName(node.id?.typeAnnotation?.typeAnnotation) === 'ModuleDefinition') {
@@ -43,7 +36,7 @@ function declaresModule(node) {
     );
 }
 
-// Stryker disable all: declarative rule metadata, not behaviour (verified via messageId and data)
+// Stryker disable all: declarative rule metadata
 export default createRule({
     name: 'module-name-matches-folder',
     meta: {

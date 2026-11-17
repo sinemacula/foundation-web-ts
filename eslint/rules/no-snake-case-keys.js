@@ -1,12 +1,5 @@
 /**
- * Forbid snake_case keys when constructing object literals.
- *
- * Wire-field names arrive from the API in snake_case; building an object with
- * those names as keys leaks the transport casing into application code and
- * dodges the naming convention. Route them through the kernel's `wire()` helper
- * instead, which maps snake_case field names without putting them in key
- * positions. Only object-literal construction is checked - destructuring an
- * external payload and declaring a type that models one are both legitimate.
+ * Forbid snake_case object-literal keys; wire field names go through `wire()`.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -36,7 +29,7 @@ function keyName(property) {
     return null;
 }
 
-// Stryker disable all: declarative rule metadata, not behaviour (verified via messageId and data)
+// Stryker disable all: declarative rule metadata
 export default createRule({
     name: 'no-snake-case-keys',
     meta: {

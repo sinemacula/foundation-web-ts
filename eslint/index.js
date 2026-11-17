@@ -1,10 +1,5 @@
 /**
- * web-core ESLint preset: the framework module contract.
- *
- * A flat-config layer web-core apps enable alongside the shared
- * coding-standards base/vue presets. It enforces the `modules/<name>/...`
- * structure the kernel fixes. Framework-specific by design; the generic rules
- * stay in coding-standards.
+ * Flat-config preset enforcing the web-core `modules/<name>/...` contract.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -18,7 +13,7 @@ const TS_FILES = ['**/*.ts', '**/*.tsx'];
 const VUE_FILES = ['**/*.vue'];
 const MODULE_TS_FILES = ['**/modules/**/*.ts', '**/modules/**/*.tsx'];
 
-/** Conventions + import boundary applied everywhere the framework runs. */
+/** Rules applied to every TypeScript and Vue file. */
 const CONVENTIONS = {
     '@sinemacula/web-core/no-snake-case-keys': 'error',
     '@sinemacula/web-core/module-import-boundary': 'error',
@@ -26,7 +21,6 @@ const CONVENTIONS = {
 
 export default [
     {
-        // Kernel-wide conventions and the import boundary, on TypeScript files.
         files: TS_FILES,
         plugins: {
             '@sinemacula/web-core': plugin,
@@ -37,8 +31,6 @@ export default [
         rules: CONVENTIONS,
     },
     {
-        // The same conventions and boundary on Vue single-file components - the
-        // view layer is exactly where cross-module reaching is most likely.
         files: VUE_FILES,
         plugins: {
             '@sinemacula/web-core': plugin,
@@ -52,7 +44,6 @@ export default [
         rules: CONVENTIONS,
     },
     {
-        // The feature-module contract (module.ts / routes.ts / route-names.ts).
         files: MODULE_TS_FILES,
         plugins: {
             '@sinemacula/web-core': plugin,

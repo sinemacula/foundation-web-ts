@@ -1,10 +1,5 @@
 /**
- * End-to-end specs for the static HTTP error pages.
- *
- * These pages are generated into `dist/errors/` at build time and are only
- * served by the production preview, so the suite runs against CI's built
- * artifact and is skipped against the local dev server. Each spec drives the
- * inline locale swap by fixing the browser language.
+ * End-to-end specs for the build-generated static HTTP error pages.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

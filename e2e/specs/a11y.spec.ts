@@ -1,8 +1,5 @@
 /**
- * Automated accessibility checks for the application.
- *
- * Runs axe-core against key screens to catch WCAG 2.1 A/AA regressions. Network
- * calls are stubbed at the browser boundary (no real backend needed).
+ * Axe WCAG 2.1 A/AA checks for key screens in light and dark mode.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

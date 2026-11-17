@@ -1,11 +1,6 @@
 /**
  * Shared helpers for the web-core ESLint rules.
  *
- * These rules encode the framework's module contract (`modules/<name>/...`) and
- * ship with the kernel so every web-core app enforces the same layout. They are
- * framework-specific by design and never belong in the generic shared
- * standards.
- *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
@@ -13,7 +8,7 @@
 import { ESLintUtils } from '@typescript-eslint/utils';
 
 /** Shared rule factory linking each rule to its documentation anchor. */
-// Stryker disable next-line all: documentation anchor, not behaviour
+// Stryker disable next-line all: documentation anchor
 export const createRule = ESLintUtils.RuleCreator(name => `https://github.com/sinemacula/web-core-ts#${name}`);
 
 /** Whether the file path marks it as test code. */
@@ -24,16 +19,13 @@ export function isTestPath(filename) {
 }
 
 /**
- * The feature-module folder a file belongs to (the segment after `modules/`),
- * or null when the file sits outside a module tree or directly under
- * `modules/`.
+ * The segment after `modules/` in a file path, or null outside a module tree or
+ * for a file directly under `modules/`.
  */
 export function moduleFolder(filename) {
     const parts = filename.replace(/\\/g, '/').split('/');
     const index = parts.lastIndexOf('modules');
 
-    // Require a segment AFTER the folder (the file itself), so a file placed
-    // directly under `modules/` is not mistaken for a module of that name.
     if (index < 0 || index + 2 >= parts.length || !parts[index + 1]) {
         return null;
     }
@@ -42,9 +34,7 @@ export function moduleFolder(filename) {
 }
 
 /**
- * Strip `as` / `satisfies` wrappers (e.g. `x as const satisfies T`) down to the
- * underlying expression, so a rule inspects the real value regardless of
- * assertions.
+ * Strip `as` / `satisfies` wrappers (`x as const satisfies T`) off a node.
  */
 export function unwrapExpression(node) {
     let current = node;
