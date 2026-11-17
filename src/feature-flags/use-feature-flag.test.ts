@@ -130,6 +130,8 @@ describe('useVariant', () => {
         const flags = new StaticFeatureFlags({ flow: 'checkout-v1' });
         const result = useVariant(flags, 'flow', 'checkout-v1');
 
+        expect(result.value).toBe('checkout-v1');
+
         flags.replace({ flow: 'checkout-v2' });
 
         expect(result.value).toBe('checkout-v2');
@@ -149,6 +151,8 @@ describe('flag-set subscription', () => {
         useFeatureFlag(flags, 'feat-b');
 
         expect(onChange).toHaveBeenCalledOnce();
+        expect(flag.value).toBe(false);
+        expect(variant.value).toBe('checkout-v1');
 
         flags.replace({ 'feat-a': true, flow: 'checkout-v2' });
 
@@ -161,6 +165,9 @@ describe('flag-set subscription', () => {
         const second = new StaticFeatureFlags({ 'feat-a': false });
         const fromFirst = useFeatureFlag(first, 'feat-a');
         const fromSecond = useFeatureFlag(second, 'feat-a');
+
+        expect(fromFirst.value).toBe(false);
+        expect(fromSecond.value).toBe(false);
 
         second.replace({ 'feat-a': true });
 
