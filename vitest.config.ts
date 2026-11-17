@@ -30,6 +30,8 @@ export default defineConfig({
     },
     test: {
         environment: 'happy-dom',
+        unstubGlobals: true,
+        restoreMocks: true,
         setupFiles: ['playground/src/test-support/setup-network-guard.ts'],
         include: ['src/**/*.test.ts', 'playground/src/**/*.test.ts', 'eslint/**/*.test.js'],
         coverage: {
