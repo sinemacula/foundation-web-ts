@@ -11,6 +11,7 @@ import type { ApiQuery } from '@sinemacula/foundation/query/api-query';
 import type { ListFilter } from '@sinemacula/foundation/query/list-filter';
 import { filter } from '@sinemacula/foundation/query/list-filter';
 import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
+import { QueryError } from '@sinemacula/foundation/query/query-error';
 import type { ListQuery } from './use-list-query';
 import { useListQuery } from './use-list-query';
 
@@ -91,6 +92,21 @@ describe('useListQuery', () => {
             expect(parameters.value['limit']).toBe(10);
         });
 
+        it('accepts a page size of one', () => {
+            const { parameters } = useListQuery(defineListQuery({ pageSize: 1 }));
+
+            expect(parameters.value['limit']).toBe(1);
+        });
+
+        it.each([0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+            'rejects the page size %s',
+            pageSize => {
+                expect(() => useListQuery(defineListQuery({ pageSize }))).toThrowError(
+                    new QueryError(`The page size must be a positive safe integer, received ${pageSize}.`),
+                );
+            },
+        );
+
         it('applies the defaultSort when no explicit sort is set', () => {
             const { parameters } = useListQuery(sharedDefinition);
 
@@ -134,6 +150,28 @@ describe('useListQuery', () => {
             const filters = parsedFilters(parameters.value);
 
             expect(filters).toEqual({ tenant: 'acme', status: 'active' });
+        });
+
+        it('ANDs a filter on a base field beside the base scope instead of replacing it', () => {
+            const definition = defineListQuery({
+                base: q => q.where('tenant', 'acme').where('status', 'active'),
+                filters: { tenant: filter.equals('tenant'), status: filter.equals('status') },
+                search: filter.search(),
+            });
+            const { parameters, setFilter, search } = useListQuery(definition);
+
+            setFilter('tenant', 'other');
+            setFilter('status', 'active');
+            search('ann');
+
+            expect(parsedFilters(parameters.value)).toEqual(
+                wire([
+                    ['tenant', 'acme'],
+                    ['status', 'active'],
+                    ['$and', [{ tenant: 'other' }]],
+                ]),
+            );
+            expect(parameters.value['search']).toBe('ann');
         });
     });
 
@@ -535,6 +573,17 @@ describe('useListQuery', () => {
             expect(page.value).toBe(2);
         });
 
+        it('stops at the largest safe page', () => {
+            const { page, parameters, goTo, next } = useListQuery(sharedDefinition);
+
+            goTo(Number.MAX_SAFE_INTEGER - 1);
+            next();
+            next();
+
+            expect(page.value).toBe(Number.MAX_SAFE_INTEGER);
+            expect(parameters.value['page']).toBe(Number.MAX_SAFE_INTEGER);
+        });
+
         it('does not touch filters or sort', () => {
             const { parameters, setFilter, next } = useListQuery(sharedDefinition);
 
@@ -579,6 +628,15 @@ describe('useListQuery', () => {
             goTo(-5);
 
             expect(page.value).toBe(1);
+        });
+
+        it('is clamped at the largest safe page', () => {
+            const { page, parameters, goTo } = useListQuery(sharedDefinition);
+
+            goTo(1e20);
+
+            expect(page.value).toBe(Number.MAX_SAFE_INTEGER);
+            expect(parameters.value['page']).toBe(Number.MAX_SAFE_INTEGER);
         });
 
         it('truncates a fractional page', () => {

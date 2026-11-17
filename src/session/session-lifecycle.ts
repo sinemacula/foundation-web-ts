@@ -218,8 +218,8 @@ function wireCrossTabSync(
 /**
  * Fan the identity of the current user out, then again whenever it changes,
  * clearing it on sign-out. A held session whose user is still loading changes
- * nothing, so a session adopted from another tab keeps the identity until its
- * user is known.
+ * nothing, so another tab's sign-in keeps the identity until its user is
+ * known; another tab's rotation keeps the user and changes nothing at all.
  */
 function wireIdentityFanOut(store: SessionStore, fanOut: IdentityFanOut): ModuleTeardown {
     if (store.user !== null) {

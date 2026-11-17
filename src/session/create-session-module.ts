@@ -14,6 +14,8 @@ import { createDefaultSessionApi } from '@sinemacula/foundation/session/default-
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { PasswordCredentials, SessionApi, SessionDevice } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
+import type { SessionLock } from '@sinemacula/foundation/session/session-lock';
+import type { RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionRoutes as BaseSessionRoutes } from '@sinemacula/foundation/session/session-routes';
 import type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
@@ -30,6 +32,7 @@ import type { HydrationReporter } from './session-lifecycle';
 import { bootSessionLifecycle } from './session-lifecycle';
 import { SessionRefreshCoordinator } from './session-refresh-coordinator';
 import { useSessionStore } from './session-store';
+import { SessionTokenHistory } from './session-token-history';
 
 export type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
 
@@ -89,6 +92,9 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given, and where the browser blocks localStorage the session is kept in memory until reload, without cross-tab sync, with one logged warning. Cross-tab sync only observes that localStorage key, so with another persistence disable `crossTabSync` and call the store's `hydrate()` on its own change notifications. */
     readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
 
+    /** Serialises the sign-in, refresh and sign-out exchanges of every context sharing the persisted session, so a refresh never presents a token another tab has spent. Default a Web Locks lock beside the default persistence; with another persistence, or where localStorage is blocked, a lock serialising only this tab's exchanges. */
+    readonly exchangeLock?: (platform: ResolvedPlatform) => SessionLock;
+
     /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed before a realtime reconnect; each tab refreshes proactively at a random point in the earlier half of that window. Default 60 seconds. */
     readonly refreshSkewMs?: number;
 
@@ -144,6 +150,17 @@ type AnySessionModuleOptions = SessionModuleSettings<SessionUser> & {
     readonly api?: SessionApiFactory<SessionUser, unknown>;
 };
 
+/**
+ * A persistence other tabs share, and the lock their exchanges run under.
+ */
+interface SharedPersistence {
+    /** Where the session snapshot persists. */
+    readonly persistence: SessionPersistence;
+
+    /** The lock every sharing context's exchanges run under, or undefined for this tab's own. */
+    readonly exchangeLock?: SessionLock;
+}
+
 const DEFAULT_ROUTES: SessionRoutes = {
     login: { name: 'auth.login' },
     loginPath: '/login',
@@ -152,6 +169,8 @@ const DEFAULT_ROUTES: SessionRoutes = {
 };
 
 const DEFAULT_REFRESH_SKEW_MS = 60_000;
+
+const SUPERSEDED: RefreshOutcome = { kind: 'superseded' };
 
 /**
  * Create the session module over the application's own gateway, inferring the
@@ -230,12 +249,18 @@ function registerSession(
     const ready = createReadiness(pinia, reportHydration);
     const coordinator = createRefreshAuthority(pinia, ready);
 
-    const persistence = options.persistence?.(platform) ?? createDefaultPersistence(platform, storageKeys.session);
+    const shared =
+        options.persistence === undefined
+            ? createDefaultPersistence(platform, storageKeys.session)
+            : { persistence: options.persistence(platform) };
+    const exchangeLock = options.exchangeLock?.(platform) ?? shared?.exchangeLock;
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
     installSessionContext({
-        persistence: persistence ?? createTabPersistence(),
+        persistence: shared?.persistence ?? createTabPersistence(),
+        ...(exchangeLock === undefined ? {} : { exchangeLock }),
+        createLineage: () => crypto.randomUUID(),
         routes,
         storeId: options.storeId ?? 'auth',
         coordinator,
@@ -251,18 +276,44 @@ function registerSession(
         },
     });
 
-    const attachBearer = createBearerTokenInterceptor({
-        getAccessToken: () => useSessionStore(pinia).accessToken,
-    });
+    contributeHttp(context, ready, coordinator);
+
+    return shared !== null;
+}
+
+/**
+ * Attach the session's bearer token to every request once hydrated, and retry a
+ * 401 on the current token, refreshing first unless the request's session token
+ * has since been replaced.
+ */
+function contributeHttp(
+    context: ModuleRegisterContext,
+    ready: () => Promise<void>,
+    coordinator: SessionRefreshCoordinator,
+): void {
+    const history = new SessionTokenHistory();
+
+    /** Read the held access token. */
+    const accessToken = (): string | null => useSessionStore(context.pinia).accessToken;
+    const attachBearer = createBearerTokenInterceptor({ getAccessToken: accessToken });
 
     context.http.addRequestInterceptor(async request => {
         await ready();
 
-        return attachBearer(request);
-    });
-    context.http.setUnauthorizedHandler(async () => (await coordinator.refresh()).kind === 'refreshed');
+        const attached = await attachBearer(request);
 
-    return persistence !== null;
+        if (attached !== request) {
+            history.record(attached);
+        }
+
+        return attached;
+    });
+    context.http.setUnauthorizedHandler(async request => {
+        /** Whether the request's session token has since been replaced. */
+        const isStale = (): boolean => history.isSuperseded(request, accessToken());
+
+        return isStale() || (await coordinator.refresh()).kind === 'refreshed' || isStale();
+    });
 }
 
 /**
@@ -310,30 +361,38 @@ function createHydrationReporter(): HydrationReporter {
 /**
  * Build the single refresh authority. Each refresh first awaits readiness, so
  * an empty store is never refreshed, and a failure is reported once however
- * many callers share it.
+ * many callers share it. A refresh whose session another one replaced by the
+ * time it settles reports `superseded`, so its outcome never ends the renewal
+ * of the session that replaced it.
  */
 function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): SessionRefreshCoordinator {
     return new SessionRefreshCoordinator(async () => {
         await ready();
 
-        const outcome = await useSessionStore(pinia).refresh();
+        const store = useSessionStore(pinia);
+        const owner = store.sessionIdentity();
+        const outcome = await store.refresh();
 
         if (outcome.kind === 'failed') {
             reporting().captureError(outcome.error);
         }
 
-        return outcome;
+        const current = store.sessionIdentity();
+
+        return current !== null && current !== owner ? SUPERSEDED : outcome;
     });
 }
 
 /**
  * Persist the session snapshot in the target window's localStorage, failing
- * loudly, under a Web Locks lock every tab shares.
+ * loudly, with each write and each credential exchange under its own Web Locks
+ * lock every tab shares.
  *
- * @returns the persistence, or null when the browser blocks localStorage
+ * @returns the persistence and exchange lock, or null when the browser blocks
+ * localStorage
  * @throws {@link SessionError} when the Web Locks API is unavailable
  */
-function createDefaultPersistence(platform: ResolvedPlatform, key: string): SessionPersistence | null {
+function createDefaultPersistence(platform: ResolvedPlatform, key: string): SharedPersistence | null {
     let area: Storage;
 
     try {
@@ -351,10 +410,13 @@ function createDefaultPersistence(platform: ResolvedPlatform, key: string): Sess
         );
     }
 
-    return new KeyValueSessionPersistence(new StrictWebStorage(area), {
-        key,
-        lock: new WebLocksSessionLock(locks, `${key}:lock`),
-    });
+    return {
+        persistence: new KeyValueSessionPersistence(new StrictWebStorage(area), {
+            key,
+            lock: new WebLocksSessionLock(locks, `${key}:lock`),
+        }),
+        exchangeLock: new WebLocksSessionLock(locks, `${key}:exchange`),
+    };
 }
 
 /**
