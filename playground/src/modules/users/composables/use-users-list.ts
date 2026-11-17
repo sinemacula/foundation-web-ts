@@ -26,8 +26,8 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { PaginationMeta } from '@sinemacula/web-core/query/envelope';
-import type { SortDefault } from '@sinemacula/web-core/query/list-query-definition';
+import type { PaginationMeta } from '@sinemacula/foundation/query/envelope';
+import type { SortDefault } from '@sinemacula/foundation/query/list-query-definition';
 import { useListQuery } from '@sinemacula/web-core/query/use-list-query';
 import { useResource } from '@sinemacula/web-core/query/use-resource';
 import type { ComputedRef, Ref } from 'vue';
@@ -36,7 +36,7 @@ import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue';
 import { PlaygroundError } from '@/errors/playground-error';
 import { api } from '@/services/api';
 
-import { userList } from '../queries/user-list';
+import { USERS_PAGE_SIZE, userList } from '../queries/user-list';
 import type { UserListItem } from '../services/users-api';
 import { createUsersClient } from '../services/users-api';
 
@@ -72,6 +72,9 @@ export interface UsersList {
 
     /** Pagination metadata for the current page, or null before the first response. */
     readonly meta: ComputedRef<PaginationMeta | null>;
+
+    /** The number of the last page, or null before the first response or when the list does not report a total. */
+    readonly lastPage: ComputedRef<number | null>;
 
     /** True while the latest request is in flight. */
     readonly isLoading: Ref<boolean>;
@@ -162,22 +165,17 @@ function useSearchDebounce(commit: (term: string) => void, initial: string): Ref
 /**
  * Build a `next()` control guarded against advancing past the last page.
  *
- * @param page - the current 1-based page number
  * @param meta - the latest pagination metadata, or null before the first
  * response
  * @param advance - the underlying page-advance function
- * @returns a `next()` function that is a no-op once `meta` reports the last
+ * @returns a `next()` function that is a no-op once `meta` reports no further
  * page
  */
-function createGuardedNext(
-    page: ComputedRef<number>,
-    meta: ComputedRef<PaginationMeta | null>,
-    advance: () => void,
-): () => void {
+function createGuardedNext(meta: ComputedRef<PaginationMeta | null>, advance: () => void): () => void {
     return (): void => {
         const currentMeta = meta.value;
 
-        if (currentMeta !== null && page.value >= currentMeta.lastPage) {
+        if (currentMeta !== null && !currentMeta.hasMore) {
             return;
         }
 
@@ -201,11 +199,15 @@ export function useUsersList(): UsersList {
 
     const rows = computed<readonly UserListItem[]>(() => resource.data.value?.items ?? []);
     const meta = computed<PaginationMeta | null>(() => resource.data.value?.meta ?? null);
+    const lastPage = computed<number | null>(() =>
+        meta.value?.mode === 'length-aware' ? Math.max(1, Math.ceil(meta.value.total / USERS_PAGE_SIZE)) : null,
+    );
     const searchInput = useSearchDebounce(list.search, list.searchTerm.value);
 
     return {
         rows,
         meta,
+        lastPage,
         isLoading: resource.isLoading,
         hasLoaded: resource.hasLoaded,
         error: resource.error,
@@ -215,7 +217,7 @@ export function useUsersList(): UsersList {
         sort: list.sort,
         sortBy: list.sortBy,
         page: list.page,
-        next: createGuardedNext(list.page, meta, list.next),
+        next: createGuardedNext(meta, list.next),
         previous: list.previous,
         refetch: resource.refetch,
     };

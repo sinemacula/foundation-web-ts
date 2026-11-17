@@ -7,19 +7,34 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { MemoryStorage } from '../storage/memory-storage';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { colorScheme, resetWebCoreServices } from './services';
 import type { ColorSchemeWiringConfig, WireColorSchemeOptions } from './wire-color-scheme';
 import { wireColorScheme } from './wire-color-scheme';
 
+/** A fake media query list that counts its listener registrations. */
 interface FakeMql {
+    /** Whether the media query currently matches. */
     matches: boolean;
+
+    /** How many times a listener was added. */
     addCount: number;
+
+    /** How many times a listener was removed. */
     removeCount: number;
+
+    /**
+     * Record a listener registration.
+     */
     addEventListener(event: string, cb: () => void): void;
+
+    /**
+     * Record a listener removal.
+     */
     removeEventListener(event: string, cb: () => void): void;
 }
 
+/** Build a fake media query list with the given match state. */
 function makeMql(matches: boolean): FakeMql {
     return {
         matches,
@@ -34,6 +49,7 @@ function makeMql(matches: boolean): FakeMql {
     };
 }
 
+/** Build a fake window whose matchMedia returns the given query list. */
 function windowOf(mql: FakeMql): Window {
     return { matchMedia: () => mql } as unknown as Window;
 }
@@ -42,6 +58,7 @@ const config: ColorSchemeWiringConfig = {
     colorScheme: { default: 'system' },
 };
 
+/** Build wiring options over fresh fakes, with the given overrides applied. */
 function baseOptions(overrides: Partial<WireColorSchemeOptions> = {}): WireColorSchemeOptions {
     return {
         config,
@@ -52,10 +69,12 @@ function baseOptions(overrides: Partial<WireColorSchemeOptions> = {}): WireColor
     };
 }
 
+/** Read the data-theme attribute from the document root. */
 function dataTheme(doc: Document): string | null {
     return doc.documentElement.getAttribute('data-theme');
 }
 
+/** Read the theme-color meta content, or null when absent. */
 function metaColor(doc: Document): string | null {
     return doc.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? null;
 }
@@ -91,9 +110,7 @@ describe('wireColorScheme', () => {
 
     it('resolves the system preference to dark when the OS prefers dark', () => {
         const targetDocument = document.implementation.createHTMLDocument('t');
-        const service = wireColorScheme(
-            baseOptions({ targetWindow: windowOf(makeMql(true)), targetDocument }),
-        );
+        const service = wireColorScheme(baseOptions({ targetWindow: windowOf(makeMql(true)), targetDocument }));
 
         expect(service.resolved()).toBe('dark');
         expect(dataTheme(targetDocument)).toBeNull();
@@ -102,9 +119,7 @@ describe('wireColorScheme', () => {
 
     it('applies the configured default preference when nothing is stored', () => {
         const targetDocument = document.implementation.createHTMLDocument('t');
-        const service = wireColorScheme(
-            baseOptions({ config: { colorScheme: { default: 'dark' } }, targetDocument }),
-        );
+        const service = wireColorScheme(baseOptions({ config: { colorScheme: { default: 'dark' } }, targetDocument }));
 
         expect(service.preference()).toBe('dark');
         expect(dataTheme(targetDocument)).toBe('dark');

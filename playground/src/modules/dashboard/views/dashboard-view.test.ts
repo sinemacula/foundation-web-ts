@@ -2,18 +2,20 @@
  * Component tests for dashboard-view.
  *
  * Mounts the view inside a minimal Vue app to exercise the template and setup
- * script; sign-out API behaviour is covered by auth-store.test.ts.
+ * script against a seeded, hydrated session.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
  */
 
 import { installColorScheme } from '@sinemacula/web-core/app/services';
-import { Environment } from '@sinemacula/web-core/config/environment';
-import { ObjectEnvironmentSource } from '@sinemacula/web-core/config/object-environment-source';
+import { Environment } from '@sinemacula/foundation/config/environment';
+import { ObjectEnvironmentSource } from '@sinemacula/foundation/config/object-environment-source';
 import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
-import { MemoryStorage } from '@sinemacula/web-core/storage/memory-storage';
-import type { ColorSchemeService } from '@sinemacula/web-core/theme/color-scheme-service';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import { sessionContext } from '@sinemacula/web-core/session/session-context';
+import { useSessionStore } from '@sinemacula/web-core/session/session-store';
+import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed, createApp } from 'vue';
@@ -29,7 +31,7 @@ import { initialiseStorage, resetStorage } from '@/services/storage';
 import { FakeHttpClient } from '@/test-support/fake-http-client';
 import { installTestSession, resetSessionContext } from '@/test-support/install-test-session';
 
-const ACCESS_TOKEN_STORAGE_KEY = 'auth.access_token';
+const SESSION_KEY = 'auth.session';
 
 /**
  * Minimal no-op stub that satisfies the {@link LocaleSwitcher} interface,
@@ -65,9 +67,15 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/** A mounted DashboardView and the handles a test drives it through. */
 interface MountedDashboardView {
+    /** The DOM element the view is mounted into. */
     readonly container: HTMLDivElement;
+
+    /** The router the view navigates with. */
     readonly router: ReturnType<typeof createRouter>;
+
+    /** Unmount the app and detach the container. */
     readonly unmount: () => void;
 }
 
@@ -108,10 +116,17 @@ function mountDashboardView(): MountedDashboardView {
 }
 
 describe('DashboardView', () => {
-    beforeEach(() => {
-        const storage = new MemoryStorage();
+    let storage: MemoryStorage;
 
-        storage.set(ACCESS_TOKEN_STORAGE_KEY, 'valid-token');
+    beforeEach(() => {
+        storage = new MemoryStorage();
+        storage.set(
+            SESSION_KEY,
+            JSON.stringify({
+                revision: 1,
+                tokens: { accessToken: 'valid-token', refreshToken: 'refresh-token', expiresAtEpochMs: null },
+            }),
+        );
         initialiseStorage(storage);
         installTestSession(storage);
         initialiseApi(new FakeHttpClient());
@@ -137,16 +152,17 @@ describe('DashboardView', () => {
         unmount();
     });
 
-    it('calls logout and navigates to login on sign-out', async () => {
+    it('signs out of the session and navigates to login', async () => {
         const fake = new FakeHttpClient();
 
-        // Queue a response for the logout API call
-        fake.queueResponse(null);
         initialiseApi(fake);
 
         const { container, router, unmount } = mountDashboardView();
 
         await router.isReady();
+        await sessionContext().ready();
+
+        expect(useSessionStore().isAuthenticated).toBe(true);
 
         const pushSpy = vi.spyOn(router, 'push');
 
@@ -161,6 +177,11 @@ describe('DashboardView', () => {
         await new Promise<void>(resolve => setTimeout(resolve, 50));
 
         expect(pushSpy).toHaveBeenCalledWith({ name: AUTH_ROUTE_NAMES.login });
+        expect(fake.calls).toEqual([
+            { method: 'POST', path: 'auth/logout', body: wire([['refresh_token', 'refresh-token']]) },
+        ]);
+        expect(useSessionStore().isAuthenticated).toBe(false);
+        expect(JSON.parse(storage.get(SESSION_KEY) ?? 'null')).toEqual({ revision: 2, tokens: null });
 
         unmount();
     });

@@ -7,13 +7,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { filter } from './list-filter';
-import { defineListQuery } from './list-query-definition';
+import { filter } from '@sinemacula/foundation/query/list-filter';
+import { defineListQuery } from '@sinemacula/foundation/query/list-query-definition';
 import { useListQuery } from './use-list-query';
 
-// ---------------------------------------------------------------------------
-// Helper: parse `filters` parameter back to an object
-// ---------------------------------------------------------------------------
+/** Parse the `filters` parameter back to an object. */
 function parsedFilters(params: Record<string, unknown>): unknown {
     if (params['filters'] === undefined) {
         return {};
@@ -22,9 +20,7 @@ function parsedFilters(params: Record<string, unknown>): unknown {
     return JSON.parse(String(params['filters']));
 }
 
-// ---------------------------------------------------------------------------
-// Helper: wire object builder (keeps $-prefixed keys out of object literals)
-// ---------------------------------------------------------------------------
+/** Build a wire object, keeping $-prefixed keys out of object literals. */
 function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string, unknown> {
     return Object.fromEntries(entries);
 }
@@ -35,7 +31,7 @@ function wire(entries: ReadonlyArray<readonly [string, unknown]>): Record<string
 const sharedDefinition = defineListQuery({
     filters: {
         status: filter.equals('status'),
-        name: filter.text('name'),
+        name: filter.equals('name'),
         ids: filter.anyOf('id'),
         ageRange: filter.between('age'),
         minAge: filter.atLeast('age'),
@@ -45,7 +41,7 @@ const sharedDefinition = defineListQuery({
         tags: filter.contains('tags'),
         authorName: filter.equals('posts.author.name'),
     },
-    search: filter.searchAcross(['name', 'email']),
+    search: filter.search(),
     sortable: ['name', 'createdAt', 'age'],
     defaultSort: { column: 'name', direction: 'asc' },
     pageSize: 10,
@@ -117,11 +113,11 @@ describe('useListQuery', () => {
     describe('base', () => {
         it('applies the base function first', () => {
             const definition = defineListQuery({
-                base: q => q.fields(['id', 'name']),
+                base: q => q.fieldsFor('users', ['id', 'name']),
             });
             const { parameters } = useListQuery(definition);
 
-            expect(parameters.value['fields']).toBe('id,name');
+            expect(parameters.value['fields[users]']).toBe('id,name');
         });
 
         it('applies base before filters', () => {
@@ -181,7 +177,7 @@ describe('useListQuery', () => {
             expect(filters).toEqual(
                 wire([
                     ['status', 'active'],
-                    ['name', wire([['$like', 'alice']])],
+                    ['name', 'alice'],
                 ]),
             );
         });
@@ -401,22 +397,13 @@ describe('useListQuery', () => {
     // search
     // -------------------------------------------------------------------------
     describe('search', () => {
-        it('compiles the search filter into the query', () => {
+        it('compiles the search term into the query', () => {
             const { parameters, search } = useListQuery(sharedDefinition);
 
             search('alice');
 
-            expect(parsedFilters(parameters.value)).toEqual(
-                wire([
-                    [
-                        '$or',
-                        wire([
-                            ['name', wire([['$like', 'alice']])],
-                            ['email', wire([['$like', 'alice']])],
-                        ]),
-                    ],
-                ]),
-            );
+            expect(parameters.value['search']).toBe('alice');
+            expect(parameters.value['filters']).toBeUndefined();
         });
 
         it('updates searchTerm', () => {
@@ -443,13 +430,13 @@ describe('useListQuery', () => {
             search('');
 
             expect(searchTerm.value).toBe('');
-            expect(parameters.value['filters']).toBeUndefined();
+            expect(parameters.value['search']).toBeUndefined();
         });
 
-        it('does not emit the search filter when the term is empty', () => {
+        it('does not emit the search term when it is empty', () => {
             const { parameters } = useListQuery(sharedDefinition);
 
-            expect(parameters.value['filters']).toBeUndefined();
+            expect(parameters.value['search']).toBeUndefined();
         });
     });
 
@@ -709,28 +696,28 @@ describe('useListQuery', () => {
         it('appends a persistent advanced refinement after standard steps', () => {
             const { parameters, refine } = useListQuery(sharedDefinition);
 
-            refine(q => q.counts(['posts']));
+            refine(q => q.aggregatesFor('users', ['posts_count']));
 
-            expect(parameters.value['counts']).toBe('posts');
+            expect(parameters.value['aggregates[users]']).toBe('posts_count');
         });
 
         it('multiple refinements are applied in call order', () => {
             const { parameters, refine } = useListQuery(sharedDefinition);
 
-            refine(q => q.counts(['posts']));
-            refine(q => q.fields(['id', 'name']));
+            refine(q => q.aggregatesFor('users', ['posts_count']));
+            refine(q => q.fieldsFor('users', ['id', 'name']));
 
-            expect(parameters.value['counts']).toBe('posts');
-            expect(parameters.value['fields']).toBe('id,name');
+            expect(parameters.value['aggregates[users]']).toBe('posts_count');
+            expect(parameters.value['fields[users]']).toBe('id,name');
         });
 
         it('refinements persist across filter changes', () => {
             const { parameters, setFilter, refine } = useListQuery(sharedDefinition);
 
-            refine(q => q.counts(['posts']));
+            refine(q => q.aggregatesFor('users', ['posts_count']));
             setFilter('status', 'active');
 
-            expect(parameters.value['counts']).toBe('posts');
+            expect(parameters.value['aggregates[users]']).toBe('posts_count');
         });
 
         it('refinements are applied after sort and pagination', () => {
@@ -788,10 +775,10 @@ describe('useListQuery', () => {
         it('clears all refinements', () => {
             const { parameters, refine, reset } = useListQuery(sharedDefinition);
 
-            refine(q => q.counts(['posts']));
+            refine(q => q.aggregatesFor('users', ['posts_count']));
             reset();
 
-            expect(parameters.value['counts']).toBeUndefined();
+            expect(parameters.value['aggregates[users]']).toBeUndefined();
         });
 
         it('restores defaultSort after reset', () => {
@@ -812,7 +799,7 @@ describe('useListQuery', () => {
             sortBy('anyCol');
             reset();
 
-            expect(parameters.value['filters']).toBeUndefined();
+            expect(parameters.value['search']).toBeUndefined();
             expect(parameters.value['order']).toBeUndefined();
         });
     });
@@ -827,10 +814,8 @@ describe('useListQuery', () => {
             setFilter('status', 'active');
             search('alice');
 
-            const filters = parsedFilters(parameters.value) as Record<string, unknown>;
-
-            expect(filters['status']).toBe('active');
-            expect(filters['$or']).toBeDefined();
+            expect(parsedFilters(parameters.value)).toEqual({ status: 'active' });
+            expect(parameters.value['search']).toBe('alice');
         });
 
         it('applies search before sort (both present in output)', () => {
@@ -840,7 +825,7 @@ describe('useListQuery', () => {
             sortBy('createdAt', 'desc');
 
             expect(parameters.value['order']).toBe('createdAt:desc');
-            expect(parameters.value['filters']).toBeDefined();
+            expect(parameters.value['search']).toBe('alice');
         });
 
         it('emits limit and page after filters/sort', () => {
@@ -866,11 +851,11 @@ describe('useListQuery', () => {
 
         it('parameters.value changes after search', () => {
             const { parameters, search } = useListQuery(sharedDefinition);
-            const before = parameters.value['filters'];
+            const before = parameters.value['search'];
 
             search('alice');
 
-            expect(parameters.value['filters']).not.toBe(before);
+            expect(parameters.value['search']).not.toBe(before);
         });
 
         it('parameters.value changes after sortBy', () => {
@@ -892,9 +877,9 @@ describe('useListQuery', () => {
         it('parameters.value changes after refine', () => {
             const { parameters, refine } = useListQuery(sharedDefinition);
 
-            refine(q => q.counts(['posts']));
+            refine(q => q.aggregatesFor('users', ['posts_count']));
 
-            expect(parameters.value['counts']).toBe('posts');
+            expect(parameters.value['aggregates[users]']).toBe('posts_count');
         });
 
         it('parameters.value changes after reset', () => {
@@ -925,32 +910,6 @@ describe('useListQuery', () => {
             setFilter('priority', 5);
 
             expect(parsedFilters(parameters.value)).toEqual(wire([['priority', wire([['$ge', 5]])]]));
-        });
-    });
-
-    // -------------------------------------------------------------------------
-    // searchAcross with plain + dotted fields
-    // -------------------------------------------------------------------------
-    describe('searchAcross with mixed plain + dotted fields', () => {
-        it('emits an $or group with mixed plain and nested $like conditions', () => {
-            const definition = defineListQuery({
-                search: filter.searchAcross(['name', 'posts.author.name']),
-            });
-            const { parameters, search } = useListQuery(definition);
-
-            search('alice');
-
-            expect(parsedFilters(parameters.value)).toEqual(
-                wire([
-                    [
-                        '$or',
-                        wire([
-                            ['name', wire([['$like', 'alice']])],
-                            ['posts', { author: wire([['name', wire([['$like', 'alice']])]]) }],
-                        ]),
-                    ],
-                ]),
-            );
         });
     });
 

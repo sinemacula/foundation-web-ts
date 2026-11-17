@@ -11,8 +11,8 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { Environment } from '@sinemacula/web-core/config/environment';
-import type { FlagValue } from '@sinemacula/web-core/feature-flags/feature-flags';
+import type { Environment } from '@sinemacula/foundation/config/environment';
+import type { FlagValue } from '@sinemacula/foundation/feature-flags/feature-flags';
 
 /**
  * Feature-flag configuration resolved from the environment.

@@ -17,7 +17,7 @@ import { resetWebCoreServices } from '@sinemacula/web-core/app/services';
 import { ConfigurationError, createWebEnvironment } from '@sinemacula/web-core/config/web-environment';
 import { createSessionModule } from '@sinemacula/web-core/session/create-session-module';
 import { resetSessionContext } from '@sinemacula/web-core/session/session-context';
-import { MemoryStorage } from '@sinemacula/web-core/storage/memory-storage';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory } from 'vue-router';
 
@@ -62,6 +62,15 @@ function runtimeDocument(overrides: Record<string, string> = {}): Record<string,
     };
 }
 
+/** The options a test boot runs with. */
+interface BootOptions {
+    /** Whether the environment boots in development mode. */
+    readonly dev?: boolean;
+
+    /** The runtime document the fetch seam serves. */
+    readonly runtime?: Record<string, string>;
+}
+
 describe('application boot', () => {
     let booted: WebCoreApp<Configuration> | null = null;
 
@@ -72,9 +81,7 @@ describe('application boot', () => {
      * @param options - the dev flag and runtime document for this boot
      * @returns the assembled application handle
      */
-    async function boot(
-        options: { dev?: boolean; runtime?: Record<string, string> } = {},
-    ): Promise<WebCoreApp<Configuration>> {
+    async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
         const body = JSON.stringify(options.runtime ?? runtimeDocument());
         const fetchFn = vi.fn(
             async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),

@@ -12,22 +12,23 @@ import { defineComponent, h, onMounted } from 'vue';
 import type { RouterHistory } from 'vue-router';
 import { createMemoryHistory } from 'vue-router';
 
-import { NullAnalyticsTracker } from '../analytics/null-analytics-tracker';
-import type { Environment } from '../config/environment';
+import { NullAnalyticsTracker } from '@sinemacula/foundation/analytics/null-analytics-tracker';
+import type { Environment } from '@sinemacula/foundation/config/environment';
 import { createWebEnvironment } from '../config/web-environment';
-import { StaticFeatureFlags } from '../feature-flags/static-feature-flags';
-import type { HttpClient, RequestInterceptor, UnauthorizedHandler } from '../http/http-client';
-import { NullLogger } from '../logging/null-logger';
-import type { ModuleBootContext, ModuleDefinition, ModuleRegisterContext } from '../module/module';
+import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
+import type { HttpClient, RequestInterceptor, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
+import { NullLogger } from '@sinemacula/foundation/logging/null-logger';
+import type { ModuleBootContext, ModuleDefinition, ModuleRegisterContext, ScheduleTask } from '../module/module';
+import { scheduleOnTimers } from '../module/module';
 import { ModuleRegistryError } from '../module/module-registry';
 import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
-import type { RealtimeConnection } from '../realtime/realtime-connection';
-import { NullErrorReporter } from '../reporting/null-error-reporter';
+import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
+import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
 import type { RouteMiddleware } from '../router/middleware';
-import { next } from '../router/middleware';
+import { next } from '@sinemacula/foundation/router/middleware';
 import { BrowserStorage } from '../storage/browser-storage';
-import { MemoryStorage } from '../storage/memory-storage';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { WebCoreApp, WebCoreAppOptions } from './create-web-core-app';
 import { createWebCoreApp, observeBootPhases } from './create-web-core-app';
 import {
@@ -45,16 +46,16 @@ import {
     resetWebCoreServices,
     toasts,
 } from './services';
-import { WebCoreAppError } from './web-core-app-error';
-import type { WireHttpClientTools } from './wire-http-client';
+import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
+import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
 
 const BOOT_PHASE_ORDER = [
+    'module-registry',
+    'application',
+    'color-scheme',
     'runtime-environment',
     'configuration',
     'storage',
-    'color-scheme',
-    'module-registry',
-    'application',
     'feature-flags',
     'notifications',
     'observability',
@@ -64,9 +65,9 @@ const BOOT_PHASE_ORDER = [
     'locale',
     'router',
     'error-handling',
+    'realtime',
     'boot-modules',
     'chunk-recovery',
-    'realtime',
     'monitors',
 ] as const;
 
@@ -87,10 +88,17 @@ function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string,
     return Object.fromEntries(entries);
 }
 
+/**
+ * Build a JSON response carrying the given body and status.
+ */
 function jsonResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+/**
+ * Build a fetch spy that serves the runtime environment file and delegates
+ * every other request to the API responder.
+ */
 function makeFetch(
     runtime: Record<string, string> | (() => Record<string, string>) = {},
     apiResponder: (url: string, init?: RequestInit) => Response = () => jsonResponse(null),
@@ -107,10 +115,20 @@ function makeFetch(
 }
 
 type TestWindow = Window & {
+    /**
+     * Invoke every listener registered for the event type.
+     */
     dispatchToListeners(type: string, event: Event): void;
+
+    /**
+     * Count the listeners registered for the event type.
+     */
     listenerCount(type: string): number;
 };
 
+/**
+ * Build a window stub that records its event listeners.
+ */
 function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
     const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
 
@@ -150,6 +168,9 @@ function makeWindow(languages: readonly string[] = ['en-US']): TestWindow {
     } as unknown as TestWindow;
 }
 
+/**
+ * Define the configuration tree the tests boot against.
+ */
 function defineTestConfiguration(environment: Environment) {
     return {
         api: { baseUrl: environment.string('API_URL', 'https://api.test'), timeout: 5_000 },
@@ -172,6 +193,9 @@ function defineTestConfiguration(environment: Environment) {
 
 type TestConfiguration = ReturnType<typeof defineTestConfiguration>;
 
+/**
+ * Build the config options, optionally pointing at a runtime environment URL.
+ */
 function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['config'] {
     return {
         createEnvironment: (runtime: Readonly<Record<string, string>>): Environment =>
@@ -182,15 +206,34 @@ function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['
 }
 
 interface Seams {
+    /** The fetch spy serving the environment file and API calls. */
     readonly fetchFn: ReturnType<typeof makeFetch>;
+
+    /** The in-memory storage backing the app. */
     readonly storage: MemoryStorage;
+
+    /** The window stub the app attaches listeners to. */
     readonly targetWindow: TestWindow;
+
+    /** The detached document the app writes to. */
     readonly targetDocument: Document;
+
+    /** The fixed clock the app reads time from. */
     readonly clock: () => number;
+
+    /** The scheduling seam the app's modules time work with. */
+    readonly schedule: ScheduleTask;
+
+    /** The router history the app navigates with. */
     readonly history: RouterHistory;
+
+    /** The browser locales offered for negotiation. */
     readonly localeCandidates: readonly string[];
 }
 
+/**
+ * Build the platform seams, optionally around a given fetch spy.
+ */
 function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
     return {
         fetchFn,
@@ -198,11 +241,15 @@ function makeSeams(fetchFn: ReturnType<typeof makeFetch> = makeFetch()): Seams {
         targetWindow: makeWindow(),
         targetDocument: document.implementation.createHTMLDocument('t'),
         clock: (): number => 1_000,
+        schedule: () => () => undefined,
         history: createMemoryHistory(),
         localeCandidates: ['en-US'],
     };
 }
 
+/**
+ * Build a root component that records when it mounts.
+ */
 function makeRoot(events: string[] = []): ReturnType<typeof defineComponent> {
     return defineComponent({
         setup() {
@@ -215,6 +262,9 @@ function makeRoot(events: string[] = []): ReturnType<typeof defineComponent> {
     });
 }
 
+/**
+ * Build the home module definition with optional overrides.
+ */
 function homeModule(overrides: Partial<ModuleDefinition> = {}): ModuleDefinition {
     return {
         name: 'home',
@@ -223,6 +273,9 @@ function homeModule(overrides: Partial<ModuleDefinition> = {}): ModuleDefinition
     };
 }
 
+/**
+ * Build an idle realtime connection that records disconnects.
+ */
 function makeRealtime(order: string[]): RealtimeConnection {
     return {
         state: 'idle',
@@ -241,6 +294,9 @@ function makeRealtime(order: string[]): RealtimeConnection {
     };
 }
 
+/**
+ * Boot the app with the default test options and any overrides.
+ */
 function bootApp(
     overrides: Partial<WebCoreAppOptions<TestConfiguration>> = {},
 ): Promise<WebCoreApp<TestConfiguration>> {
@@ -419,6 +475,7 @@ describe('createWebCoreApp', () => {
             expect(contexts[0]?.platform.targetWindow).toBe(seams.targetWindow);
             expect(contexts[0]?.platform.targetDocument).toBe(seams.targetDocument);
             expect(contexts[0]?.platform.clock).toBe(seams.clock);
+            expect(contexts[0]?.platform.schedule).toBe(seams.schedule);
 
             app.dispose();
         });
@@ -451,6 +508,30 @@ describe('createWebCoreApp', () => {
             expect(contexts[0]?.storage).toBe(seams.storage);
             expect(contexts[0]?.config).toBe(app.services.config);
             expect(contexts[0]?.platform.clock).toBe(seams.clock);
+            expect(contexts[0]?.realtime).toBeNull();
+
+            app.dispose();
+        });
+
+        it('hands the installed realtime connection to the booting modules', async () => {
+            const connection = makeRealtime([]);
+            const received: Array<RealtimeConnection | null> = [];
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        boot: context => {
+                            received.push(context.realtime);
+                            expect(realtime()).toBe(connection);
+
+                            return undefined;
+                        },
+                    }),
+                ],
+                realtime: () => connection,
+            });
+
+            expect(received).toStrictEqual([connection]);
 
             app.dispose();
         });
@@ -526,6 +607,10 @@ describe('createWebCoreApp', () => {
 
                 return jsonResponse(null);
             });
+
+            /**
+             * Tag every request as having passed the preset interceptor.
+             */
             const preset: RequestInterceptor = request => ({
                 ...request,
                 headers: { ...request.headers, 'x-trace': 'preset' },
@@ -548,7 +633,7 @@ describe('createWebCoreApp', () => {
 
             await api().get('ping');
 
-            expect((captured?.headers as Record<string, string>)['x-trace']).toBe('preset+module');
+            expect(captured?.headers).toMatchObject({ 'x-trace': 'preset+module' });
 
             app.dispose();
         });
@@ -635,8 +720,17 @@ describe('createWebCoreApp', () => {
 
         it('installs the client returned by the http client override with the resolved tools', async () => {
             const fake = { get: vi.fn() } as unknown as HttpClient;
+
+            /**
+             * Pass the request through as the preset interceptor.
+             */
             const preset: RequestInterceptor = request => request;
+
+            /**
+             * Pass the request through as the module-contributed interceptor.
+             */
             const contributed: RequestInterceptor = request => request;
+
             const onUnauthorized = vi.fn<UnauthorizedHandler>(async () => false);
             const seams = makeSeams();
             const client = vi.fn((_tools: WireHttpClientTools<TestConfiguration>) => fake);
@@ -881,10 +975,10 @@ describe('createWebCoreApp', () => {
             app.dispose();
         });
 
-        it('rejects with WebCoreAppError when update monitoring is enabled with no way to surface updates', async () => {
+        it('rejects with FoundationBootError when update monitoring is enabled with no way to surface updates', async () => {
             const boot = bootApp({ monitors: { updates: { enabled: true } } });
 
-            await expect(boot).rejects.toBeInstanceOf(WebCoreAppError);
+            await expect(boot).rejects.toBeInstanceOf(FoundationBootError);
             await expect(boot).rejects.toThrow(
                 'Update monitoring is enabled but cannot surface updates: ' +
                     'provide monitors.updates.toastKey or monitors.updates.onUpdate.',
@@ -1116,6 +1210,7 @@ describe('createWebCoreApp', () => {
 
             try {
                 const clockValues: number[] = [];
+                const schedules: ScheduleTask[] = [];
 
                 const app = await createWebCoreApp<TestConfiguration>({
                     root: makeRoot(),
@@ -1123,6 +1218,7 @@ describe('createWebCoreApp', () => {
                         homeModule({
                             boot: context => {
                                 clockValues.push(context.platform.clock());
+                                schedules.push(context.platform.schedule);
 
                                 return undefined;
                             },
@@ -1151,6 +1247,7 @@ describe('createWebCoreApp', () => {
                 expect(clockValues).toHaveLength(1);
                 expect(clockValues[0]).toBeGreaterThan(0);
                 expect(clockValues[0]).toBeLessThanOrEqual(Date.now());
+                expect(schedules).toStrictEqual([scheduleOnTimers]);
 
                 await app.start();
 

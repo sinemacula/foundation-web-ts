@@ -11,7 +11,7 @@ import type { RouteLocationNormalized, RouteLocationNormalizedLoaded } from 'vue
 import { createMemoryHistory } from 'vue-router';
 
 import type { RouteMiddleware } from './middleware';
-import { next, redirect } from './middleware';
+import { next, redirect } from '@sinemacula/foundation/router/middleware';
 import { createApplicationRouter, resolveScrollPosition } from './router-factory';
 
 const EmptyComponent = defineComponent({ render: () => null });
@@ -129,6 +129,10 @@ describe('createApplicationRouter', () => {
 
     it('runs global middleware before matched-record meta middleware', async () => {
         const order: string[] = [];
+
+        /**
+         * Build a middleware that records its name when it runs.
+         */
         const recording = (name: string): RouteMiddleware => ({
             handle: () => {
                 order.push(name);
@@ -136,6 +140,7 @@ describe('createApplicationRouter', () => {
                 return Promise.resolve(next());
             },
         });
+
         const router = createApplicationRouter({
             history: createMemoryHistory(),
             globalMiddleware: [recording('global-one'), recording('global-two')],

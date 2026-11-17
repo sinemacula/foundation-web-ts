@@ -52,15 +52,13 @@ test.describe('users list', () => {
         await usersPage.goto();
         await expect(usersPage.rows).toHaveCount(2);
 
-        const requestPromise = page.waitForRequest(
-            request => request.url().includes('/users') && request.url().includes('filters='),
-        );
+        const requestPromise = page.waitForRequest(request => request.url().includes('/users?'));
 
         await usersPage.searchField.fill('alice');
 
         const request = await requestPromise;
 
-        expect(request.url()).toContain('filters=');
+        expect(new URL(request.url()).searchParams.get('search')).toBe('alice');
     });
 
     test('surfaces a server error as an inline error and a toast', async ({ page }) => {

@@ -9,9 +9,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ModuleDefinition } from '../module/module';
 import type { ModuleMessageSource } from '../module/module-registry';
-import { MemoryStorage } from '../storage/memory-storage';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { activateLocale, createApplicationI18n, createLocaleSwitcher } from './application-i18n';
-import { LocaleService } from './locale-service';
+import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 
 describe('createApplicationI18n', () => {
     it('returns an i18n instance with legacy set to false', () => {
@@ -563,6 +563,7 @@ describe('createLocaleSwitcher', () => {
         document.documentElement.removeAttribute('dir');
     });
 
+    /** Build a locale service enabling en-GB and fr-FR over memory storage. */
     function buildLocaleService(): LocaleService {
         return new LocaleService({
             defaultLocale: 'en-GB',

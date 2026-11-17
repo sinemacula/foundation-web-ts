@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { ErrorReporter } from '@sinemacula/web-core/reporting/error-reporter';
+import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, defineComponent, h, nextTick, ref } from 'vue';
 
@@ -36,8 +36,13 @@ const Thrower = defineComponent({
 });
 
 interface MountedBoundary {
+    /** The boundary state installed by the host component. */
     readonly boundary: FatalBoundary;
+
+    /** Toggle whether the throwing child is rendered. */
     readonly showThrower: (value: boolean) => void;
+
+    /** Unmount the host component. */
     readonly unmount: () => void;
 }
 

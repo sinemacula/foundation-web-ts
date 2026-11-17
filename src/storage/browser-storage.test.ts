@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { BrowserStorage } from './browser-storage';
 
+/** Build an in-memory Storage seeded with the given entries. */
 function makeStorage(initial: Record<string, string> = {}): Storage {
     const map = new Map<string, string>(Object.entries(initial));
 
@@ -34,6 +35,7 @@ function makeStorage(initial: Record<string, string> = {}): Storage {
     } as unknown as Storage;
 }
 
+/** Build a Storage whose reads and writes always throw. */
 function makeThrowingStorage(): Storage {
     return {
         get length() {

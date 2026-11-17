@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocaleMessageLoader, ModuleDefinition } from '../module/module';
-import { MemoryStorage } from '../storage/memory-storage';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { localeSwitcher, resetWebCoreServices } from './services';
 import type { LocaleWiringConfig, WireLocaleOptions } from './wire-locale';
 import { wireLocale } from './wire-locale';
@@ -25,10 +25,16 @@ const config: LocaleWiringConfig = {
     },
 };
 
+/**
+ * Build a route-less module that contributes the given locale loader.
+ */
 function moduleWithLocales(name: string, loader: LocaleMessageLoader): ModuleDefinition {
     return { name, routes: [], locales: loader };
 }
 
+/**
+ * Build the locale wiring options with any overrides applied.
+ */
 function baseOptions(overrides: Partial<WireLocaleOptions> = {}): WireLocaleOptions {
     return {
         config,

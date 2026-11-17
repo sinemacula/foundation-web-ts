@@ -1,0 +1,302 @@
+/**
+ * Session module test harness.
+ *
+ * Registers the session module through the real registry path over a fake
+ * window (in-memory localStorage, a serialising Web Locks manager, recorded
+ * `storage` listeners) and assembles the stores and boot phases around it, with
+ * recording observability holders and a recording router.
+ *
+ * @author      Ben Carey <bdmc@sinemacula.co.uk>
+ * @copyright   2026 Sine Macula Limited
+ */
+
+import type { Pinia } from 'pinia';
+import { createPinia, setActivePinia } from 'pinia';
+import { expect } from 'vitest';
+import { createApp, defineComponent } from 'vue';
+import type { RouteLocationRaw, Router } from 'vue-router';
+
+import { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
+import { Environment } from '@sinemacula/foundation/config/environment';
+import type { HttpClient } from '@sinemacula/foundation/http/http-client';
+import type { ModuleHttpContributions } from '@sinemacula/foundation/http/module-http-contributions';
+import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
+import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import { installAnalytics, installApi, installFeatureFlags, installReporting } from '../../app/services';
+import { createApplicationI18n } from '../../i18n/application-i18n';
+import type { ModuleDefinition, ModuleTeardown, ResolvedPlatform, ScheduleTask } from '../../module/module';
+import { scheduleOnTimers } from '../../module/module';
+import { registerModules } from '../../module/module-registry';
+import type { SessionStore } from '../session-store';
+import { useSessionStore } from '../session-store';
+import type { RecordingLockManager } from './session-fixtures';
+import { createLockManager, createWebStorage } from './session-fixtures';
+
+/** A window stand-in whose `storage` listeners are dispatched directly. */
+export interface FakeWindow {
+    /** The in-memory localStorage. */
+    readonly localStorage: Storage;
+
+    /** The navigator, with a recording lock manager unless Web Locks is missing. */
+    readonly navigator: {
+        /** The lock manager, recording each requested name. */
+        readonly locks: RecordingLockManager | undefined;
+    };
+
+    /** Attach a `storage` listener. */
+    readonly addEventListener: (type: string, listener: (event: StorageEvent) => void) => void;
+
+    /** Detach a `storage` listener. */
+    readonly removeEventListener: (type: string, listener: (event: StorageEvent) => void) => void;
+
+    /** Count the attached listeners. */
+    readonly listenerCount: () => number;
+
+    /** Dispatch a `storage` event, from the localStorage unless another area is given. */
+    readonly dispatchStorage: (init: {
+        /** The changed key, or null for a clear. */
+        key: string | null;
+
+        /** The changed storage area. */
+        storageArea?: Storage;
+    }) => void;
+}
+
+/** Recording stand-ins for the observability holders. */
+export interface Observability {
+    /** Every captured error. */
+    readonly errors: unknown[];
+
+    /** Every reporter identity set, null for a clear. */
+    readonly reportedUsers: unknown[];
+
+    /** Every analytics identity. */
+    readonly identified: string[];
+
+    /** One entry per analytics reset. */
+    readonly resets: number[];
+
+    /** Every feature-flag evaluation context. */
+    readonly flagContexts: unknown[];
+}
+
+/** Everything a test needs around the registered module. */
+export interface SessionHarness {
+    /** The registered module. */
+    readonly module: ModuleDefinition;
+
+    /** The application pinia. */
+    readonly pinia: Pinia;
+
+    /** The best-effort application storage. */
+    readonly appStorage: MemoryStorage;
+
+    /** The target window. */
+    readonly win: FakeWindow;
+
+    /** The resolved platform seams. */
+    readonly platform: ResolvedPlatform;
+
+    /** The module's HTTP contributions. */
+    readonly contributions: ModuleHttpContributions;
+
+    /** Every route the router was pushed to. */
+    readonly pushes: RouteLocationRaw[];
+
+    /** The observability recordings. */
+    readonly observability: Observability;
+
+    /** Resolve the session store over the application pinia. */
+    readonly store: () => SessionStore;
+
+    /** Run the module's stores phase. */
+    readonly stores: () => void;
+
+    /** Run the module's boot phase. */
+    readonly boot: () => Promise<ModuleTeardown>;
+}
+
+/** Seams the harness is built over. */
+export interface HarnessSetup {
+    /** The platform clock. Default always 0. */
+    readonly clock?: () => number;
+
+    /** The platform scheduling seam. Default the global timers. */
+    readonly schedule?: ScheduleTask;
+
+    /** The current route's path. Default '/dashboard'. */
+    readonly fullPath?: string;
+
+    /** The error every navigation rejects with. */
+    readonly pushRejection?: Error;
+
+    /** The realtime connection handed to the boot phase. */
+    readonly realtime?: RealtimeConnection | null;
+
+    /** Whether the Web Locks API is missing. */
+    readonly withoutLocks?: boolean;
+}
+
+const EmptyComponent = defineComponent({ render: () => null });
+
+/**
+ * Build a window stand-in.
+ *
+ * @param withoutLocks - whether the Web Locks API is missing
+ * @returns the window
+ */
+export function createFakeWindow(withoutLocks = false): FakeWindow {
+    const listeners = new Set<(event: StorageEvent) => void>();
+    const localStorage = createWebStorage();
+
+    return {
+        localStorage,
+        navigator: { locks: withoutLocks ? undefined : createLockManager() },
+        addEventListener: (_type, listener) => {
+            listeners.add(listener);
+        },
+        removeEventListener: (_type, listener) => {
+            listeners.delete(listener);
+        },
+        listenerCount: () => listeners.size,
+        dispatchStorage: init => {
+            const event = { key: init.key, storageArea: init.storageArea ?? localStorage } as StorageEvent;
+
+            for (const listener of listeners) {
+                listener(event);
+            }
+        },
+    };
+}
+
+/**
+ * Build an HTTP client stand-in that fails loudly if called.
+ *
+ * @returns the client
+ */
+export function createHttpClientStub(): HttpClient {
+    /** Reject an unexpected request. */
+    const fail = (): Promise<never> => Promise.reject(new Error('The stub HTTP client must not be called.'));
+
+    return { get: fail, post: fail, put: fail, patch: fail, delete: fail, download: fail };
+}
+
+/**
+ * Install recording observability holders and a stub HTTP client.
+ *
+ * @returns the recordings
+ */
+export function installObservability(): Observability {
+    const observability: Observability = {
+        errors: [],
+        reportedUsers: [],
+        identified: [],
+        resets: [],
+        flagContexts: [],
+    };
+
+    installApi(createHttpClientStub());
+    installReporting({
+        captureError: error => {
+            observability.errors.push(error);
+        },
+        captureMessage: () => undefined,
+        setUser: reported => {
+            observability.reportedUsers.push(reported);
+        },
+    });
+    installAnalytics({
+        track: () => undefined,
+        page: () => undefined,
+        identify: id => {
+            observability.identified.push(id);
+        },
+        reset: () => {
+            observability.resets.push(1);
+        },
+    });
+    installFeatureFlags({
+        isEnabled: () => false,
+        variant: (_key, fallback) => fallback,
+        setContext: context => {
+            observability.flagContexts.push(context);
+        },
+        onChange: () => () => undefined,
+    });
+
+    return observability;
+}
+
+/**
+ * Register the module and assemble the stores and boot phases around it.
+ *
+ * @param module - the session module
+ * @param setup - the seams to build over
+ * @returns the harness
+ */
+export function createSessionHarness(module: ModuleDefinition, setup: HarnessSetup = {}): SessionHarness {
+    const observability = installObservability();
+    const pinia = createPinia();
+
+    setActivePinia(pinia);
+
+    const appStorage = new MemoryStorage();
+    const win = createFakeWindow(setup.withoutLocks);
+    const platform: ResolvedPlatform = {
+        fetchFn: () => Promise.resolve(new Response()),
+        targetWindow: win as unknown as Window,
+        targetDocument: document,
+        clock: setup.clock ?? (() => 0),
+        schedule: setup.schedule ?? scheduleOnTimers,
+    };
+    const contributions = registerModules([module], {
+        config: new ConfigRepository({}),
+        environment: new Environment({ get: () => undefined }),
+        storage: appStorage,
+        pinia,
+        platform,
+    });
+    const pushes: RouteLocationRaw[] = [];
+    const router = {
+        currentRoute: { value: { fullPath: setup.fullPath ?? '/dashboard' } },
+        push: (to: RouteLocationRaw): Promise<void> => {
+            pushes.push(to);
+
+            return setup.pushRejection === undefined ? Promise.resolve() : Promise.reject(setup.pushRejection);
+        },
+    } as unknown as Router;
+
+    return {
+        module,
+        pinia,
+        appStorage,
+        win,
+        platform,
+        contributions,
+        pushes,
+        observability,
+        store: () => useSessionStore(pinia),
+        stores: () => {
+            for (const factory of module.stores ?? []) {
+                factory(pinia);
+            }
+        },
+        boot: async () => {
+            const teardown = await module.boot?.({
+                app: createApp(EmptyComponent),
+                router,
+                pinia,
+                i18n: createApplicationI18n('en-GB'),
+                http: createHttpClientStub(),
+                storage: appStorage,
+                config: new ConfigRepository({}),
+                platform,
+                realtime: setup.realtime ?? null,
+            });
+
+            expect(teardown).toBeTypeOf('function');
+
+            return teardown as ModuleTeardown;
+        },
+    };
+}

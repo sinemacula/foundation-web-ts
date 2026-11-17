@@ -13,10 +13,10 @@
 
 import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
 import { activateLocale, createApplicationI18n, createLocaleSwitcher } from '../i18n/application-i18n';
-import { LocaleService } from '../i18n/locale-service';
+import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 import type { LocaleMessages, ModuleDefinition } from '../module/module';
 import { createModuleMessageSource } from '../module/module-registry';
-import type { KeyValueStorage } from '../storage/key-value-storage';
+import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { installLocaleSwitcher } from './services';
 
 /**

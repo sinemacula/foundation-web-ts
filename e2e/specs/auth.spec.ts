@@ -9,7 +9,13 @@
  */
 
 import { expect, test } from '../fixtures/app';
-import { mockLoginFailure, mockLoginSuccess, mockLogout, seedAuthenticatedSession } from '../support/api-mock';
+import {
+    mockLoginFailure,
+    mockLoginInteractionRequired,
+    mockLoginSuccess,
+    mockLogout,
+    seedAuthenticatedSession,
+} from '../support/api-mock';
 
 test.describe('authentication', () => {
     test('redirects an unauthenticated visitor to the login screen', async ({ page, loginPage }) => {
@@ -48,7 +54,7 @@ test.describe('authentication', () => {
         let authRequested = false;
 
         page.on('request', request => {
-            if (request.method() === 'POST' && request.url().includes('/auth')) {
+            if (request.url().endsWith('/auth/sign-in')) {
                 authRequested = true;
             }
         });
@@ -70,6 +76,22 @@ test.describe('authentication', () => {
 
         await expect(loginPage.errorMessage).toBeVisible();
         await expect(page).toHaveURL(/\/login$/u);
+    });
+
+    test('keeps a sign-in that owes a further step on the login screen', async ({ page, loginPage }) => {
+        await mockLoginInteractionRequired(page);
+
+        await loginPage.goto();
+
+        const signInResponse = page.waitForResponse('**/auth/sign-in');
+
+        await loginPage.signIn('e2e@example.com', 'correct-horse-battery');
+        await signInResponse;
+
+        await expect(loginPage.submitButton).toBeEnabled();
+        await expect(page).toHaveURL(/\/login$/u);
+        await expect(loginPage.errorMessage).toBeHidden();
+        expect(await page.evaluate(() => window.localStorage.getItem('auth.session'))).toBeNull();
     });
 
     test('sends an authenticated visitor past the login screen', async ({ page, loginPage, dashboardPage }) => {

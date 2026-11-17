@@ -10,9 +10,9 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { PermissionSet } from '../authorization/permission-set';
+import { PermissionSet } from '@sinemacula/foundation/authorization/permission-set';
 import { useSessionStore } from './session-store';
-import type { SessionUser } from './session-user';
+import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 
 /**
  * Determine whether the signed-in user holds a permission.
