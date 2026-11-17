@@ -27,7 +27,7 @@ import { useSessionStore } from '../session-store';
 import type { RecordingLockManager } from './session-fixtures';
 import { createLockManager, createWebStorage } from './session-fixtures';
 
-/** A window stand-in whose `storage` listeners are dispatched directly. */
+/** A window stand-in whose event listeners are dispatched directly. */
 export interface FakeWindow {
     /** The in-memory localStorage. */
     readonly localStorage: Storage;
@@ -38,16 +38,16 @@ export interface FakeWindow {
         readonly locks: RecordingLockManager | undefined;
     };
 
-    /** Attach a `storage` listener. */
+    /** Attach a listener for the given event type. */
     readonly addEventListener: (type: string, listener: (event: StorageEvent) => void) => void;
 
-    /** Detach a `storage` listener. */
+    /** Detach a listener for the given event type. */
     readonly removeEventListener: (type: string, listener: (event: StorageEvent) => void) => void;
 
-    /** Count the attached listeners. */
+    /** Count the attached `storage` listeners. */
     readonly listenerCount: () => number;
 
-    /** Dispatch a `storage` event, from the localStorage unless another area is given. */
+    /** Dispatch a `storage` event to the `storage` listeners, from the localStorage unless another area is given. */
     readonly dispatchStorage: (init: {
         /** The changed key, or null for a clear. */
         key: string | null;
@@ -70,6 +70,9 @@ export interface Observability {
 
     /** One entry per analytics reset. */
     readonly resets: number[];
+
+    /** Every analytics identify and reset, in order. */
+    readonly analyticsCalls: string[];
 
     /** Every feature-flag evaluation context. */
     readonly flagContexts: unknown[];
@@ -130,6 +133,9 @@ export interface HarnessSetup {
 
     /** Whether the Web Locks API is missing. */
     readonly withoutLocks?: boolean;
+
+    /** Whether reading the window localStorage throws, as where storage is blocked. */
+    readonly storageBlocked?: boolean;
 }
 
 const EmptyComponent = defineComponent({ render: () => null });
@@ -138,23 +144,34 @@ const EmptyComponent = defineComponent({ render: () => null });
  * Build a window stand-in, optionally without the Web Locks API.
  */
 export function createFakeWindow(withoutLocks = false): FakeWindow {
-    const listeners = new Set<(event: StorageEvent) => void>();
+    const listeners = new Map<string, Set<(event: StorageEvent) => void>>();
     const localStorage = createWebStorage();
+
+    /**
+     * The listeners attached for the given event type.
+     */
+    const listenersOf = (type: string): Set<(event: StorageEvent) => void> => {
+        const attached = listeners.get(type) ?? new Set();
+
+        listeners.set(type, attached);
+
+        return attached;
+    };
 
     return {
         localStorage,
         navigator: { locks: withoutLocks ? undefined : createLockManager() },
-        addEventListener: (_type, listener) => {
-            listeners.add(listener);
+        addEventListener: (type, listener) => {
+            listenersOf(type).add(listener);
         },
-        removeEventListener: (_type, listener) => {
-            listeners.delete(listener);
+        removeEventListener: (type, listener) => {
+            listenersOf(type).delete(listener);
         },
-        listenerCount: () => listeners.size,
+        listenerCount: () => listenersOf('storage').size,
         dispatchStorage: init => {
             const event = { key: init.key, storageArea: init.storageArea ?? localStorage } as StorageEvent;
 
-            for (const listener of listeners) {
+            for (const listener of listenersOf('storage')) {
                 listener(event);
             }
         },
@@ -180,6 +197,7 @@ export function installObservability(): Observability {
         reportedUsers: [],
         identified: [],
         resets: [],
+        analyticsCalls: [],
         flagContexts: [],
     };
 
@@ -198,9 +216,11 @@ export function installObservability(): Observability {
         page: () => undefined,
         identify: id => {
             observability.identified.push(id);
+            observability.analyticsCalls.push(`identify ${id}`);
         },
         reset: () => {
             observability.resets.push(1);
+            observability.analyticsCalls.push('reset');
         },
     });
     installFeatureFlags({
@@ -226,6 +246,14 @@ export function createSessionHarness(module: ModuleDefinition, setup: HarnessSet
 
     const appStorage = new MemoryStorage();
     const win = createFakeWindow(setup.withoutLocks);
+
+    if (setup.storageBlocked === true) {
+        Object.defineProperty(win, 'localStorage', {
+            get: () => {
+                throw new DOMException('The operation is insecure.', 'SecurityError');
+            },
+        });
+    }
     const platform: ResolvedPlatform = {
         fetchFn: () => Promise.resolve(new Response()),
         targetWindow: win as unknown as Window,

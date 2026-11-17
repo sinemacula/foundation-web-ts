@@ -9,9 +9,11 @@ import type { RouteLocationRaw } from 'vue-router';
 
 import type { MiddlewareContext, MiddlewareResult, RouteMiddleware } from '../router/middleware';
 import { next, redirect } from '@sinemacula/foundation/router/middleware';
+import { SessionError } from '@sinemacula/foundation/session/session-error';
 import { can } from './authorization';
 import { appendRedirectTarget } from './redirect';
 import { sessionContext } from './session-context';
+import type { SessionStore } from './session-store';
 import { useSessionStore } from './session-store';
 
 /**
@@ -55,7 +57,9 @@ export function guestOnly(redirectTo?: RouteLocationRaw): RouteMiddleware {
  *
  * A signed-out visitor, or one whose session is lost while the user loads, is
  * redirected to the login route as {@link authenticated} does; a signed-in
- * visitor lacking the permission is redirected to `redirectTo`.
+ * visitor lacking the permission is redirected to `redirectTo`. A signed-in
+ * visitor whose user cannot be loaded fails the navigation instead, as the
+ * permission is then unknown rather than missing.
  *
  * @example
  * ```ts
@@ -64,6 +68,8 @@ export function guestOnly(redirectTo?: RouteLocationRaw): RouteMiddleware {
  *
  * @param redirectTo - where a signed-in visitor lacking the permission is sent;
  * defaults to the forbidden route
+ * @throws {@link SessionError} from `handle()` when the signed-in user cannot
+ * be loaded
  */
 export function authorize(permission: string, redirectTo?: RouteLocationRaw): RouteMiddleware {
     return {
@@ -81,13 +87,31 @@ export function authorize(permission: string, redirectTo?: RouteLocationRaw): Ro
             }
 
             // A cold load has the token but not yet the user the check needs.
-            await store.rehydrateUser();
+            await loadUser(store);
 
             if (!store.isAuthenticated) {
                 return login();
             }
 
+            if (store.user === null) {
+                throw new SessionError('The signed-in user could not be loaded to check a permission.');
+            }
+
             return can(permission) ? next() : redirect(redirectTo ?? sessionContext().routes.forbidden);
         },
     };
+}
+
+/**
+ * Load the held session's user, loading again for a session that replaced it
+ * during the load.
+ */
+async function loadUser(store: SessionStore): Promise<void> {
+    const identity = store.sessionIdentity();
+
+    await store.rehydrateUser();
+
+    if (store.sessionIdentity() !== identity) {
+        await store.rehydrateUser();
+    }
 }
