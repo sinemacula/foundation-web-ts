@@ -411,6 +411,22 @@ describe('useFocusTrap', () => {
     });
 
     describe('native tab stops beyond form controls', () => {
+        it('wraps from an editable region whose content is also marked editable', () => {
+            container = buildContainer(
+                '<button id="first">First</button><div id="editor" contenteditable="true"><p contenteditable="true">Notes</p></div>',
+            );
+
+            const trap = useFocusTrap(ref<HTMLElement | null>(container));
+
+            trap.activate();
+            (container.querySelector<HTMLElement>('#editor') as HTMLElement).focus();
+            pressKey('Tab');
+
+            expect(document.activeElement?.id).toBe('first');
+
+            trap.deactivate();
+        });
+
         it.each([
             ['an editable region', '<div id="middle" contenteditable="true">Notes</div>'],
             ['a details summary', '<details><summary id="middle">More</summary></details>'],
