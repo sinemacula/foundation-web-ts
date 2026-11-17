@@ -21,17 +21,5 @@
         "vue-i18n": "^11.4.20",
         "vue-router": "^5.1.0",
         "zod": "^4.4.3"
-    },
-    "size-limit": [
-        {
-            "name": "application js (gzip)",
-            "path": "dist/assets/*.js",
-            "limit": "150 KB"
-        },
-        {
-            "name": "application css (gzip)",
-            "path": "dist/assets/*.css",
-            "limit": "25 KB"
-        }
-    ]
+    }
 }

@@ -22,7 +22,7 @@ All scripts run from the repository root; `dev`, `build`, `preview` and `size` p
 | `npm run build`    | Production build and error pages to `playground/dist/` |
 | `npm run preview`  | Serve the production build locally                     |
 | `npm run test:e2e` | Playwright end-to-end suite against this app           |
-| `npm run size`     | size-limit budgets over the built `dist/assets/*`      |
+| `npm run size`     | Gzip budgets: first paint, login route, whole build    |
 
 The root `typecheck`, `test`, `test:coverage`, `test:mutation`, `check` and `deadcode` scripts cover this
 workspace's source alongside the kernel's.
