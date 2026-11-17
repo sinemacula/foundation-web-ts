@@ -27,10 +27,17 @@ export interface UpdateMonitorOptions {
 
     /** The document whose visibility triggers focus checks; defaults to the global document. */
     readonly targetDocument?: Document;
+
+    /** Milliseconds before a check is abandoned; defaults to ten seconds. */
+    readonly timeout?: number;
+
+    /** Receives an error thrown by a subscriber, which never stops the others; defaults to the global `reportError`. */
+    readonly onError?: (error: unknown) => void;
 }
 
 const DEFAULT_URL = '/runtime-env.json';
 const DEFAULT_INTERVAL = 300_000;
+const DEFAULT_TIMEOUT = 10_000;
 
 /**
  * Polls on an interval and on tab focus, notifying once per new version.
@@ -54,6 +61,12 @@ export class UpdateMonitor {
     /** The document whose visibility triggers focus checks. */
     readonly #targetDocument: Document;
 
+    /** Milliseconds before a check is abandoned. */
+    readonly #timeout: number;
+
+    /** Receives errors thrown by subscribers. */
+    readonly #onError: (error: unknown) => void;
+
     /** The registered update subscribers. */
     readonly #handlers = new Set<UpdateHandler>();
 
@@ -67,12 +80,10 @@ export class UpdateMonitor {
     };
 
     /**
-     * Runs a check, guarding against throwing subscriber callbacks.
+     * Runs a check in the background.
      */
     readonly #poll = (): void => {
-        this.checkNow().catch(() => {
-            // Only a throwing subscriber reaches here.
-        });
+        void this.checkNow();
     };
 
     /** The active poll interval handle, or null when stopped. */
@@ -81,6 +92,9 @@ export class UpdateMonitor {
     /** The last version subscribers were notified of. */
     #notifiedVersion: string | null = null;
 
+    /** The check in flight and the controller that abandons it, or null when idle. */
+    #inFlight: { readonly promise: Promise<void>; readonly controller: AbortController } | null = null;
+
     constructor(options: UpdateMonitorOptions) {
         this.#currentVersion = options.currentVersion;
         this.#url = options.url ?? DEFAULT_URL;
@@ -88,6 +102,8 @@ export class UpdateMonitor {
         this.#fetchFn = options.fetchFn ?? ((input, init) => globalThis.fetch(input, init));
         this.#extractVersion = options.extractVersion ?? extractAppVersion;
         this.#targetDocument = options.targetDocument ?? globalThis.document;
+        this.#timeout = options.timeout ?? DEFAULT_TIMEOUT;
+        this.#onError = options.onError ?? (error => globalThis.reportError(error));
     }
 
     /**
@@ -104,9 +120,13 @@ export class UpdateMonitor {
     }
 
     /**
-     * Stop polling and detach the visibility listener.
+     * Stop polling, abandon any check in flight so it never notifies, and
+     * detach the visibility listener.
      */
     stop(): void {
+        this.#inFlight?.controller.abort();
+        this.#inFlight = null;
+
         if (this.#timer === null) {
             return;
         }
@@ -131,37 +151,93 @@ export class UpdateMonitor {
     }
 
     /**
-     * Check the deployed version now, swallowing transport failures and
-     * malformed documents since the next tick retries.
+     * Check the deployed version now, joining a check already in flight.
+     * Transport failures, timeouts and malformed documents are swallowed since
+     * the next tick retries.
      */
-    async checkNow(): Promise<void> {
-        let next: string | null;
+    checkNow(): Promise<void> {
+        if (this.#inFlight !== null) {
+            return this.#inFlight.promise;
+        }
 
-        try {
-            const response = await this.#fetchFn(this.#url, {
-                cache: 'no-store',
-                headers: { accept: 'application/json' },
-            });
-
-            if (!response.ok) {
-                return;
+        const controller = new AbortController();
+        const promise = this.#check(controller).finally(() => {
+            if (this.#inFlight?.controller === controller) {
+                this.#inFlight = null;
             }
+        });
 
-            next = this.#extractVersion(await response.json());
-        } catch {
+        this.#inFlight = { promise, controller };
+
+        return promise;
+    }
+
+    /**
+     * Fetch and compare the deployed version, giving up once `controller`
+     * aborts on timeout or stop, even if the fetch ignores its signal.
+     */
+    async #check(controller: AbortController): Promise<void> {
+        const timer = setTimeout(() => controller.abort(), this.#timeout);
+        const next = await Promise.race([this.#fetchVersion(controller.signal), whenAborted(controller.signal)]);
+
+        clearTimeout(timer);
+
+        if (controller.signal.aborted || next === null || next === '') {
             return;
         }
 
-        if (next === null || next === '' || next === this.#currentVersion || next === this.#notifiedVersion) {
+        if (next === this.#currentVersion || next === this.#notifiedVersion) {
             return;
         }
 
         this.#notifiedVersion = next;
 
         for (const handler of this.#handlers) {
-            handler(next);
+            try {
+                handler(next);
+            } catch (error) {
+                this.#report(error);
+            }
         }
     }
+
+    /**
+     * Fetch the version document and extract its version, or null on any
+     * failure.
+     */
+    async #fetchVersion(signal: AbortSignal): Promise<string | null> {
+        try {
+            const response = await this.#fetchFn(this.#url, {
+                cache: 'no-store',
+                headers: { accept: 'application/json' },
+                signal,
+            });
+
+            return response.ok ? this.#extractVersion(await response.json()) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Pass a subscriber's error to the sink, ignoring a throwing sink.
+     */
+    #report(error: unknown): void {
+        try {
+            this.#onError(error);
+        } catch {
+            // The sink is the last resort; nothing is left to report to.
+        }
+    }
+}
+
+/**
+ * Resolve null once `signal` aborts.
+ */
+function whenAborted(signal: AbortSignal): Promise<null> {
+    return new Promise(resolve => {
+        signal.addEventListener('abort', () => resolve(null), { once: true });
+    });
 }
 
 /**

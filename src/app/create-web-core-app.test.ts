@@ -958,6 +958,7 @@ describe('createWebCoreApp', () => {
             expect(fetchFn).toHaveBeenLastCalledWith('/custom-env.json', {
                 cache: 'no-store',
                 headers: { accept: 'application/json' },
+                signal: expect.any(AbortSignal),
             });
             expect(toastService.toasts.value).toHaveLength(1);
             expect(toastService.toasts.value[0]?.message).toBe('app.updates.available');
