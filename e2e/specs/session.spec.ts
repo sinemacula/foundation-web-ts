@@ -11,6 +11,7 @@ import { SEEDED_SESSION, storedTokens } from '../support/api-mock';
 const NOW = Date.parse('2026-06-01T09:00:00Z');
 const EXPIRES_IN_MS = 5 * 60_000;
 const REFRESH_SKEW_MS = 60_000;
+const CLOCK_STEP_MS = 1_000;
 
 test.describe('token refresh', { tag: '@engine' }, () => {
     test.use({ seededSession: SEEDED_SESSION });
@@ -61,9 +62,15 @@ test.describe('proactive refresh', { tag: '@engine' }, () => {
         await expect(dashboardPage.heading).toBeVisible();
         expect(api.requestsTo('/auth/refresh')).toEqual([]);
 
-        // Stop at the armed refresh; going on would fire the request timeout.
-        await page.clock.runFor(EXPIRES_IN_MS - REFRESH_SKEW_MS);
+        await page.clock.runFor(EXPIRES_IN_MS - REFRESH_SKEW_MS - CLOCK_STEP_MS);
 
+        // Step through the window; one long jump would fire the request timeout.
+        for (let elapsed = 0; elapsed < REFRESH_SKEW_MS && api.requestsTo('/auth/refresh').length === 0; ) {
+            await page.clock.runFor(CLOCK_STEP_MS);
+            elapsed += CLOCK_STEP_MS;
+        }
+
+        expect(await page.evaluate(() => Date.now())).toBeLessThan(NOW + EXPIRES_IN_MS);
         await expect.poll(async () => (await storedTokens(page))?.accessToken).toBe('e2e-access-token-1');
         expect(api.requestsTo('/auth/refresh')).toHaveLength(1);
         expect(api.requestsTo('/users/self').map(request => request.authorization)).toEqual([

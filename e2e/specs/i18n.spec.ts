@@ -23,7 +23,7 @@ test.describe('locale switching', { tag: '@engine' }, () => {
         await expect(page.getByRole('link', { name: 'Utilisateurs' })).toBeVisible();
         await expect(page.getByLabel('Langue')).toBeVisible();
         await expect(page.locator('html')).toHaveAttribute('lang', 'fr-FR');
-        await expect(page).toHaveTitle(/^Tableau de bord/u);
+        await expect(page).toHaveTitle(/^Tableau de bord \|/u);
     });
 
     test('keeps the switched language across a reload', async ({ page, dashboardPage }) => {
@@ -38,5 +38,6 @@ test.describe('locale switching', { tag: '@engine' }, () => {
         await expect(page.getByRole('heading', { name: 'Tableau de bord' })).toBeVisible();
         await expect(page.locator('html')).toHaveAttribute('lang', 'fr-FR');
         await expect(page.getByLabel('Langue')).toHaveValue('fr-FR');
+        await expect(page).toHaveTitle(/^Tableau de bord \|/u);
     });
 });
