@@ -40,8 +40,8 @@ npm run dev
 ## How it consumes the kernel
 
 `package.json` declares `"@sinemacula/web-core": "file:.."`. npm links the repository root as a real
-dependency, resolved through the kernel's actual `exports` map, so imports here are what a consuming app
-writes:
+dependency, and `vite.config.ts` maps each kernel subpath export to its source file, so imports
+here are what a consuming app writes and need no package build:
 
 ```ts
 import { FetchHttpClient } from '@sinemacula/web-core/http/fetch-http-client';

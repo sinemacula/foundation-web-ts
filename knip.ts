@@ -2,8 +2,11 @@
  * Knip dead-code detection configuration.
  *
  * The repository is an npm workspace: the kernel package at the root plus the
- * playground harness. Vue single-file components are compiled down to their
- * script blocks so Knip can follow imports through `.vue` files.
+ * playground harness. Kernel production entries are the sources behind the
+ * manifest's conditional `exports`, which point at the compiled `dist` output;
+ * the plain-JS eslint preset export already names a source file, which Knip
+ * reads directly. Vue single-file components are compiled down to their script
+ * blocks so Knip can follow imports through `.vue` files.
  *
  * The vite/vitest plugins are disabled in favour of listing the config files as
  * static entries: executing the Vite config under Knip's loader breaks on
@@ -16,12 +19,19 @@
 
 import type { KnipConfig } from 'knip';
 
+import manifest from './package.json' with { type: 'json' };
+
 const SCRIPT_BLOCK = /<script[^>]*>([\s\S]*?)<\/script\s*>/gim;
+
+const sourceEntries = Object.values(manifest.exports)
+    .filter(target => typeof target !== 'string')
+    .map(({ import: target }) => target.replace(/^\.\/dist\/(.+)\.js$/, 'src/$1.ts'));
 
 const config: KnipConfig = {
     workspaces: {
         '.': {
             entry: [
+                ...sourceEntries,
                 'src/**/*.test.ts',
                 'e2e/**/*.spec.ts',
                 'vitest.config.ts',

@@ -64,11 +64,11 @@ No barrel exports. Import the file you need, by its full subpath:
 import { FetchHttpClient } from '@sinemacula/web-core/http/fetch-http-client';
 ```
 
-Inside this repository the exports map (`"./*": "./src/*.ts"`) resolves every subpath directly to its source file,
-so the playground consumes the kernel with no build step. The published package remaps the same wildcard to
-compiled output (`"./*": { "types": "./dist/*.d.ts", "import": "./dist/*.js" }`); import specifiers are identical
-either way. `vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies; the framework-agnostic areas (http,
-storage, config, ...) never import them.
+The exports map points every kernel subpath at compiled output (`{ "types": "./dist/<path>.d.ts", "import":
+"./dist/<path>.js" }`), and the `prepare` script builds `dist/`, so the package also installs straight from git
+(`github:sinemacula/web-core-ts#master`). Inside this repository the TypeScript, Vite and Vitest configs map the
+same specifiers to `src/`, so the playground and tests run with no build step. `vue`, `vue-router`, `vue-i18n` and
+`pinia` are peer dependencies; the framework-agnostic areas (http, storage, config, ...) never import them.
 
 ## Modules
 
@@ -378,9 +378,9 @@ playground/    Reference application + dev harness (@sinemacula/web-core-playgro
 e2e/           Playwright suite driving the playground application
 ```
 
-The playground consumes the kernel as `"@sinemacula/web-core": "file:.."` - a self-link resolved through the
-package's real exports map, not a path alias. Its import specifiers are therefore exactly what an external
-consumer writes, so the reference application doubles as a permanent integration test of the published surface.
+The playground consumes the kernel as `"@sinemacula/web-core": "file:.."`, through the package's real export
+specifiers. Only exported subpaths are mapped to source, so its imports are exactly what an external consumer
+writes and the reference application doubles as a permanent integration test of the published surface.
 
 For the application-side details - boot sequence, runtime environment mechanics, adding a feature module - see
 [playground/README.md](playground/README.md).
@@ -430,7 +430,7 @@ The package is published to npm from CI - never by hand.
 
 - **Versioning**: release-please reads Conventional Commit history and maintains a standing Release PR that bumps
   `package.json` and `CHANGELOG.md`. Merging it tags the release and cuts a GitHub Release.
-- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which compiles `dist/` through the `prepack`
+- **Publish**: the `v*` tag triggers the `npm-publish` workflow, which compiles `dist/` through the `prepare`
   lifecycle and runs `npm publish --provenance` under npm trusted publishing (OIDC - no token).
 - **Local checks**: `npm run build:dist` compiles the package; `npm run check:pkg` packs it and validates the
   published surface with publint and are-the-types-wrong.
