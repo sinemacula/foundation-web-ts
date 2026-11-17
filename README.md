@@ -333,11 +333,40 @@ permission as missing.
 ## ESLint preset
 
 `@sinemacula/web-core/eslint` is a flat-config layer that enforces the feature-module contract, enabled alongside the
-shared `@sinemacula/coding-standards` presets. On TypeScript and Vue source (tests exempt) it forbids snake_case
-object-literal keys and keeps imports on other modules' public surfaces (`@/modules/<name>`) and on kernel subpaths
-rather than package barrels. Under `modules/` it also checks that a module's name matches its folder, that
-`module.ts`, `routes.ts` and `route-names.ts` export their canonical names, and that route names are namespaced and
-referenced through constants.
+shared `@sinemacula/coding-standards` presets. The first two rules below apply to all TypeScript and Vue source except
+test code (`*.test.*`, `*.spec.*`, `*.test-d.*`, and anything under `__tests__/`, `__mocks__/` or `test-support/`); the
+other four apply to TypeScript under `modules/`. The contract files `module.ts`, `routes.ts` and `route-names.ts` (or
+`.tsx`) are matched anywhere beneath `modules/<name>/`, and a nested module tree belongs to its innermost folder. Paths
+are read relative to the working directory, so run ESLint from the project root.
+
+### `no-snake-case-keys`
+
+Forbids snake_case object-literal keys, computed string keys included; map wire fields through `wire()` instead.
+
+### `module-import-boundary`
+
+Forbids the `@sinemacula/web-core` and `@sinemacula/foundation` barrels in favour of subpaths, and imports of another
+module's internals by alias or relative path. A module's public surface is `@/modules/<name>` or its explicit `index`;
+code outside any module, such as the registry, may also import a module's `module.ts` definition.
+
+### `module-name-matches-folder`
+
+Requires the `name` of a `ModuleDefinition` declared in `module.ts` to equal its folder, as it is also the module's
+translation namespace.
+
+### `module-export-names`
+
+Requires `module.ts`, `routes.ts` and `route-names.ts` to export `<folder>Module`, `<folder>Routes` and
+`<FOLDER>_ROUTE_NAMES`, with the folder in camelCase or UPPER_SNAKE_CASE.
+
+### `route-name-namespacing`
+
+Requires every string in a `_ROUTE_NAMES` map, nested groups and `Object.freeze` included, to read `<folder>.<kebab>`.
+
+### `route-name-via-constant`
+
+Requires route names in `routes.ts`, `redirect` locations included, to reference a `_ROUTE_NAMES` constant rather than
+an inline string.
 
 ## Requirements
 
