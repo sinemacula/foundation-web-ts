@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { ColorSchemePreference } from '@sinemacula/foundation/theme/color-scheme';
 import { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
-import { COLOR_SCHEME_BOOT_SCRIPT, createColorSchemeBootScript } from './color-scheme-boot';
+import { createColorSchemeBootScript } from './color-scheme-boot';
 
 /** Run `script` against storage holding `stored` under `key`; return the stamped scheme. */
 function runBootScript(script: string, key: string, stored: string | null, throwOnRead = false): string | null {
@@ -97,23 +97,23 @@ describe('color-scheme-boot', () => {
         });
     });
 
-    describe('COLOR_SCHEME_BOOT_SCRIPT', () => {
+    describe('default script', () => {
         it.each(['dark', 'light'])('stamps data-theme for a stored %s preference', stored => {
-            expect(runBootScript(COLOR_SCHEME_BOOT_SCRIPT, 'theme', stored)).toBe(stored);
+            expect(runBootScript(createColorSchemeBootScript(), 'theme', stored)).toBe(stored);
         });
 
         it.each(['system', null, 'purple'])('does not stamp for a stored %s value', stored => {
-            expect(runBootScript(COLOR_SCHEME_BOOT_SCRIPT, 'theme', stored)).toBeNull();
+            expect(runBootScript(createColorSchemeBootScript(), 'theme', stored)).toBeNull();
         });
 
         it('swallows a throwing storage read', () => {
-            expect(runBootScript(COLOR_SCHEME_BOOT_SCRIPT, 'theme', 'dark', true)).toBeNull();
+            expect(runBootScript(createColorSchemeBootScript(), 'theme', 'dark', true)).toBeNull();
         });
 
         it.each(['playground/index.html', 'playground/scripts/generate-error-pages.mjs'])(
             'is the script %s inlines',
             path => {
-                expect(readFileSync(resolve(process.cwd(), path), 'utf8')).toContain(COLOR_SCHEME_BOOT_SCRIPT);
+                expect(readFileSync(resolve(process.cwd(), path), 'utf8')).toContain(createColorSchemeBootScript());
             },
         );
     });

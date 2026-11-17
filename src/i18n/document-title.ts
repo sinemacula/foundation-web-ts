@@ -50,6 +50,5 @@ export function installDocumentTitleSync(options: DocumentTitleOptions): () => v
         ([, title]) => {
             target.title = title;
         },
-        { flush: 'sync' },
     );
 }

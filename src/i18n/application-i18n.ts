@@ -158,7 +158,7 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
     const current = computed(() => options.i18n.global.locale.value);
     const installed = new Set<string>(options.i18n.global.availableLocales);
     const loading = new Map<string, Promise<void>>();
-    let generation = 0;
+    let latestSwitch: object | null = null;
 
     /**
      * Install `locale`'s messages once, sharing a load already in flight.
@@ -192,7 +192,10 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
                 throw new I18nError(`Cannot switch to locale "${locale}": it is not an enabled locale.`);
             }
 
-            const ticket = ++generation;
+            const ticket = {};
+
+            latestSwitch = ticket;
+
             const activation: ActivateLocaleOptions = {
                 i18n: options.i18n,
                 modules: options.modules,
@@ -209,7 +212,7 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
 
             await Promise.all(localesToLoad(activation).map(target => ensureInstalled(activation, target)));
 
-            if (ticket !== generation) {
+            if (ticket !== latestSwitch) {
                 return;
             }
 

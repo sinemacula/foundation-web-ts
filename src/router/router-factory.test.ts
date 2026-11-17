@@ -292,7 +292,13 @@ describe('createApplicationRouter', () => {
             const failure = await router.push('/ping').catch((error: unknown) => error);
 
             expect(failure).toBeInstanceOf(RedirectLoopError);
-            expect(failure).toMatchObject({ name: 'RedirectLoopError', origin: '/ping', target: '/pong', limit: 10 });
+            expect(failure).toMatchObject({
+                name: 'RedirectLoopError',
+                message: 'Navigation to "/ping" exceeded 10 middleware redirects; the next was to "/pong".',
+                origin: '/ping',
+                target: '/pong',
+                limit: 10,
+            });
             expect(router.currentRoute.value.path).toBe('/');
         });
 

@@ -33,11 +33,6 @@ export function createColorSchemeBootScript(options: ColorSchemeBootScriptOption
 }
 
 /**
- * The boot script for the default storage key and the `system` default.
- */
-export const COLOR_SCHEME_BOOT_SCRIPT = createColorSchemeBootScript();
-
-/**
  * Serialise `value` as a string literal that cannot close the inline script
  * element it is embedded in.
  */

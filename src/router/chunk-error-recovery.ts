@@ -131,8 +131,7 @@ function reloadDocument(href: string): void {
     const location = globalThis.location;
     const current = new URL(location.href);
     const target = new URL(href, current);
-    const sameDocument =
-        target.origin === current.origin && target.pathname === current.pathname && target.search === current.search;
+    const sameDocument = target.pathname === current.pathname && target.search === current.search;
 
     location.assign(target.href);
 

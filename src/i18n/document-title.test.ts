@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Component } from 'vue';
-import { defineComponent } from 'vue';
+import { defineComponent, nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 
 import { createApplicationRouter } from '../router/router-factory';
@@ -204,7 +204,15 @@ describe('installDocumentTitleSync', () => {
 
         await router.push('/about');
         teardown();
-        i18n.global.locale.value = 'fr-FR';
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: { 'fr-FR': async () => ({ 'page.about': 'A propos' }) },
+            locale: 'fr-FR',
+            direction: 'ltr',
+            targetDocument: document.implementation.createHTMLDocument('switch'),
+        });
+        await nextTick();
 
         expect(target.title).toBe('About | App');
     });

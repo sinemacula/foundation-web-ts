@@ -110,7 +110,8 @@ describe('installChunkErrorRecovery', () => {
         expect(reporter.captureError).toHaveBeenCalledWith(expect.any(Error), { source: 'router', path: '/broken' });
     });
 
-    it('does not throw when no reporter is present for a non-chunk error', async () => {
+    it('does not throw or log when no reporter is present for a non-chunk error', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
         const router = buildRouter(() => Promise.reject(new Error('exploded while parsing props')));
         const storage = new MemoryStorage();
         const reload = vi.fn();
@@ -119,6 +120,8 @@ describe('installChunkErrorRecovery', () => {
         await navigateToBroken(router);
 
         expect(reload).not.toHaveBeenCalled();
+        expect(consoleError).not.toHaveBeenCalled();
+        consoleError.mockRestore();
     });
 
     it('does not throw when no reporter is present for a chunk error inside the recovery window', async () => {
@@ -412,6 +415,16 @@ describe('installChunkErrorRecovery', () => {
             await navigateToBroken(router);
 
             expect(calls).toStrictEqual(['assign https://app.test/console/#/broken', 'reload']);
+        });
+
+        it('only loads a target without a fragment that equals the current URL', async () => {
+            const router = routerOver(createWebHistory('/app/'));
+            const calls = stubLocation('https://app.test/app/broken');
+
+            installChunkErrorRecovery({ router, storage: new MemoryStorage(), clock: () => 1_000 });
+            await navigateToBroken(router);
+
+            expect(calls).toStrictEqual(['assign https://app.test/app/broken']);
         });
 
         it.each([
