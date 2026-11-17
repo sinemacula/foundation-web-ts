@@ -227,7 +227,15 @@ describe('usePagination', () => {
         });
 
         it.each([0, -5, 2.5, Number.NaN])('rejects perPage %s', perPage => {
-            expect(() => usePagination({ total: ref(100), perPage })).toThrow(RangeError);
+            expect(() => usePagination({ total: ref(100), perPage })).toThrow(
+                new RangeError(`perPage must be a positive integer, received ${perPage}.`),
+            );
+        });
+
+        it('accepts a single item per page', () => {
+            const { pageCount } = usePagination({ total: ref(3), perPage: 1 });
+
+            expect(pageCount.value).toBe(3);
         });
     });
 });

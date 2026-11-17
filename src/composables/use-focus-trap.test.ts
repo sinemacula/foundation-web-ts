@@ -382,11 +382,16 @@ describe('useFocusTrap', () => {
 
             const trap = useFocusTrap(ref<HTMLElement | null>(container));
 
+            const added = vi.spyOn(container, 'addEventListener');
+            const removed = vi.spyOn(container, 'removeEventListener');
+
             trap.activate();
             trap.activate();
             trap.deactivate();
 
             expect(document.activeElement?.id).toBe('trigger');
+            expect(container.hasAttribute('tabindex')).toBe(false);
+            expect(removed.mock.calls).toStrictEqual(added.mock.calls);
 
             (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
             pressKey('Tab');
@@ -491,6 +496,26 @@ describe('useFocusTrap', () => {
 
             expect(document.activeElement?.id).toBe('outer-first');
 
+            outerTrap.deactivate();
+        });
+
+        it('keeps focus on an inner trap with nothing tabbable', () => {
+            container = buildContainer(`
+                <button id="outer-first">Outer first</button>
+                <div id="inner"><p>Nothing to focus</p></div>
+            `);
+
+            const inner = container.querySelector<HTMLElement>('#inner') as HTMLElement;
+            const outerTrap = useFocusTrap(ref<HTMLElement | null>(container));
+            const innerTrap = useFocusTrap(ref<HTMLElement | null>(inner));
+
+            outerTrap.activate();
+            innerTrap.activate();
+            pressKey('Tab');
+
+            expect(document.activeElement).toBe(inner);
+
+            innerTrap.deactivate();
             outerTrap.deactivate();
         });
     });

@@ -67,20 +67,18 @@ function getTabbable(container: HTMLElement): HTMLElement[] {
  */
 function handleTrapKeydown(event: KeyboardEvent, container: HTMLElement): void {
     const tabbable = getTabbable(container);
-    const first = tabbable[0];
-    const last = tabbable[tabbable.length - 1];
+    const target = event.shiftKey ? tabbable.at(-1) : tabbable[0];
+    const boundary = event.shiftKey ? tabbable[0] : tabbable.at(-1);
 
-    if (first === undefined || last === undefined) {
+    if (target === undefined) {
         event.preventDefault();
 
         return;
     }
 
-    const active = document.activeElement;
-    const target = event.shiftKey ? last : first;
-    const boundary = event.shiftKey ? first : last;
+    const active = document.activeElement as HTMLElement;
 
-    if (active === boundary || !tabbable.includes(active as HTMLElement)) {
+    if (active === boundary || !tabbable.includes(active)) {
         event.preventDefault();
         target.focus();
     }
