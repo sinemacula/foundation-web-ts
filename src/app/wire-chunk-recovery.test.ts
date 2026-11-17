@@ -61,7 +61,7 @@ describe('wireChunkRecovery', () => {
 
         expect(typeof teardown).toBe('function');
         expect(reload).toHaveBeenCalledWith('/broken');
-        expect(storage.get('chunk-recovery./broken')).toBe('1000');
+        expect(storage.get('chunk-recovery.reloaded-at')).toBe('1000');
     });
 
     it('returns null and installs nothing when disabled', async () => {
@@ -77,7 +77,7 @@ describe('wireChunkRecovery', () => {
         expect(teardown).toBeNull();
         expect(reload).not.toHaveBeenCalled();
         expect(reporter.captureError).not.toHaveBeenCalled();
-        expect(storage.get('chunk-recovery./broken')).toBeNull();
+        expect(storage.get('chunk-recovery.reloaded-at')).toBeNull();
     });
 
     it('installs recovery when enabled explicitly', async () => {
@@ -116,7 +116,7 @@ describe('wireChunkRecovery', () => {
         await navigateToBroken(router);
 
         expect(reload).toHaveBeenCalledTimes(2);
-        expect(storage.get('chunk-recovery./broken')).toBe('6000');
+        expect(storage.get('chunk-recovery.reloaded-at')).toBe('6000');
     });
 
     it('forwards non-chunk router errors to the reporter with the default tuning', async () => {
@@ -129,7 +129,7 @@ describe('wireChunkRecovery', () => {
         await navigateToBroken(router);
 
         expect(reporter.captureError).toHaveBeenCalledWith(expect.any(Error), { source: 'router', path: '/broken' });
-        expect(storage.get('chunk-recovery./broken')).toBeNull();
+        expect(storage.get('chunk-recovery.reloaded-at')).toBeNull();
     });
 
     it('returns a teardown that removes the error handler', async () => {
