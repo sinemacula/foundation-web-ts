@@ -12,13 +12,18 @@ import { join } from 'node:path';
 const dist = join(import.meta.dirname, 'dist');
 
 /**
- * Collect the `dist`-relative asset paths an attribute references in index.html.
+ * Raised when the build to measure is missing or not the expected shape.
+ */
+class BuildShapeError extends Error {}
+
+/**
+ * Collect the `dist`-relative asset paths index.html references by a pattern.
  */
 function referencedAssets(html, pattern) {
     const assets = [...html.matchAll(pattern)].map(match => join('dist', match[1]));
 
     if (assets.length === 0) {
-        throw new Error(`index.html references no assets matching ${pattern}; rebuild before measuring.`);
+        throw new BuildShapeError(`index.html references no assets matching ${pattern}; rebuild before measuring.`);
     }
 
     return assets;

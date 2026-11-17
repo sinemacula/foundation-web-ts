@@ -102,9 +102,17 @@ describe('application boot', () => {
      */
     async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
         const runtime = options.runtime ?? runtimeDocument();
-        const fetchFn = vi.fn(async (input: RequestInfo | URL) =>
-            String(input).endsWith('/users/self') ? json(currentUser(options.permissions ?? [])) : json(runtime),
-        );
+        const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+
+            if (url.endsWith('/runtime-env.json')) {
+                return json(runtime);
+            }
+
+            return url.endsWith('/users/self')
+                ? json(currentUser(options.permissions ?? []))
+                : new Response(null, { status: 500 });
+        });
 
         booted = await createPlaygroundApp({
             dev: options.dev ?? true,
@@ -181,6 +189,32 @@ describe('application boot', () => {
         expect(app.router.currentRoute.value.name).toBe(expected);
     });
 
+    it('loads the shared translations and formats for the active locale', async () => {
+        const app = await boot();
+        const { t, d } = app.i18n.global;
+
+        expect(t('common.actions.cancel')).toBe('Cancel');
+        expect(d(new Date(Date.UTC(2026, 0, 15, 12)), 'short')).toBe('1/15/2026');
+    });
+
+    it('toasts unexpected API failures with the shared error copy', async () => {
+        const app = await boot();
+
+        await expect(app.services.http.get('reports')).rejects.toBeDefined();
+
+        expect(app.services.toasts.toasts.value.map(toast => toast.message)).toEqual(['common.states.error']);
+    });
+
+    it('toasts a newly deployed version with the update copy', async () => {
+        const runtime = runtimeDocument(wire([['APP_VERSION', '1.0.0']]));
+        const app = await boot({ runtime });
+
+        runtime['APP_VERSION'] = '1.0.1';
+        await app.monitors.updates?.checkNow();
+
+        expect(app.services.toasts.toasts.value.map(toast => toast.message)).toEqual(['common.updates.available']);
+    });
+
     it('redirects an unauthenticated visit to the login route', async () => {
         const app = await boot();
 
@@ -236,6 +270,7 @@ describe('renderBootFailure', () => {
 
         expect(mount.textContent).toBe('The application could not start.');
         expect(mount.querySelector('span')).toBeNull();
+        expect(mount.querySelector('div')?.getAttribute('style')).toBe('padding: 2rem; font-family: sans-serif;');
     });
 
     it('shows the error message as text in development', () => {

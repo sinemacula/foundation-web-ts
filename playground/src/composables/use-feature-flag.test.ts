@@ -19,6 +19,9 @@ class ChangingFlags implements FeatureFlags {
     /** The keys currently enabled. */
     enabled = new Set<string>();
 
+    /** How many times an evaluation context was set. */
+    context = 0;
+
     /** The registered change handlers. */
     readonly handlers = new Set<FlagsChangeHandler>();
 
@@ -37,10 +40,10 @@ class ChangingFlags implements FeatureFlags {
     }
 
     /**
-     * Ignore the evaluation context.
+     * Count each evaluation context set.
      */
     setContext(): void {
-        return undefined;
+        this.context += 1;
     }
 
     /**
@@ -82,19 +85,19 @@ describe('useFeatureFlag', () => {
     ])('reads a flag that is %s', (_case, enabled, expected) => {
         flags.enabled = new Set(enabled);
 
-        expect(useFeatureFlag('new-dashboard').value).toBe(expected);
+        expect(effectScope().run(() => useFeatureFlag('new-dashboard'))?.value).toBe(expected);
     });
 
     it('follows provider changes', () => {
-        const flag = useFeatureFlag('new-dashboard');
+        const flag = effectScope().run(() => useFeatureFlag('new-dashboard'));
 
         flags.change(['new-dashboard']);
 
-        expect(flag.value).toBe(true);
+        expect(flag?.value).toBe(true);
 
         flags.change(['other']);
 
-        expect(flag.value).toBe(false);
+        expect(flag?.value).toBe(false);
     });
 
     it('stops following changes once its scope is disposed', () => {

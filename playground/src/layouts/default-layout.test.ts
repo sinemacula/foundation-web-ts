@@ -52,10 +52,19 @@ function signIn(permissions: readonly string[] | null): void {
         permissions === null ? null : { id: 'u1', email: 'alice@example.com', name: 'Alice Smith', permissions };
 }
 
+/** A mounted layout and the handles a test drives it through. */
+interface MountedLayout {
+    /** The element the layout is mounted into. */
+    readonly container: HTMLDivElement;
+
+    /** Unmount the layout and detach its container. */
+    readonly unmount: () => void;
+}
+
 /**
- * Mount the layout and return its container and an unmount handle.
+ * Mount the layout with the plugins it needs.
  */
-async function mountLayout(): Promise<{ container: HTMLDivElement; unmount: () => void }> {
+async function mountLayout(): Promise<MountedLayout> {
     const router = createRouter({
         history: createMemoryHistory(),
         routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],

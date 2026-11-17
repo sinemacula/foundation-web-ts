@@ -45,6 +45,9 @@ describe('mapUserRow', () => {
 
     it.each([
         ['an ISO 8601 timestamp', '2026-01-01T00:00:00Z'],
+        ['an ISO 8601 timestamp without a zone', '2026-01-01T00:00:00'],
+        ['a timestamp with fractional seconds', '2026-01-01 00:00:00.000'],
+        ['leading text', 'x2026-01-01 00:00:00'],
         ['a date without a time', '2026-01-01'],
         ['unpadded fields', '2026-1-1 0:00:00'],
         ['trailing text', '2026-01-01 00:00:00 UTC'],

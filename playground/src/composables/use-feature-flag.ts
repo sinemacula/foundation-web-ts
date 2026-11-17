@@ -11,8 +11,8 @@ import { onScopeDispose, readonly, ref } from 'vue';
 import { featureFlags } from '@/services/feature-flags';
 
 /**
- * Track whether a boolean flag is enabled, following provider changes until
- * the calling scope is disposed.
+ * Track whether a boolean flag is enabled, following provider changes until the
+ * calling scope is disposed.
  */
 export function useFeatureFlag(key: string): Readonly<Ref<boolean>> {
     const flags = featureFlags();
@@ -21,7 +21,7 @@ export function useFeatureFlag(key: string): Readonly<Ref<boolean>> {
         enabled.value = flags.isEnabled(key);
     });
 
-    onScopeDispose(unsubscribe, true);
+    onScopeDispose(unsubscribe);
 
     return readonly(enabled);
 }

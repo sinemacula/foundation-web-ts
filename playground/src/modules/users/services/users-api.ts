@@ -28,23 +28,19 @@ export interface UserListItem {
     readonly createdAt: Date;
 }
 
-/** The API's `YYYY-MM-DD HH:MM:SS` UTC wire timestamp. */
-const WIRE_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-
 /**
- * Parse a wire timestamp as a UTC instant, or null when it is malformed or
- * names a calendar date or time that does not exist.
+ * Parse the API's `YYYY-MM-DD HH:MM:SS` UTC wire timestamp, or return null when
+ * it is not in that exact form or names a date or time that does not exist.
  */
 function parseWireTimestamp(wireTimestamp: string): Date | null {
-    if (!WIRE_TIMESTAMP.test(wireTimestamp)) {
+    const parsed = new Date(`${wireTimestamp.replace(' ', 'T')}Z`);
+
+    if (Number.isNaN(parsed.getTime())) {
         return null;
     }
 
-    const iso = `${wireTimestamp.replace(' ', 'T')}.000Z`;
-    const parsed = new Date(iso);
-
-    // Rejects values Date silently rolls over, such as February 30 or 24:00:00.
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === iso ? parsed : null;
+    // Formatting back rejects other shapes and values Date rolls over, such as February 30.
+    return parsed.toISOString().slice(0, 19).replace('T', ' ') === wireTimestamp ? parsed : null;
 }
 
 /**

@@ -22,7 +22,8 @@ function generate(env: Record<string, string>): Record<string, string> {
 }
 
 /**
- * Build an env record from pairs, keeping env-style keys out of object-literal keys.
+ * Build an env record from pairs, keeping env-style keys out of object
+ * literals.
  */
 function wire(entries: ReadonlyArray<readonly [string, string]>): Record<string, string> {
     return Object.fromEntries(entries);
