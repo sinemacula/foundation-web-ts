@@ -561,6 +561,7 @@ async function bootFoundation<T extends FoundationConfig>(
 
     const core = await bootFoundationCore<T>(
         {
+            runtime: { url: runtimeUrl },
             createEnvironment: options.config.createEnvironment,
             define: options.config.define,
             storage,
@@ -577,7 +578,6 @@ async function bootFoundation<T extends FoundationConfig>(
             onPhase: recordPhase,
         },
         { fetchFn: platform.fetchFn },
-        runtimeUrl,
     );
 
     return { ...core, storage, colorScheme, registry, app, pinia, toastService, confirmService };

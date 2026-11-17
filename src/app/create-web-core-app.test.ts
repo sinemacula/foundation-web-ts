@@ -14,6 +14,7 @@ import { createMemoryHistory } from 'vue-router';
 
 import { NullAnalyticsTracker } from '@sinemacula/foundation/analytics/null-analytics-tracker';
 import type { Environment } from '@sinemacula/foundation/config/environment';
+import { RuntimeEnvironmentError } from '@sinemacula/foundation/config/runtime-environment-error';
 import { createWebEnvironment } from '../config/web-environment';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
 import type { HttpClient, RequestInterceptor, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
@@ -346,6 +347,14 @@ describe('createWebCoreApp', () => {
     });
 
     describe('runtime document and configuration', () => {
+        it('rejects the boot when the runtime document cannot be read', async () => {
+            const fetchFn = vi.fn(() => Promise.resolve(new Response('<html>', { status: 200 })));
+
+            await expect(bootApp({ config: makeConfig(), platform: makeSeams(fetchFn) })).rejects.toBeInstanceOf(
+                RuntimeEnvironmentError,
+            );
+        });
+
         it('fetches the runtime document from the configured url and freezes the defined configuration', async () => {
             const fetchFn = makeFetch(
                 wire([
@@ -357,10 +366,10 @@ describe('createWebCoreApp', () => {
             const app = await bootApp({ config: makeConfig('/custom-env.json'), platform: makeSeams(fetchFn) });
 
             expect(fetchFn).toHaveBeenCalledTimes(1);
-            expect(fetchFn).toHaveBeenCalledWith('/custom-env.json', {
-                cache: 'no-store',
-                headers: { accept: 'application/json' },
-            });
+            expect(fetchFn).toHaveBeenCalledWith(
+                '/custom-env.json',
+                expect.objectContaining({ cache: 'no-store', headers: { accept: 'application/json' } }),
+            );
             expect(app.config.app.name).toBe('Runtime App');
             expect(app.config.api.baseUrl).toBe('https://api.runtime.test');
             expect(Object.isFrozen(app.config)).toBe(true);
@@ -1227,10 +1236,10 @@ describe('createWebCoreApp', () => {
                     config: makeConfig(),
                 });
 
-                expect(globalThis.fetch).toHaveBeenCalledWith('/runtime-env.json', {
-                    cache: 'no-store',
-                    headers: { accept: 'application/json' },
-                });
+                expect(globalThis.fetch).toHaveBeenCalledWith(
+                    '/runtime-env.json',
+                    expect.objectContaining({ cache: 'no-store', headers: { accept: 'application/json' } }),
+                );
                 expect(app.config.app.name).toBe('Default App');
                 expect(appStorage()).toBeInstanceOf(BrowserStorage);
                 expect(toasts()).toBeInstanceOf(ToastService);

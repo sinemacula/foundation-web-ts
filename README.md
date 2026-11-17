@@ -170,7 +170,8 @@ The load-bearing defaults and behaviours:
   chains the prefixed build-time variables behind the runtime document in development and, in production,
   throws a `ConfigurationError` naming every missing `requiredKeys` entry. `config.runtimeUrl` (default
   `/runtime-env.json`) is one URL for both the runtime-environment fetch and the update monitor's default
-  poll target.
+  poll target. A missing document (404) boots on build-time values alone; any other failure, including a
+  five-second timeout, rejects the boot with foundation's `RuntimeEnvironmentError`.
 - `http.unexpectedErrorToastKey` arms the default response-error handler: it skips validation failures and
   401s, raises the application's toast and captures the error with request context. Without it (and without
   an `onResponseError` override) unexpected failures are captured only. The key is application copy - the
