@@ -48,33 +48,37 @@ export interface SessionStore<U extends SessionUser = SessionUser, C = PasswordC
 
     /**
      * The identity of the held session, compared by reference, or null when
-     * signed out. It survives a rotation and is new for every sign-in or
-     * adoption, even over the same tokens; reading it inside a watcher tracks
-     * it.
+     * signed out. It survives every rotation, including one another tab
+     * persisted, and is new for every sign-in, even over the same tokens;
+     * reading it inside a watcher tracks it.
      */
     sessionIdentity(): object | null;
 
     /**
-     * Bring the state in line with the persisted session, adopting a session
-     * another tab wrote and dropping the user when it does. A persistence
-     * failure rejects.
+     * Bring the state in line with the persisted session. Another tab's
+     * rotation of the held session only updates its tokens; another sign-in
+     * replaces the session and drops the user. A persistence failure rejects.
      */
     hydrate(): Promise<void>;
 
     /**
-     * Exchange credentials for a session, persist it, and load the user. Only
-     * an `authenticated` outcome is a completed sign-in.
+     * Exchange credentials for a session, persist it, and load the user,
+     * presenting the held refresh token so the server can supersede that
+     * session. Only an `authenticated` outcome is a completed sign-in.
      */
     login(credentials: C): Promise<LoginOutcome>;
 
     /**
-     * Exchange the refresh credential for a new session. A refusal clears the
-     * session; a transient or other failure keeps it.
+     * Exchange the refresh credential for a new session, first adopting a
+     * rotation another tab persisted instead of presenting a spent token. A
+     * refusal clears the session; a transient or other failure keeps it.
      */
     refresh(): Promise<RefreshOutcome>;
 
     /**
-     * Best-effort invalidate the session server-side, then discard it locally.
+     * Discard the session locally at once, then best-effort sign it out
+     * server-side with its own tokens, unless a newer sign-in has been
+     * persisted meanwhile.
      */
     logout(): Promise<void>;
 

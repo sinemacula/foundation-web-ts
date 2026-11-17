@@ -181,7 +181,7 @@ describe('useLoginForm', () => {
             ]);
             expect(JSON.parse(storage.get(SESSION_KEY) ?? 'null')).toMatchObject({
                 revision: 1,
-                tokens: { accessToken: 'tok', refreshToken: 'ref' },
+                session: { tokens: { accessToken: 'tok', refreshToken: 'ref' } },
             });
 
             unmount();
@@ -229,7 +229,7 @@ describe('useLoginForm', () => {
             unmount();
         });
 
-        it('returns false when another session transition overtakes the sign-in', async () => {
+        it('returns false and signs the issued session out when another session transition overtakes the sign-in', async () => {
             const { form, unmount } = mountLoginForm();
 
             /** Resolve the queued sign-in response. */
@@ -253,7 +253,8 @@ describe('useLoginForm', () => {
             expect(form.error.value).toBeNull();
             expect(form.pending.value).toBeNull();
             expect(useSessionStore().isAuthenticated).toBe(false);
-            expect(fake.calls).toHaveLength(1);
+            expect(fake.calls.map(call => call.path)).toStrictEqual(['auth/sign-in', 'auth/logout']);
+            expect(fake.calls[1]?.options).toHaveProperty('headers', { Authorization: 'Bearer tok' });
 
             unmount();
         });

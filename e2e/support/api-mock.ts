@@ -64,9 +64,12 @@ interface Reply {
 type StorageState = Exclude<BrowserContextOptions['storageState'], string | undefined>;
 
 /** The session snapshot the app persists. */
-interface PersistedSession {
-    /** The persisted token pair, or null once signed out. */
-    readonly tokens?: SessionTokens | null;
+interface PersistedSnapshot {
+    /** The persisted session, or null once signed out. */
+    readonly session?: {
+        /** The persisted token pair. */
+        readonly tokens: SessionTokens;
+    } | null;
 }
 
 /** The permissions the default fake user holds. */
@@ -81,7 +84,12 @@ export function signedInStorageState(tokens: SessionTokens = SEEDED_SESSION): St
         origins: [
             {
                 origin: BASE_URL,
-                localStorage: [{ name: SESSION_STORAGE_KEY, value: JSON.stringify({ revision: 1, tokens }) }],
+                localStorage: [
+                    {
+                        name: SESSION_STORAGE_KEY,
+                        value: JSON.stringify({ revision: 1, session: { lineage: 'e2e-seeded', tokens } }),
+                    },
+                ],
             },
         ],
     };
@@ -235,10 +243,12 @@ export class MockApi {
 
     /**
      * Serve POST auth/refresh, redeeming each refresh token once for a new pair
-     * and refusing any other.
+     * and refusing any other, each once `held` has settled.
      */
-    async refreshRotates(): Promise<void> {
-        await this.endpoint('POST', '/auth/refresh', request => {
+    async refreshRotates(held: Promise<void> = Promise.resolve()): Promise<void> {
+        await this.endpoint('POST', '/auth/refresh', async request => {
+            await held;
+
             const refreshToken = this.refreshTokenIn(request);
 
             if (refreshToken === null) {
@@ -265,18 +275,20 @@ export class MockApi {
     }
 
     /**
-     * Serve POST auth/logout, revoking the presented refresh token.
+     * Serve POST auth/logout, revoking the presented bearer and refresh tokens.
      */
     async logout(): Promise<void> {
-        await this.endpoint('POST', '/auth/logout', request => {
-            const refreshToken = this.refreshTokenIn(request);
+        await this.endpoint('POST', '/auth/logout', request =>
+            this.protectedReply(request, { status: 204 }, token => {
+                const refreshToken = this.refreshTokenIn(request);
 
-            if (refreshToken !== null) {
-                this.refreshTokens.delete(refreshToken);
-            }
+                this.accessTokens.delete(token);
 
-            return { status: 204 };
-        });
+                if (refreshToken !== null) {
+                    this.refreshTokens.delete(refreshToken);
+                }
+            }),
+        );
     }
 
     /**
@@ -391,14 +403,16 @@ export class MockApi {
 
     /**
      * Answer with `reply` when the request carries an honoured bearer token,
-     * and with a 401 otherwise.
+     * after running `accepted` with it, and with a 401 otherwise.
      */
-    private protectedReply(request: RecordedRequest, reply: Reply): Reply {
+    private protectedReply(request: RecordedRequest, reply: Reply, accepted?: (token: string) => void): Reply {
         const token = /^Bearer (.+)$/u.exec(request.authorization ?? '')?.[1];
 
         if (token === undefined || !this.accessTokens.has(token)) {
             return { status: 401, json: { message: 'Unauthenticated.' } };
         }
+
+        accepted?.(token);
 
         return reply;
     }
@@ -429,7 +443,7 @@ export class MockApi {
     private async endpoint(
         method: string,
         pathname: string,
-        handle: (request: RecordedRequest) => Reply,
+        handle: (request: RecordedRequest) => Reply | Promise<Reply>,
     ): Promise<void> {
         await this.context.route(
             url => url.origin === API_ORIGIN && url.pathname === pathname,
@@ -449,7 +463,7 @@ export class MockApi {
 
                 this.requests.push(recorded);
 
-                const reply = handle(recorded);
+                const reply = await handle(recorded);
 
                 if (reply.status >= 400) {
                     this.guard.expectFailedResource(request.url(), reply.status);
@@ -473,7 +487,7 @@ export async function storedTokens(page: Page): Promise<SessionTokens | null> {
         return null;
     }
 
-    const snapshot = JSON.parse(raw) as PersistedSession;
+    const snapshot = JSON.parse(raw) as PersistedSnapshot;
 
-    return snapshot.tokens ?? null;
+    return snapshot.session?.tokens ?? null;
 }

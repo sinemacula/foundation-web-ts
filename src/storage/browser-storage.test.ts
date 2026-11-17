@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { describeKeyValueStorageContract } from '@sinemacula/foundation/storage/test-support/key-value-storage-contract';
 import { BrowserStorage } from './browser-storage';
 
 /** Build an in-memory Storage seeded with the given entries. */
@@ -58,6 +59,8 @@ function makeThrowingStorage(): Storage {
         },
     } as unknown as Storage;
 }
+
+describeKeyValueStorageContract({ create: () => new BrowserStorage(makeStorage()) });
 
 describe('BrowserStorage', () => {
     describe('get', () => {

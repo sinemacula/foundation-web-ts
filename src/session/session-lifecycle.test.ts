@@ -25,7 +25,9 @@ import {
     createManualScheduler,
     createRecordingConnection,
     deferred,
+    LINEAGE,
     persistSnapshot,
+    snapshot,
     tokens,
     user,
 } from './test-support/session-fixtures';
@@ -95,7 +97,7 @@ describe('session lifecycle', () => {
             expect(booted).toBe(false);
             expect(target.win.listenerCount()).toBe(0);
 
-            gate.resolve({ revision: 0, tokens: null });
+            gate.resolve(snapshot(null, 0));
             await booting;
 
             expect(target.win.listenerCount()).toBe(1);
@@ -334,7 +336,7 @@ describe('session lifecycle', () => {
             vi.spyOn(KeyValueSessionPersistence.prototype, 'load').mockReturnValueOnce(gate.promise);
             target.win.dispatchStorage({ key: 'auth.session' });
             teardown();
-            gate.resolve({ revision: 9, tokens: tokens() });
+            gate.resolve(snapshot(tokens(), 9, 'lineage-other'));
 
             await vi.waitFor(() => {
                 expect(target.store().isAuthenticated).toBe(true);
@@ -382,7 +384,32 @@ describe('session lifecycle', () => {
 
             expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual({
                 revision: 1,
-                tokens: tokens(),
+                session: { lineage: expect.any(String), tokens: tokens() },
+            });
+        });
+
+        it('boots signed out over a session stored in the previous format until a sign-in replaces it', async () => {
+            const target = harness();
+
+            target.win.localStorage.setItem('auth.session', JSON.stringify({ revision: 4, tokens: tokens() }));
+            await target.boot();
+
+            expect(target.observability.errors).toStrictEqual([expect.any(SessionError)]);
+            expect(target.store().isAuthenticated).toBe(false);
+            expect(gateway.refresh).not.toHaveBeenCalled();
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens({ accessToken: 'new' }) });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(gateway.login).toHaveBeenCalledWith(
+                { email: 'a', password: 'b' },
+                { uuid: expect.any(String), os: 'WEB' },
+                null,
+            );
+            expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual({
+                revision: 1,
+                session: { lineage: expect.any(String), tokens: tokens({ accessToken: 'new' }) },
             });
         });
 
@@ -597,17 +624,56 @@ describe('session lifecycle', () => {
             }
 
             /**
-             * Persist the given tokens as another tab would, and announce it.
+             * Persist the given tokens as another tab's sign-in would, or its
+             * rotation of the held session given its lineage, and announce it.
              */
-            function persistElsewhere(target: SessionHarness, persisted: SessionTokens | null, revision = 2): void {
-                persistSnapshot(target.win.localStorage, persisted, revision);
+            function persistElsewhere(
+                target: SessionHarness,
+                persisted: SessionTokens | null,
+                revision = 2,
+                lineage = 'lineage-elsewhere',
+            ): void {
+                persistSnapshot(target.win.localStorage, persisted, revision, lineage);
                 target.win.dispatchStorage({ key: 'auth.session' });
             }
 
-            it('touches no channel when another tab rotates the session', async () => {
+            it('keeps the user, identity, channels and realtime connection when another tab rotates the session', async () => {
+                const connection = createRecordingConnection();
+                const target = persisted({}, { realtime: connection });
+
+                await target.boot();
+                await vi.waitFor(() => {
+                    expect(target.observability.identified).toStrictEqual(['u1']);
+                });
+
+                const identity = target.store().sessionIdentity();
+
+                persistElsewhere(
+                    target,
+                    tokens({ accessToken: 'rotated', refreshToken: 'rotated-refresh' }),
+                    2,
+                    LINEAGE,
+                );
+
+                await vi.waitFor(() => {
+                    expect(target.store().accessToken).toBe('rotated');
+                });
+                await settle();
+
+                expect(target.store().refreshToken).toBe('rotated-refresh');
+                expect(target.store().user).toStrictEqual(user());
+                expect(target.store().sessionIdentity()).toBe(identity);
+                expect(gateway.currentUser).toHaveBeenCalledOnce();
+                expect(target.observability.reportedUsers).toHaveLength(1);
+                expect(target.observability.analyticsCalls).toStrictEqual(['identify u1']);
+                expect(target.observability.flagContexts).toStrictEqual([{ userId: 'u1' }]);
+                expect(connection.calls).toStrictEqual(['connect']);
+            });
+
+            it('touches no channel when another tab signs the same user in again', async () => {
                 const target = await identified();
 
-                persistElsewhere(target, tokens({ accessToken: 'rotated', refreshToken: 'rotated-refresh' }));
+                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
@@ -615,7 +681,7 @@ describe('session lifecycle', () => {
                 });
                 await settle();
 
-                expect(target.store().accessToken).toBe('rotated');
+                expect(target.store().accessToken).toBe('signed-in-again');
                 expect(target.observability.reportedUsers).toHaveLength(1);
                 expect(target.observability.identified).toStrictEqual(['u1']);
                 expect(target.observability.resets).toStrictEqual([]);
@@ -639,7 +705,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockResolvedValue(user({ name: 'Alice Jones' }));
-                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.reportedUsers).toHaveLength(2);
@@ -658,7 +724,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockResolvedValue(user({ email: null }));
-                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.reportedUsers).toHaveLength(2);
@@ -670,7 +736,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
-                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.resets).toHaveLength(1);
@@ -690,7 +756,7 @@ describe('session lifecycle', () => {
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
                 });
-                persistElsewhere(target, tokens({ accessToken: 'second' }), 3);
+                persistElsewhere(target, tokens({ accessToken: 'second' }), 3, 'lineage-third');
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(3);
                 });
@@ -714,7 +780,12 @@ describe('session lifecycle', () => {
                     expect(target.observability.identified).toStrictEqual(['u1']);
                 });
                 gateway.currentUser.mockReturnValueOnce(loading.promise);
-                persistSnapshot(target.win.localStorage, tokens({ accessToken: 'rotated' }), 2);
+                persistSnapshot(
+                    target.win.localStorage,
+                    tokens({ accessToken: 'signed-in-again' }),
+                    2,
+                    'lineage-elsewhere',
+                );
                 target.win.dispatchStorage({ key: 'auth.session' });
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
@@ -733,7 +804,7 @@ describe('session lifecycle', () => {
                 const loading = deferred<SessionUser>();
 
                 gateway.currentUser.mockReturnValueOnce(loading.promise);
-                persistElsewhere(target, tokens({ accessToken: 'rotated' }));
+                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
                 });

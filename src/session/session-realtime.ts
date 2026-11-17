@@ -38,18 +38,36 @@ const RETRY_BACKOFF = new ExponentialBackoff();
  * first: a transient failure skips the attempt for backoff to retry; a refusal,
  * a return to pending authentication or a failure disconnects; a refresh
  * another transition overtook re-evaluates the session without refreshing
- * again. An unknown expiry counts as current.
+ * again. An unknown expiry counts as current. An attempt the connection
+ * abandoned, or whose session another sign-in replaced while it was judged,
+ * skips without disconnecting.
  *
  * @param connection - resolves the connection to disconnect; defaults to the
  * application's installed realtime connection
  */
 export function sessionReconnectGuard(connection: () => RealtimeConnection = realtime): BeforeReconnectHook {
-    return async () => {
+    return async signal => {
         await sessionContext().ready();
 
-        const verdict = await verdictFor(useSessionStore());
+        if (signal.aborted) {
+            return false;
+        }
+
+        const store = useSessionStore();
+        const owner = store.sessionIdentity();
+        const verdict = await verdictFor(store);
+
+        if (signal.aborted) {
+            return false;
+        }
 
         if (verdict === 'stop') {
+            const current = store.sessionIdentity();
+
+            if (current !== null && current !== owner) {
+                return false;
+            }
+
             connection().disconnect();
         }
 

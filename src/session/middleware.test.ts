@@ -259,7 +259,7 @@ describe('session guards', () => {
             gateway.currentUser.mockReset();
             gateway.currentUser
                 .mockImplementationOnce(async () => {
-                    persistSnapshot(storage, tokens({ accessToken: 'replaced' }), 2);
+                    persistSnapshot(storage, tokens({ accessToken: 'replaced' }), 2, 'lineage-elsewhere');
                     await useSessionStore().hydrate();
 
                     return user();

@@ -87,6 +87,25 @@ describe('useApiQuery', () => {
 
             expect(filters).toEqual({ a: 1, b: 2 });
         });
+
+        it('ANDs a repeated edit of one field beside the earlier condition', () => {
+            const { query, apply, reset } = useApiQuery();
+
+            apply(q => q.where('status', 'active'));
+            apply(q => q.where('status', 'archived'));
+
+            expect(JSON.parse(String(query.value.toQueryParameters()['filters']))).toEqual(
+                Object.fromEntries([
+                    ['status', 'active'],
+                    ['$and', [{ status: 'archived' }]],
+                ]),
+            );
+
+            reset();
+            apply(q => q.where('status', 'archived'));
+
+            expect(JSON.parse(String(query.value.toQueryParameters()['filters']))).toEqual({ status: 'archived' });
+        });
     });
 
     describe('reset', () => {
