@@ -7,8 +7,7 @@
 
 import type { Ref } from 'vue';
 
-const FOCUSABLE_SELECTOR =
-    'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]';
+const FOCUSABLE_SELECTOR = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]';
 
 /**
  * Controls returned by {@link useFocusTrap}.
@@ -55,6 +54,7 @@ function getTabbable(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
         el =>
             el.tabIndex >= 0 &&
+            !el.matches(':disabled') &&
             el.closest('[hidden], [inert]') === null &&
             el.checkVisibility({ visibilityProperty: true }),
     );

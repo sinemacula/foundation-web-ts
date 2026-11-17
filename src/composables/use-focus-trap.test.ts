@@ -321,6 +321,7 @@ describe('useFocusTrap', () => {
                 <button id="first">First</button>
                 <button id="last">Last</button>
                 <button disabled>Disabled</button>
+                <button disabled tabindex="0">Disabled with tabindex</button>
                 <button tabindex="-1">Skipped</button>
                 <div hidden><button>Hidden</button></div>
                 <div inert><button>Inert</button></div>
