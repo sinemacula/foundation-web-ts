@@ -174,7 +174,7 @@ function makeSseContractHarness(): RealtimeContractHarness {
     return {
         create(options) {
             const { sources, factory } = makeFactory();
-            const connection = new EventSourceConnection({ ...options, jitter: 0, eventSourceFactory: factory });
+            const connection = new EventSourceConnection({ ...options, eventSourceFactory: factory });
 
             return {
                 connection,
@@ -356,7 +356,7 @@ describe('EventSourceConnection', () => {
 
         it('keeps a transport failure away from error subscribers', () => {
             const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({ url: 'http://sse', jitter: 0, eventSourceFactory: factory });
+            const conn = new EventSourceConnection({ url: 'http://sse', eventSourceFactory: factory });
             const received: string[] = [];
 
             conn.on('error', msg => received.push(msg.data));
@@ -417,7 +417,6 @@ describe('EventSourceConnection', () => {
             const conn = new EventSourceConnection({
                 url: 'http://sse',
                 backoff: fixedBackoff(100),
-                jitter: 0,
                 eventSourceFactory: factory,
             });
 
@@ -460,43 +459,6 @@ describe('EventSourceConnection', () => {
             const unsubscribe = conn.on('tick', () => undefined);
 
             expect(() => unsubscribe()).not.toThrow();
-        });
-    });
-
-    describe('reconnect jitter', () => {
-        afterEach(() => {
-            vi.restoreAllMocks();
-        });
-
-        it.each([
-            [undefined, 0.5, 750],
-            [undefined, 0, 1_000],
-            [1, 0.25, 750],
-            [0, 0.99, 1_000],
-        ])('with jitter %s and a random draw of %s waits %s ms', async (jitter, draw, expected) => {
-            vi.spyOn(Math, 'random').mockReturnValue(draw);
-
-            const { sources, factory } = makeFactory();
-            const conn = new EventSourceConnection({
-                url: 'http://sse',
-                backoff: fixedBackoff(1_000),
-                ...(jitter === undefined ? {} : { jitter }),
-                eventSourceFactory: factory,
-            });
-
-            conn.connect();
-            sources.at(0)?.emitError();
-            await vi.advanceTimersByTimeAsync(expected - 1);
-
-            expect(sources).toHaveLength(1);
-
-            await vi.advanceTimersByTimeAsync(1);
-
-            expect(sources).toHaveLength(2);
-        });
-
-        it.each([-0.1, 1.1, Number.NaN])('rejects a jitter of %s', jitter => {
-            expect(() => new EventSourceConnection({ url: 'http://sse', jitter })).toThrow(RangeError);
         });
     });
 
@@ -637,7 +599,6 @@ describe('EventSourceConnection', () => {
             const conn = new EventSourceConnection({
                 url: 'http://sse',
                 backoff: new ExponentialBackoff({ initialDelay: 100, multiplier: 2, maxDelay: 10_000 }),
-                jitter: 0,
                 eventSourceFactory: recording.factory,
                 onError: error => errors.push(error),
             });
