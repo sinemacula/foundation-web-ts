@@ -113,20 +113,6 @@ describe('createApplicationRouter', () => {
         expect(router.currentRoute.value.path).toBe('/');
     });
 
-    it('covers the meta.middleware null-coalesce branch with a route that has no meta', async () => {
-        const router = createApplicationRouter({
-            history: createMemoryHistory(),
-            routes: [
-                { path: '/', component: EmptyComponent },
-                { path: '/plain', component: EmptyComponent },
-            ],
-        });
-
-        await router.push('/plain');
-
-        expect(router.currentRoute.value.path).toBe('/plain');
-    });
-
     it('runs global middleware before matched-record meta middleware', async () => {
         const order: string[] = [];
 

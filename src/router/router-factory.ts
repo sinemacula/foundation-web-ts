@@ -1,11 +1,5 @@
 /**
- * Application router factory.
- *
- * Builds the Vue Router instance from module-contributed routes and installs
- * the middleware pipeline as a global guard, running any global middleware
- * before the middleware declared on the matched records. Scroll behaviour
- * restores saved positions, honours hash anchors, and otherwise returns to the
- * top.
+ * Application router factory with the middleware pipeline as a global guard.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -32,11 +26,8 @@ export interface RouterFactoryOptions {
 }
 
 /**
- * Build the application router.
- *
- * @param options - the routes to install plus optional history and global
- * middleware overrides
- * @returns the configured router
+ * Build the application router, running global middleware before the middleware
+ * declared on the matched records.
  */
 export function createApplicationRouter(options: RouterFactoryOptions): Router {
     const globalMiddleware = options.globalMiddleware ?? [];
@@ -57,22 +48,15 @@ export function createApplicationRouter(options: RouterFactoryOptions): Router {
 }
 
 /**
- * Gather the middleware declared by every matched route record.
- *
- * @param to - the target route
- * @returns the middleware to run, parent-first
+ * Gather the middleware declared by every matched route record, parent-first.
  */
 function collectRouteMiddleware(to: RouteLocationNormalized) {
     return to.matched.flatMap(record => record.meta.middleware ?? []);
 }
 
 /**
- * Resolve the scroll position for a navigation.
- *
- * @param to - the target route
- * @param _from - the previous route
- * @param savedPosition - the position saved by the browser history, if any
- * @returns the scroll target
+ * Restore the saved scroll position, else scroll to the hash anchor, else to
+ * the top.
  */
 export const resolveScrollPosition: RouterScrollBehavior = (to, _from, savedPosition) => {
     if (savedPosition !== null) {

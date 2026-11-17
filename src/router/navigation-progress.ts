@@ -1,9 +1,5 @@
 /**
- * Router navigation-progress tracker.
- *
- * Exposes whether the router currently has a navigation in flight, so the host
- * application can render a progress indicator without every route having to
- * manage the flag itself.
+ * Reactive flag for whether the router has a navigation in flight.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -28,16 +24,8 @@ export interface NavigationProgress {
 }
 
 /**
- * Track whether `router` has a navigation currently in flight.
- *
- * `isNavigating` is set to true when a navigation starts (`beforeEach`) and
- * back to false once it settles, whether it completes (`afterEach`) or fails
- * (`onError`). When called inside an active effect scope, `stop()` is
- * registered via `onScopeDispose` so the hooks are removed automatically when
- * the host component unmounts.
- *
- * @param router - the router to observe
- * @returns the reactive navigation state and a `stop()` to remove the hooks
+ * Track whether `router` has a navigation in flight; inside an active effect
+ * scope, `stop()` also runs when the scope is disposed.
  */
 export function createNavigationProgress(router: Router): NavigationProgress {
     const isNavigating = ref(false);

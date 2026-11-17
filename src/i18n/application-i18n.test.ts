@@ -14,7 +14,7 @@ import { activateLocale, createApplicationI18n, createLocaleSwitcher } from './a
 import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 
 describe('createApplicationI18n', () => {
-    it('returns an i18n instance with legacy set to false', () => {
+    it('creates a composition-mode instance', () => {
         const i18n = createApplicationI18n('en-GB');
 
         expect(i18n.mode).toBe('composition');
@@ -163,7 +163,7 @@ describe('activateLocale', () => {
         expect(i18n.global.locale.value).toBe('en-GB');
     });
 
-    it('handles omitted sharedLoaders by treating them as an empty map', async () => {
+    it('activates without sharedLoaders', async () => {
         const i18n = createApplicationI18n('en-GB');
 
         await activateLocale({
@@ -179,11 +179,11 @@ describe('activateLocale', () => {
 
     it('does not load fallback messages when fallbackLocale equals the active locale', async () => {
         const i18n = createApplicationI18n('en-GB');
-        let fallbackLoaderCalled = false;
+        let loaderCalls = 0;
 
         const sharedLoaders = {
             'en-GB': () => {
-                fallbackLoaderCalled = true;
+                loaderCalls += 1;
 
                 return Promise.resolve({ hello: 'Hello' });
             },
@@ -199,9 +199,7 @@ describe('activateLocale', () => {
             targetDocument: document.implementation.createHTMLDocument('t'),
         });
 
-        // The loader for en-GB is only called once (for the active locale), not
-        // a second time
-        expect(fallbackLoaderCalled).toBe(true);
+        expect(loaderCalls).toBe(1);
         expect(i18n.global.locale.value).toBe('en-GB');
     });
 
@@ -227,10 +225,8 @@ describe('activateLocale', () => {
             targetDocument: document.implementation.createHTMLDocument('t'),
         });
 
-        // Active locale is es-ES
         expect(i18n.global.locale.value).toBe('es-ES');
 
-        // Fallback locale messages are loaded
         const fallbackMessages = i18n.global.getLocaleMessage('en-GB') as Record<string, unknown>;
 
         expect(fallbackMessages['welcome']).toBe('Welcome');
@@ -248,12 +244,9 @@ describe('activateLocale', () => {
             },
             locale: 'fr-FR',
             direction: 'ltr',
-            // fallbackLocale is intentionally omitted
             targetDocument: document.implementation.createHTMLDocument('t'),
         });
 
-        // en-GB messages are not loaded - the fallback locale had no loader
-        // called
         const enMessages = i18n.global.getLocaleMessage('en-GB') as Record<string, unknown>;
 
         expect(enMessages['hello']).toBeUndefined();
@@ -271,8 +264,6 @@ describe('activateLocale', () => {
         await activateLocale({
             i18n,
             modules: [localisedModule],
-            // sharedLoaders intentionally omitted - covers the
-            // sharedLoaders?.[] undefined branch
             locale: 'fr-FR',
             direction: 'ltr',
             fallbackLocale: 'en-GB',
@@ -429,7 +420,7 @@ describe('activateLocale', () => {
         expect(i18n.global.t('welcome')).toBe('Hello');
     });
 
-    it('throws the exact collision error naming the module and the locale', async () => {
+    it('throws naming the colliding module and the locale', async () => {
         const i18n = createApplicationI18n('en-GB');
         const collidingModule: ModuleDefinition = {
             name: 'common',
@@ -649,7 +640,7 @@ describe('createLocaleSwitcher', () => {
         expect(target.documentElement.getAttribute('dir')).toBe('ltr');
     });
 
-    it('throws a dev error naming the locale when it does not match any enabled locale', async () => {
+    it('throws naming a locale that matches no enabled locale', async () => {
         const i18n = createApplicationI18n('en-GB');
         const switcher = createLocaleSwitcher({
             i18n,
