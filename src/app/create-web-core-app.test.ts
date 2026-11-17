@@ -1017,6 +1017,21 @@ describe('createWebCoreApp', () => {
     });
 
     describe('colour-scheme wiring', () => {
+        /**
+         * Make every read of the stored colour-scheme preference throw.
+         */
+        function failPreferenceReads(storage: MemoryStorage, failure: Error): void {
+            const read = storage.get.bind(storage);
+
+            storage.get = key => {
+                if (key === 'theme') {
+                    throw failure;
+                }
+
+                return read(key);
+            };
+        }
+
         it('wires the colour-scheme service through the seams and exposes it on the handle', async () => {
             const seams = makeSeams();
 
@@ -1063,6 +1078,42 @@ describe('createWebCoreApp', () => {
 
         it('defaults the preference to system when no option or stored value is present', async () => {
             const app = await bootApp();
+
+            expect(app.services.colorScheme.preference()).toBe('system');
+
+            app.dispose();
+        });
+
+        it('reports a colour-scheme storage failure from before observability once the reporter is wired', async () => {
+            const reporter = new NullErrorReporter();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const failure = new Error('read failure');
+            const seams = makeSeams();
+
+            failPreferenceReads(seams.storage, failure);
+
+            const app = await bootApp({
+                colorScheme: { defaultPreference: 'dark' },
+                observability: { reporter: () => reporter },
+                platform: seams,
+            });
+
+            expect(captureSpy).toHaveBeenCalledWith(failure, { source: 'color-scheme' });
+            expect(app.services.colorScheme.preference()).toBe('dark');
+
+            app.dispose();
+        });
+
+        it('boots when the reporter throws on a held colour-scheme failure', async () => {
+            const reporter = new NullErrorReporter();
+            const seams = makeSeams();
+
+            vi.spyOn(reporter, 'captureError').mockImplementation(() => {
+                throw new Error('reporter failure');
+            });
+            failPreferenceReads(seams.storage, new Error('read failure'));
+
+            const app = await bootApp({ observability: { reporter: () => reporter }, platform: seams });
 
             expect(app.services.colorScheme.preference()).toBe('system');
 

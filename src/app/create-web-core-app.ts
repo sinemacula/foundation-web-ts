@@ -491,19 +491,15 @@ export async function createWebCoreApp<T extends FoundationConfig>(
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
     const teardowns = new TeardownStack();
 
+    const colorSchemeErrors = new DeferredErrorSink('color-scheme');
+
     let reporter: ErrorReporter = new NullErrorReporter();
 
-    /**
-     * Report a colour-scheme error to the reporter, which is wired later.
-     */
-    const reportColorSchemeError = (error: unknown): void => {
-        reporter.captureError(error, { source: 'color-scheme' });
-    };
-
     try {
-        const foundation = await bootFoundation(options, platform, runtimeUrl, reportColorSchemeError, teardowns);
+        const foundation = await bootFoundation(options, platform, runtimeUrl, colorSchemeErrors.report, teardowns);
 
         reporter = foundation.observability.reporter;
+        colorSchemeErrors.attach(reporter);
 
         const moduleLayer = await bootModuleLayer(options, platform, foundation, teardowns);
         const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
@@ -514,6 +510,54 @@ export async function createWebCoreApp<T extends FoundationConfig>(
         reportRollbackFailures(teardowns.drain(), reporter);
 
         throw error;
+    }
+}
+
+/**
+ * Holds errors raised before the reporter is wired, then forwards them and
+ * every later one to it.
+ */
+class DeferredErrorSink {
+    /** The reporter context's source tag. */
+    readonly #source: string;
+
+    /** The errors raised before a reporter was attached. */
+    readonly #pending: unknown[] = [];
+
+    /** The attached reporter, or null until the boot wires one. */
+    #reporter: ErrorReporter | null = null;
+
+    constructor(source: string) {
+        this.#source = source;
+    }
+
+    /**
+     * Forward an error to the reporter, or hold it until one is attached.
+     */
+    readonly report = (error: unknown): void => {
+        if (this.#reporter === null) {
+            this.#pending.push(error);
+
+            return;
+        }
+
+        this.#reporter.captureError(error, { source: this.#source });
+    };
+
+    /**
+     * Attach the reporter and flush the held errors to it; a throwing reporter
+     * never fails the boot.
+     */
+    attach(reporter: ErrorReporter): void {
+        this.#reporter = reporter;
+
+        for (const error of this.#pending.splice(0)) {
+            try {
+                this.report(error);
+            } catch {
+                // Reporting is best-effort; the boot carries on.
+            }
+        }
     }
 }
 
