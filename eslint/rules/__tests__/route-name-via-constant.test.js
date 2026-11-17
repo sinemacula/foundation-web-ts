@@ -49,14 +49,18 @@ ruleTester.run('route-name-via-constant', rule, {
             filename: 'src/modules/auth/routes.ts',
             code: `export const authRoutes = [{ path: '/login', name: \`\${NS}.login\` }];`,
         },
-        // A constant target, a block-bodied redirect, or no route record.
+        // A constant target, a nested function's return, or no route record.
         {
             filename: 'src/modules/auth/routes.ts',
             code: "export const authRoutes = [{ path: '/', redirect: { name: NAMES.login } }];",
         },
         {
             filename: 'src/modules/auth/routes.ts',
-            code: "export const authRoutes = [{ path: '/', redirect: () => { return { name: 'auth.login' }; } }];",
+            code: "export const authRoutes = [{ path: '/', redirect: () => pick(o => { return { name: 'x' }; }) }];",
+        },
+        {
+            filename: 'src/modules/auth/routes.ts',
+            code: "export const authRoutes = [{ path: '/', redirect: () => { function f() { return { name: 'x' }; } return f(); } }];",
         },
         {
             filename: 'src/modules/auth/routes.ts',
@@ -127,6 +131,19 @@ ruleTester.run('route-name-via-constant', rule, {
         {
             filename: 'src/modules/auth/routes.ts',
             code: "export const authRoutes = [{ path: '/', redirect: () => ({ name: 'auth.login' }) }];",
+            errors: [{ messageId: 'inline', data: { value: 'auth.login' } }],
+        },
+        {
+            filename: 'src/modules/auth/routes.ts',
+            code: "export const authRoutes = [{ path: '/', redirect: to => { if (to) { return { name: 'auth.a' }; } return { name: 'auth.b' }; } }];",
+            errors: [
+                { messageId: 'inline', data: { value: 'auth.a' } },
+                { messageId: 'inline', data: { value: 'auth.b' } },
+            ],
+        },
+        {
+            filename: 'src/modules/auth/routes.ts',
+            code: "export const authRoutes = [{ path: '/', redirect() { return { name: 'auth.login' }; } }];",
             errors: [{ messageId: 'inline', data: { value: 'auth.login' } }],
         },
         // An asserted name, a `.tsx` routes file, and one at the root.

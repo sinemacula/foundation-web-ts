@@ -38,9 +38,10 @@ export function isTestPath(filename) {
 }
 
 /**
- * Where a path sits in its innermost module tree: the folder after the last
- * `modules/` and the path inside it, or null outside a module tree or for a
- * path directly under `modules/`.
+ * Where a path sits in its innermost module tree: the module `id` (the folder
+ * after every `modules/`, so nested modules stay distinct), its innermost
+ * `folder` and the `entry` path inside it, or null outside a module tree or
+ * for a path directly under `modules/`.
  */
 export function moduleLocation(filename) {
     const parts = filename.split('/');
@@ -50,7 +51,12 @@ export function moduleLocation(filename) {
         return null;
     }
 
-    return { folder: parts[index + 1], entry: parts.slice(index + 2).join('/') };
+    const id = parts
+        .slice(0, index + 2)
+        .filter((_, position) => parts[position - 1] === 'modules')
+        .join('/');
+
+    return { id, folder: parts[index + 1], entry: parts.slice(index + 2).join('/') };
 }
 
 /** The folder of a path's innermost module tree, or null (see moduleLocation). */

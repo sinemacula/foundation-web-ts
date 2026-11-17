@@ -8,7 +8,7 @@
 // biome-ignore-all lint/style/useNamingConvention: ESLint AST visitor keys
 
 import path from 'node:path';
-import { createRule, isTestPath, moduleFolder, moduleLocation, projectPath, staticString } from './lib.js';
+import { createRule, isTestPath, moduleLocation, projectPath, staticString } from './lib.js';
 
 const KERNEL_BARRELS = new Set(['@sinemacula/web-core', '@sinemacula/foundation']);
 
@@ -52,7 +52,7 @@ export default createRule({
             return {};
         }
 
-        const ownModule = moduleFolder(filename);
+        const ownModule = moduleLocation(filename)?.id ?? null;
 
         /** Whether a path inside another module is one that module exposes to this file. */
         function isExposed(entry) {
@@ -77,7 +77,7 @@ export default createRule({
             const target = specifierPath(specifier, filename);
             const location = target === null ? null : moduleLocation(target);
 
-            if (location !== null && location.folder !== ownModule && !isExposed(location.entry)) {
+            if (location !== null && location.id !== ownModule && !isExposed(location.entry)) {
                 context.report({ node: source, messageId: 'crossModule', data: { module: location.folder } });
             }
         }

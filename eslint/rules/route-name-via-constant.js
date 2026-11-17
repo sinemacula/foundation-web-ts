@@ -29,14 +29,31 @@ function unwrappedParent(node) {
     return parent;
 }
 
+const FUNCTIONS = new Set(['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration']);
+
+/** The function a return statement returns from. */
+function enclosingFunction(node) {
+    let current = node.parent;
+
+    while (!FUNCTIONS.has(current.type)) {
+        current = current.parent;
+    }
+
+    return current;
+}
+
 /**
  * Whether an object is a route record's `redirect` location, given directly or
- * as a concise arrow's result.
+ * returned from a redirect function.
  */
 function isRedirectLocation(objectExpression) {
     let holder = unwrappedParent(objectExpression);
 
-    if (holder.type === 'ArrowFunctionExpression') {
+    if (holder.type === 'ReturnStatement') {
+        holder = enclosingFunction(holder);
+    }
+
+    if (FUNCTIONS.has(holder.type)) {
         holder = unwrappedParent(holder);
     }
 
