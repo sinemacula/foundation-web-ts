@@ -42,8 +42,9 @@ export function isMutable(path, mutate) {
 }
 
 /**
- * Serialise the installed Foundation and Stryker entries of a parsed lockfile,
- * so two lockfiles compare equal exactly when they install both identically.
+ * Serialise the installed Foundation and mutation-engine entries of a parsed
+ * lockfile, so two lockfiles compare equal exactly when they install both
+ * identically.
  */
 export function fullScopeFingerprint(lockfile) {
     const packages = lockfile?.packages ?? {};
@@ -141,8 +142,8 @@ function readMutatePatterns() {
 }
 
 /**
- * Whether the installed Foundation or Stryker differs between `mergeBase` and
- * HEAD.
+ * Whether the installed Foundation or mutation engine differs between
+ * `mergeBase` and HEAD.
  */
 function packagesChangedSince(mergeBase) {
     /**

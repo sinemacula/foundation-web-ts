@@ -106,26 +106,26 @@ describe('mutationScope', () => {
         },
     );
 
-    it('mutates everything when the installed Foundation or Stryker changes', () => {
+    it('mutates everything when the installed Foundation or mutation engine changes', () => {
         expect(scopeOf([{ path: 'package-lock.json' }], true)).toEqual(MUTATE);
     });
 });
 
 describe('fullScopeFingerprint', () => {
     /**
-     * Build a lockfile installing Foundation from `resolved` and the Stryker
-     * core and runner at the given versions, beside an unrelated package.
+     * Build a lockfile installing Foundation from `resolved` and the mutation
+     * engine core and runner at the given versions, beside another package.
      */
-    const lockfile = (resolved, { stryker = '10.0.0', runner = stryker, other = '1.0.0' } = {}) => ({
+    const lockfile = (resolved, { core = '10.0.0', runner = core, other = '1.0.0' } = {}) => ({
         packages: {
             'node_modules/@sinemacula/foundation': { version: '0.0.0', resolved },
-            'node_modules/@stryker-mutator/core': { version: stryker },
+            'node_modules/@stryker-mutator/core': { version: core },
             'node_modules/@stryker-mutator/vitest-runner': { version: runner },
             'node_modules/vue': { version: other },
         },
     });
 
-    it('matches lockfiles installing the same Foundation and Stryker', () => {
+    it('matches lockfiles installing the same Foundation and mutation engine', () => {
         expect(fullScopeFingerprint(lockfile('git#a', { other: '1.0.0' }))).toBe(
             fullScopeFingerprint(lockfile('git#a', { other: '2.0.0' })),
         );
@@ -133,10 +133,10 @@ describe('fullScopeFingerprint', () => {
 
     it.each([
         ['a different Foundation commit', lockfile('git#b')],
-        ['a different Stryker core', lockfile('git#a', { stryker: '10.1.0', runner: '10.0.0' })],
-        ['a different Stryker runner', lockfile('git#a', { runner: '10.1.0' })],
+        ['a different engine core', lockfile('git#a', { core: '10.1.0', runner: '10.0.0' })],
+        ['a different engine runner', lockfile('git#a', { runner: '10.1.0' })],
         ['no lockfile', null],
-        ['no Foundation or Stryker entry', { packages: {} }],
+        ['no Foundation or engine entry', { packages: {} }],
     ])('tells %s apart', (_case, other) => {
         expect(fullScopeFingerprint(other)).not.toBe(fullScopeFingerprint(lockfile('git#a')));
     });
