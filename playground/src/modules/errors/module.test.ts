@@ -7,7 +7,6 @@
 
 import { describe, expect, it } from 'vitest';
 
-// Direct locale import ensures the data file is covered
 import enUs from '@/modules/errors/locales/en-us';
 import frFr from '@/modules/errors/locales/fr-fr';
 import { errorsModule } from '@/modules/errors/module';

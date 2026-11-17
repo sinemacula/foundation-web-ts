@@ -9,7 +9,6 @@ import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-// Direct locale import ensures the data file is covered
 import enUs from '@/modules/dashboard/locales/en-us';
 import frFr from '@/modules/dashboard/locales/fr-fr';
 import { dashboardModule } from '@/modules/dashboard/module';

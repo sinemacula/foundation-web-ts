@@ -1,10 +1,6 @@
 <!--
-    Colour-scheme switcher.
-
-    Three-way light / dark / system control over the kernel colour-scheme
-    service. Selecting a preference persists it; while deferring to the OS the
-    resolved scheme is tracked so the active choice stays highlighted as the OS
-    flips.
+    Light / dark / system switcher; under "system" it highlights the scheme
+    the OS currently resolves to.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited
@@ -29,8 +25,6 @@ let unsubscribe: (() => void) | null = null;
 
 /**
  * Persist the chosen preference and reflect it in the pressed state.
- *
- * @param pref - the newly selected preference
  */
 function select(pref: ColorSchemePreference): void {
     preference.value = pref;

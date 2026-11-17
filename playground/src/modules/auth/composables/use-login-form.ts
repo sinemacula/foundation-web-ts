@@ -1,14 +1,5 @@
 /**
- * Login form behaviour.
- *
- * All behaviour for the login screen lives here, in plain TypeScript, so the
- * view stays a thin template. Validation is handled by vee-validate 4 with a
- * zod 4 schema bridged through the shared typed-schema adapter. Client-side
- * validation errors and the server's 422 field errors are both surfaced as
- * field messages; anything else collapses to a form-level translation key. A
- * sign-in only succeeds once the session is authenticated: one that owes a
- * further step keeps its pending session for the UI, and one overtaken by
- * another session transition is not a success.
+ * Login form state, validation and submission.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -63,11 +54,6 @@ export interface LoginForm {
 
 /**
  * Build the login form state and submission behaviour.
- *
- * vee-validate manages field-level validation against the zod schema; `error`
- * carries the form-level API error as a translation key.
- *
- * @returns the reactive form
  */
 export function useLoginForm(): LoginForm {
     const { isSubmitting, defineField, errors, validate, setErrors } = useForm({
@@ -137,9 +123,6 @@ interface LoginAttempt {
 
 /**
  * Validate the inputs and, when valid, attempt the session login.
- *
- * @param attempt - the form callbacks driving this attempt
- * @returns true when the sign-in authenticated, otherwise false
  */
 async function attemptLogin(attempt: LoginAttempt): Promise<boolean> {
     const { valid } = await attempt.validate();
@@ -170,9 +153,6 @@ async function attemptLogin(attempt: LoginAttempt): Promise<boolean> {
 
 /**
  * Map a login failure onto a translation key.
- *
- * @param caught - the thrown failure
- * @returns the translation key describing the failure
  */
 export function resolveLoginErrorKey(caught: unknown): string {
     if (caught instanceof HttpValidationError || (caught instanceof HttpError && caught.status === 401)) {

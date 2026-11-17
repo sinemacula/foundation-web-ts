@@ -1,8 +1,6 @@
 <!--
-    Labelled text input with validation message.
-
-    Two-way bound via v-model. A non-empty error message renders below the
-    input and switches the border to the error palette.
+    Labelled v-model text input; a non-empty `error` renders below it and
+    marks it invalid.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

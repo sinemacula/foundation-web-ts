@@ -1,14 +1,6 @@
 <!--
-    Confirmation dialog host.
-
-    Thin presenter over the kernel ConfirmService: requests queue in the
-    service; this component renders the active one and relays the outcome.
-    Replaced by the ported UI kit dialog component when that lands.
-
-    Accessibility: the dialog has `aria-labelledby` pointing at the title
-    element and `aria-describedby` pointing at the message element. Focus is
-    trapped inside the panel while the dialog is open (useFocusTrap) and
-    restored to the triggering element on close. Escape dismisses the dialog.
+    Confirmation dialog host for the kernel ConfirmService's active request;
+    traps focus while open and cancels on Escape.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

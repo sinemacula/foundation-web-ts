@@ -25,8 +25,6 @@ interface MountedNotFoundView {
 
 /**
  * Mount NotFoundView with the minimal plugins it needs.
- *
- * @returns the DOM container, router instance, and an unmount callback
  */
 function mountNotFoundView(): MountedNotFoundView {
     const i18n = createI18n({ legacy: false, locale: 'en-US', messages: {} });
@@ -66,7 +64,7 @@ describe('NotFoundView', () => {
         unmount();
     });
 
-    it('navigates back to the application root when the back-home action is clicked', async () => {
+    it('navigates home from the back-home action', async () => {
         const { container, router, unmount } = mountNotFoundView();
 
         await router.isReady();

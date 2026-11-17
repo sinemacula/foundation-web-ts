@@ -31,26 +31,8 @@ describe('errorsRoutes', () => {
         expect(notFound?.meta?.title).toBe('errors.notFound.title');
     });
 
-    it('resolves the lazy component loader for the forbidden route', async () => {
-        const [forbidden] = errorsRoutes;
-
-        if (forbidden === undefined) {
-            throw new Error('errorsRoutes is missing the forbidden route');
-        }
-
-        const component = await (forbidden.component as () => Promise<unknown>)();
-
-        expect(component).toBeDefined();
-    });
-
-    it('resolves the lazy component loader for the not-found route', async () => {
-        const [, notFound] = errorsRoutes;
-
-        if (notFound === undefined) {
-            throw new Error('errorsRoutes is missing the not-found route');
-        }
-
-        const component = await (notFound.component as () => Promise<unknown>)();
+    it.each(errorsRoutes)('resolves the lazy component loader for $path', async route => {
+        const component = await (route.component as () => Promise<unknown>)();
 
         expect(component).toBeDefined();
     });

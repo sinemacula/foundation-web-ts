@@ -1,10 +1,5 @@
 <!--
-    Users list screen.
-
-    Thin template over the use-users-list composable: renders the loading,
-    error and empty states, a sortable table, and a pagination footer. The
-    table markup is module-local - like toast-host - and will be replaced by
-    the ported UI kit table component once that lands.
+    Users list screen over the use-users-list composable.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited
@@ -30,10 +25,7 @@ const paginationLabel = computed(() => {
 });
 
 /**
- * The `aria-sort` value for a sortable column header.
- *
- * @param column - the wire column name backing the header
- * @returns the ARIA sort state for the column
+ * The `aria-sort` value for the header of a wire sort column.
  */
 function ariaSortFor(column: string): 'ascending' | 'descending' | 'none' {
     const sort = usersList.sort.value;

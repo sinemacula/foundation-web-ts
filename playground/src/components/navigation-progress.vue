@@ -1,9 +1,5 @@
 <!--
-    Router navigation progress indicator.
-
-    Thin presenter over the kernel createNavigationProgress: renders a fixed
-    top progress bar while a navigation is in flight. Replaced by the ported
-    UI kit progress component when that lands.
+    Fixed top progress bar shown while a router navigation is in flight.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

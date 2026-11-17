@@ -1,8 +1,5 @@
 <!--
-    Login screen.
-
-    Thin template over the use-login-form composable: renders fields, relays
-    submission, and routes into the application on success.
+    Login screen over the use-login-form composable.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited

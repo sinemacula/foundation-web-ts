@@ -1,15 +1,6 @@
 <!--
-    Toast rendering host.
-
-    Thin presenter over the kernel ToastService: state and lifecycle live in
-    the service; this component only renders and relays dismissals. Replaced
-    by the ported UI kit toast component when that lands.
-
-    Accessibility: error and warning toasts are rendered in an assertive live
-    region (`role="alert"`, `aria-live="assertive"`) so screen readers
-    interrupt immediately. Success and information toasts are rendered in a
-    polite live region (`role="status"`, `aria-live="polite"`) so screen
-    readers announce them at the next opportunity without interrupting.
+    Toast host for the kernel ToastService; errors and warnings go to an
+    assertive live region, success and information to a polite one.
 
     @author Ben Carey <bdmc@sinemacula.co.uk>
     @copyright 2026 Sine Macula Limited
@@ -38,10 +29,6 @@ const politeToasts = computed(() =>
 
 <template>
     <div class="toast-host">
-        <!--
-            Assertive region: error and warning variants interrupt the screen
-            reader immediately
-        -->
         <div role="alert" aria-live="assertive" class="toast-host__region">
             <div
                 v-for="toast in assertiveToasts"
@@ -60,10 +47,6 @@ const politeToasts = computed(() =>
             </div>
         </div>
 
-        <!--
-            Polite region: success and information variants announce at the next
-            opportunity
-        -->
         <div role="status" aria-live="polite" class="toast-host__region">
             <div
                 v-for="toast in politeToasts"
