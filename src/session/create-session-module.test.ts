@@ -7,7 +7,8 @@
 
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
-import type { HttpClient, HttpRequest } from '@sinemacula/foundation/http/http-client';
+import { FetchHttpClient } from '@sinemacula/foundation/http/fetch-http-client';
+import type { HttpClient, HttpRequest, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
@@ -34,6 +35,15 @@ import { createHttpClientStub, createSessionHarness } from './test-support/sessi
 
 const REQUEST: HttpRequest = { method: 'GET', url: '/x', headers: {}, body: undefined };
 
+/** The registered module and the real HTTP client carrying its contributions. */
+interface WiredSession {
+    /** The registered module. */
+    readonly target: SessionHarness;
+
+    /** The HTTP client the default gateway sends through. */
+    readonly http: HttpClient;
+}
+
 describe('createSessionModule', () => {
     let gateway: FakeSessionApi;
 
@@ -58,17 +68,24 @@ describe('createSessionModule', () => {
     }
 
     /**
-     * Run the contributed unauthorized handler as a 401 does, resolving whether
-     * the request is retried.
+     * Resolve the unauthorized handler the module claimed.
      */
-    function retries(target: SessionHarness): Promise<boolean> {
+    function unauthorizedHandler(target: SessionHarness): UnauthorizedHandler {
         const handler = target.contributions.onUnauthorized;
 
         if (handler === null) {
             throw new Error('The session module must claim the unauthorized handler.');
         }
 
-        return handler();
+        return handler;
+    }
+
+    /**
+     * Run the contributed unauthorized handler as a 401 does, resolving whether
+     * the request is retried.
+     */
+    function retries(target: SessionHarness): Promise<boolean> {
+        return unauthorizedHandler(target)();
     }
 
     beforeEach(() => {
@@ -177,6 +194,20 @@ describe('createSessionModule', () => {
             expect(() => harness({}, { withoutLocks: true })).toThrowError(SessionError);
         });
 
+        it('refuses to register over a blocked localStorage, naming the persistence option', () => {
+            let refusal: unknown;
+
+            try {
+                harness({}, { storageBlocked: true });
+            } catch (error) {
+                refusal = error;
+            }
+
+            expect(refusal).toBeInstanceOf(SessionError);
+            expect(refusal).toHaveProperty('message', expect.stringContaining('persistence option'));
+            expect(refusal).toHaveProperty('cause.name', 'SecurityError');
+        });
+
         it('uses the given persistence instead, built over the platform', async () => {
             const storage = new MemoryStorage();
             const factory = vi.fn(() => new KeyValueSessionPersistence(storage));
@@ -272,19 +303,20 @@ describe('createSessionModule', () => {
             await expect(retries(target)).resolves.toBe(true);
             expect(gateway.refresh).toHaveBeenCalledWith('refresh');
             expect(target.store().accessToken).toBe('fresh');
+            expect(target.observability.errors).toStrictEqual([]);
         });
 
         it.each<[string, RefreshResult]>([
             ['retryable', { kind: 'retryable', error: new NetworkError('offline') }],
             ['rejected', { kind: 'rejected', error: new HttpError(401, 'refused') }],
             ['interactionRequired', { kind: 'interactionRequired', pending: { credential: 'p', requires: ['mfa'] } }],
-            ['failed', { kind: 'failed', error: new HttpError(422, 'malformed') }],
-        ])('does not retry a %s refresh', async (_kind, result) => {
+        ])('neither retries nor reports a %s refresh', async (_kind, result) => {
             const target = await signedIn();
 
             gateway.refresh.mockResolvedValueOnce(result);
 
             await expect(retries(target)).resolves.toBe(false);
+            expect(target.observability.errors).toStrictEqual([]);
         });
 
         it('does not retry a refresh another transition overtook', async () => {
@@ -317,14 +349,13 @@ describe('createSessionModule', () => {
             expect(target.store().isAuthenticated).toBe(false);
         });
 
-        it('reports a failed refresh once and keeps the session', async () => {
+        it('reports a failed refresh once, without retrying, and keeps the session', async () => {
             const target = await signedIn();
             const error = new HttpError(422, 'malformed');
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error });
 
-            await retries(target);
-
+            await expect(retries(target)).resolves.toBe(false);
             expect(target.observability.errors).toStrictEqual([error]);
             expect(target.store().accessToken).toBe('access');
         });
@@ -423,6 +454,97 @@ describe('createSessionModule', () => {
 
             expect(sessionContext().api).toBe(gateway);
             expect(factory).toHaveBeenCalledWith(installed);
+        });
+    });
+
+    describe('over the HTTP client', () => {
+        /** Every exchange the server saw, as method, path and bearer. */
+        let exchanges: string[];
+
+        /** How the fake server answers a refresh. */
+        let refreshResponse: () => Response;
+
+        /**
+         * Answer the fake server's routes: the user only for the fresh token,
+         * and a refresh as scripted.
+         */
+        const server = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const method = init?.method ?? 'GET';
+            const path = new URL(String(input)).pathname;
+            const bearer = new Headers(init?.headers).get('authorization');
+
+            exchanges.push(`${method} ${path} ${bearer ?? '-'}`);
+
+            if (path === '/auth/refresh') {
+                return Promise.resolve(refreshResponse());
+            }
+
+            if (path === '/users/self' && bearer === 'Bearer fresh') {
+                return Promise.resolve(Response.json({ id: 'u1', email: null, name: null, permissions: [] }));
+            }
+
+            return Promise.resolve(new Response('expired', { status: 401 }));
+        };
+
+        /**
+         * Register the default gateway over a real HTTP client carrying the
+         * module's contributions, over a persisted session.
+         */
+        async function wired(): Promise<WiredSession> {
+            const target = createSessionHarness(createSessionModule());
+            const http = new FetchHttpClient({
+                baseUrl: 'https://api.example',
+                fetchFn: server,
+                requestInterceptors: target.contributions.requestInterceptors,
+                onUnauthorized: unauthorizedHandler(target),
+            });
+
+            installApi(http);
+            persistSnapshot(target.win.localStorage, tokens());
+            await sessionContext().ready();
+
+            return { target, http };
+        }
+
+        beforeEach(() => {
+            exchanges = [];
+            refreshResponse = () =>
+                Response.json({ access_token: 'fresh', refresh_token: 'fresh-refresh', expires_in: 3_600 });
+        });
+
+        it('refreshes on a 401 and retries the request with the rotated token', async () => {
+            const { target, http } = await wired();
+
+            await expect(http.get('users/self')).resolves.toHaveProperty('id', 'u1');
+            expect(exchanges).toStrictEqual([
+                'GET /users/self Bearer access',
+                'POST /auth/refresh Bearer access',
+                'GET /users/self Bearer fresh',
+            ]);
+            expect(target.store().refreshToken).toBe('fresh-refresh');
+            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toHaveProperty(
+                'tokens.accessToken',
+                'fresh',
+            );
+        });
+
+        it('surfaces the 401 and clears the session when the refresh is refused, without refreshing again', async () => {
+            const { target, http } = await wired();
+
+            refreshResponse = () => new Response('refused', { status: 401 });
+
+            await expect(http.get('users/self')).rejects.toHaveProperty('status', 401);
+            expect(exchanges).toStrictEqual(['GET /users/self Bearer access', 'POST /auth/refresh Bearer access']);
+            expect(target.store().isAuthenticated).toBe(false);
+        });
+
+        it('signs out without refreshing when the logout itself is refused', async () => {
+            const { target } = await wired();
+
+            await target.store().logout();
+
+            expect(exchanges).toStrictEqual(['POST /auth/logout Bearer access']);
+            expect(target.store().isAuthenticated).toBe(false);
         });
     });
 

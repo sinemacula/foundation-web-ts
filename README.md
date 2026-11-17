@@ -281,8 +281,10 @@ session context and contributes the bearer-token interceptor plus the single una
 At the stores phase the store starts hydrating the persisted session; guards, the bearer interceptor, refreshes and
 the boot hook all wait for that hydration, so the first navigation never sees a half-loaded session. At boot it wires
 the session-loss redirect (login route plus the sanitised current path under the `redirect` query key), cross-tab
-mirroring, identity fan-out to the reporting, analytics and feature-flag holders, proactive refresh ahead of expiry,
-and the realtime connection's session binding.
+mirroring, identity fan-out to the reporting, analytics and feature-flag holders (touching only the channels whose
+mapped value changed, and clearing them on sign-out), proactive refresh ahead of expiry (each tab at its own random
+point in the earlier half of the `refreshSkewMs` window, so tabs do not refresh together), and the realtime
+connection's session binding.
 
 The store returns the foundation outcomes: `login()` resolves a `LoginOutcome` (`authenticated`, `interactionRequired`
 with the pending credential, or `superseded`) and `refresh()` a `RefreshOutcome`. A refused or pending refresh clears
@@ -324,7 +326,9 @@ loop guard: `login` (`{ name: 'auth.login' }`), `loginPath` (`/login` - set toge
 What stays application-side: the login route and view, the credential form, all locale copy, and the user field
 mapping when the wire shape diverges (`mapUser` on the foundation default gateway). Applications guard routes with
 `authenticated()`, `guestOnly()` and `authorize()` from `src/session/middleware.ts`, check permissions with
-`can()`/`useCan()` from `src/session/authorization.ts`, and read session state through `useSessionStore()`.
+`can()`/`useCan()` from `src/session/authorization.ts`, and read session state through `useSessionStore()`. When a
+signed-in user cannot be loaded, `authorize()` fails the navigation with a `SessionError` rather than reporting the
+permission as missing.
 
 ## ESLint preset
 
