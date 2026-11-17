@@ -72,6 +72,12 @@
             "automerge": true
         },
         {
+            "description": "Node typings track the engines floor so tooling and tests cannot reach for APIs the oldest supported Node lacks.",
+            "matchFileNames": ["package.json"],
+            "matchPackageNames": ["@types/node"],
+            "allowedVersions": "<23"
+        },
+        {
             "description": "Peer ranges are the published contract: widen rather than replace, and never open a PR without approval.",
             "matchFileNames": ["package.json"],
             "matchDepTypes": ["peerDependencies"],
