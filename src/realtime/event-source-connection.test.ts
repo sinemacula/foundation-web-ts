@@ -36,9 +36,6 @@ class FakeEventSource {
 
     /**
      * Record the construction arguments.
-     *
-     * @param url - the SSE endpoint URL
-     * @param init - the EventSource initialisation options
      */
     constructor(url: string, init: EventSourceInit) {
         this.url = url;
@@ -47,9 +44,6 @@ class FakeEventSource {
 
     /**
      * Register a listener for a named event.
-     *
-     * @param type - the event name
-     * @param listener - the listener to call for each event
      */
     addEventListener(type: string, listener: (event: MessageEvent) => void): void {
         const listeners = this.#listeners.get(type) ?? [];
@@ -81,9 +75,6 @@ class FakeEventSource {
 
     /**
      * Simulate an incoming named event.
-     *
-     * @param type - the event name
-     * @param data - the event payload
      */
     emitMessage(type: string, data: unknown): void {
         const event = new MessageEvent(type, { data });
@@ -107,11 +98,8 @@ interface RecordingFactory {
 }
 
 /**
- * Create a typed {@link EventSourceFactory} that records each fake it creates.
- * The cast to `EventSource` is confined to the closure so every test body can
- * use the strongly-typed {@link FakeEventSource} directly.
- *
- * @returns the recorded sources, the factory and its failure switch
+ * Create an {@link EventSourceFactory} that records each fake it creates,
+ * keeping the `EventSource` cast out of the test bodies.
  */
 function makeFactory(): RecordingFactory {
     const recording: RecordingFactory = {
@@ -135,9 +123,6 @@ function makeFactory(): RecordingFactory {
 
 /**
  * Fixed-delay backoff for deterministic reconnect assertions.
- *
- * @param delay - the delay in milliseconds for every attempt
- * @returns the backoff strategy
  */
 function fixedBackoff(delay: number): ExponentialBackoff {
     return new ExponentialBackoff({ initialDelay: delay, multiplier: 1, maxDelay: delay });
@@ -145,8 +130,6 @@ function fixedBackoff(delay: number): ExponentialBackoff {
 
 /**
  * Adapt the SSE adapter and its fake to the shared realtime contract.
- *
- * @returns the contract harness
  */
 function makeSseContractHarness(): RealtimeContractHarness {
     return {
@@ -227,8 +210,6 @@ describe('EventSourceConnection', () => {
             class RecordingEventSource {
                 /**
                  * Record the construction arguments.
-                 *
-                 * @param args - the arguments the constructor received
                  */
                 constructor(...args: unknown[]) {
                     calls.push(args);

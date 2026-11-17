@@ -14,24 +14,44 @@ import { installGlobalErrorHandling } from './install-global-error-handling';
 
 const Stub = defineComponent({ render: () => null });
 
-/** Build a reporter that records every captured error. */
-function makeReporter(): ErrorReporter & {
+/** One recorded `captureError` call. */
+interface CapturedError {
+    /** The captured error. */
+    error: unknown;
+
+    /** The context the error was captured with. */
+    context: Readonly<Record<string, unknown>> | undefined;
+}
+
+/** A reporter that records every captured error. */
+interface RecordingReporter extends ErrorReporter {
     /** The errors captured so far, in order. */
-    captureErrorCalls: Array<{
-        /** The captured error. */
-        error: unknown;
+    captureErrorCalls: CapturedError[];
+}
 
-        /** The context the error was captured with. */
-        context: Readonly<Record<string, unknown>> | undefined;
-    }>;
-} {
-    const captureErrorCalls: Array<{
-        /** The captured error. */
-        error: unknown;
+/** A fake window whose error and rejection listeners can be driven. */
+interface FakeWindow extends Window {
+    /**
+     * Dispatch an error event to the registered listeners.
+     */
+    dispatchError(init: ErrorEventInit): void;
 
-        /** The context the error was captured with. */
-        context: Readonly<Record<string, unknown>> | undefined;
-    }> = [];
+    /**
+     * Dispatch an unhandled rejection to the registered listeners.
+     */
+    dispatchRejection(reason: unknown): void;
+
+    /**
+     * Count the listeners registered for an event.
+     */
+    listenerCount(type: string): number;
+}
+
+/**
+ * Build a reporter that records every captured error.
+ */
+function makeReporter(): RecordingReporter {
+    const captureErrorCalls: CapturedError[] = [];
 
     return {
         captureErrorCalls,
@@ -47,23 +67,10 @@ function makeReporter(): ErrorReporter & {
     };
 }
 
-/** Build a fake window whose error and rejection listeners can be driven. */
-function makeWindow(): Window & {
-    /**
-     * Dispatch an error event to the registered listeners.
-     */
-    dispatchError(init: ErrorEventInit): void;
-
-    /**
-     * Dispatch an unhandled rejection to the registered listeners.
-     */
-    dispatchRejection(reason: unknown): void;
-
-    /**
-     * Count the listeners registered for an event.
-     */
-    listenerCount(type: string): number;
-} {
+/**
+ * Build a fake window whose error and rejection listeners can be driven.
+ */
+function makeWindow(): FakeWindow {
     const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
 
     const win = {
@@ -97,8 +104,7 @@ function makeWindow(): Window & {
             }
         },
         dispatchRejection(reason: unknown) {
-            // PromiseRejectionEvent is not available in happy-dom; simulate it
-            // by constructing a plain object with the shape the listener reads.
+            // The test DOM has no PromiseRejectionEvent, so fake its shape.
             const event = { type: 'unhandledrejection', reason } as PromiseRejectionEvent;
             const handlers = listeners.get('unhandledrejection') ?? [];
 
@@ -110,22 +116,7 @@ function makeWindow(): Window & {
                 }
             }
         },
-    } as unknown as Window & {
-        /**
-         * Dispatch an error event to the registered listeners.
-         */
-        dispatchError(init: ErrorEventInit): void;
-
-        /**
-         * Dispatch an unhandled rejection to the registered listeners.
-         */
-        dispatchRejection(reason: unknown): void;
-
-        /**
-         * Count the listeners registered for an event.
-         */
-        listenerCount(type: string): number;
-    };
+    } as unknown as FakeWindow;
 
     return win;
 }

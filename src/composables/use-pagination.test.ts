@@ -38,28 +38,15 @@ describe('usePagination', () => {
     });
 
     describe('pageCount', () => {
-        it('calculates page count as ceil(total / perPage)', () => {
-            const { pageCount } = usePagination({ total: ref(100), perPage: 10 });
+        it.each([
+            [100, 10],
+            [101, 11],
+            [0, 1],
+            [5, 1],
+        ])('splits %i items into %i pages of 10', (total, expected) => {
+            const { pageCount } = usePagination({ total: ref(total), perPage: 10 });
 
-            expect(pageCount.value).toBe(10);
-        });
-
-        it('rounds up for a non-exact division', () => {
-            const { pageCount } = usePagination({ total: ref(101), perPage: 10 });
-
-            expect(pageCount.value).toBe(11);
-        });
-
-        it('returns 1 when total is 0', () => {
-            const { pageCount } = usePagination({ total: ref(0), perPage: 10 });
-
-            expect(pageCount.value).toBe(1);
-        });
-
-        it('returns 1 for a single partial page', () => {
-            const { pageCount } = usePagination({ total: ref(5), perPage: 10 });
-
-            expect(pageCount.value).toBe(1);
+            expect(pageCount.value).toBe(expected);
         });
 
         it('reacts when total changes', () => {

@@ -1,15 +1,5 @@
 /**
- * Promise-based confirmation dialog state manager.
- *
- * This service owns only the reactive state (the active confirmation request)
- * and the resolution lifecycle. Rendering is entirely the application's concern
- * - a thin host component subscribes to {@link ConfirmService.active} and
- * renders the dialog; this service never touches the DOM.
- *
- * Sequential semantics: only one confirmation dialog is surface at a time.
- * Subsequent calls to {@link ConfirmService.confirm} while a request is already
- * active are queued (FIFO) and surfaced automatically once the current request
- * is settled via {@link ConfirmService.settle}.
+ * Confirmation dialog state; requests queue FIFO and surface one at a time.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -21,8 +11,7 @@ import { computed, ref } from 'vue';
 import type { ConfirmRequest, Confirmer } from '@sinemacula/foundation/notifications/confirmer';
 
 /**
- * A {@link ConfirmRequest} that has been assigned an id and is currently active
- * (i.e. waiting for the user to settle it).
+ * A {@link ConfirmRequest} currently awaiting the user's answer.
  */
 export interface ActiveConfirm extends ConfirmRequest {
     /** The unique id assigned when the request became active. */
@@ -38,11 +27,8 @@ interface PendingEntry {
 }
 
 /**
- * Product-agnostic service that manages the reactive confirmation queue.
- *
- * Construct one shared instance per application and inject it wherever a
- * destructive action requires explicit user confirmation. Mount a single host
- * component that reads {@link active} to render the modal.
+ * Reactive confirmation queue, rendered by one app-wide host component that
+ * reads {@link active}; the service never touches the DOM.
  */
 export class ConfirmService implements Confirmer {
     /** Pending confirmations awaiting their turn, in FIFO order. */
@@ -65,14 +51,9 @@ export class ConfirmService implements Confirmer {
     }
 
     /**
-     * Request a user confirmation.
+     * Request a user confirmation, queued behind any active one.
      *
-     * If a confirmation dialog is already open the request is queued and
-     * surfaced after the current one settles.
-     *
-     * @param request - the content to display in the confirmation dialog
-     * @returns a promise that resolves to `true` when the user confirms, or
-     * `false` when the user cancels
+     * @returns resolves `true` when the user confirms, `false` when cancelled
      */
     confirm(request: ConfirmRequest): Promise<boolean> {
         return new Promise<boolean>(resolve => {
@@ -85,12 +66,8 @@ export class ConfirmService implements Confirmer {
     }
 
     /**
-     * Settle the currently active confirmation request.
-     *
-     * Resolves the associated promise with the given outcome, then surfaces the
-     * next queued request (if any). No-op when there is no active request.
-     *
-     * @param outcome - `true` when the user confirmed, `false` when cancelled
+     * Resolve the active request with the outcome and surface the next queued
+     * one; no-op when none is active.
      */
     settle(outcome: boolean): void {
         if (this.#active.value === null || this.#currentResolve === null) {
@@ -113,8 +90,6 @@ export class ConfirmService implements Confirmer {
 
     /**
      * Make an entry the active confirmation request.
-     *
-     * @param entry - the queued entry to surface
      */
     #surface(entry: PendingEntry): void {
         const id = `confirm-${++this.#sequence}`;

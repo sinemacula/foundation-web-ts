@@ -1,9 +1,5 @@
 /**
- * Web Locks session lock.
- *
- * Implements the foundation {@link SessionLock} port over the Web Locks API, so
- * every tab of an origin requesting the same lock name runs its conditional
- * session writes one at a time.
+ * {@link SessionLock} over Web Locks, serialising session writes across tabs.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited

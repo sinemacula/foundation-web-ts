@@ -56,7 +56,7 @@ function makeLockManager(): RecordingLockManager {
 }
 
 describe('WebLocksSessionLock', () => {
-    it('runs the task under the named lock on the lock manager and resolves with its result', async () => {
+    it('runs the task under the named lock and resolves with its result', async () => {
         const manager = makeLockManager();
         const lock = new WebLocksSessionLock(manager, 'auth.session:lock');
 

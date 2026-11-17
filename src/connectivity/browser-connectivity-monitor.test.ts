@@ -1,5 +1,5 @@
 /**
- * Unit tests for connectivity-monitor.
+ * Unit tests for browser-connectivity-monitor.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -10,12 +10,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BrowserConnectivityMonitor } from './browser-connectivity-monitor';
 
 /**
- * Build a fake `Window` whose `online`/`offline` listeners can be triggered and
- * inspected directly, and whose `navigator.onLine` is fixed at creation.
- *
- * @param onLine - the initial `navigator.onLine` value
- * @returns the fake window plus test helpers to emit events and inspect
- * listeners
+ * Build a fake `Window` with a fixed `navigator.onLine` whose listeners can be
+ * triggered and inspected.
  */
 function fakeWindow(onLine: boolean): {
     /** The fake window handed to the monitor. */
@@ -58,18 +54,11 @@ describe('BrowserConnectivityMonitor', () => {
         vi.unstubAllGlobals();
     });
 
-    it('reflects navigator.onLine at construction when online', () => {
-        const fake = fakeWindow(true);
+    it.each([true, false])('reflects navigator.onLine (%s) at construction', onLine => {
+        const fake = fakeWindow(onLine);
         const monitor = new BrowserConnectivityMonitor({ targetWindow: fake.window });
 
-        expect(monitor.online).toBe(true);
-    });
-
-    it('reflects navigator.onLine at construction when offline', () => {
-        const fake = fakeWindow(false);
-        const monitor = new BrowserConnectivityMonitor({ targetWindow: fake.window });
-
-        expect(monitor.online).toBe(false);
+        expect(monitor.online).toBe(onLine);
     });
 
     it('notifies once per actual state change and dedupes repeated events', () => {

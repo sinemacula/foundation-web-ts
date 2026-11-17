@@ -1,13 +1,5 @@
 /**
- * User-idle detection.
- *
- * A tab may go untouched for a policy-defined period - most commonly to trigger
- * an auto-logout - but that policy is an application decision, not a kernel
- * one. This monitor is the seam: it arms a countdown on a small set of activity
- * events, resets the countdown whenever activity is observed, and notifies
- * subscribers once the countdown lapses. Applications wire the notification to
- * whatever policy they need (`onIdle` calling into an auth logout, a warning
- * dialog, and so on); the kernel only detects idleness.
+ * User-idle detection; the idle policy (logout, warning) is left to the app.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -73,8 +65,7 @@ export class IdleMonitor {
     }
 
     /**
-     * Arm the idle countdown and attach activity listeners. Calling start on a
-     * running monitor is a no-op.
+     * Arm the idle countdown and attach activity listeners; no-op when running.
      */
     start(): void {
         if (this.#started) {
@@ -108,17 +99,15 @@ export class IdleMonitor {
     }
 
     /**
-     * Signal activity manually, resetting the countdown just as a listened
-     * event would.
+     * Signal activity manually, resetting the countdown.
      */
     touch(): void {
         this.#rearm();
     }
 
     /**
-     * Subscribe to idle notifications.
+     * Subscribe to idle notifications, once per idle period.
      *
-     * @param handler - invoked once per idle period
      * @returns an unsubscribe function
      */
     onIdle(handler: () => void): () => void {
@@ -142,7 +131,7 @@ export class IdleMonitor {
     }
 
     /**
-     * Schedule the timeout that notifies subscribers once inactivity lapses.
+     * Schedule the idle timeout.
      */
     #arm(): void {
         this.#timer = setTimeout(this.#onTimeout, this.#timeoutMs);

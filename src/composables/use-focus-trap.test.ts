@@ -11,11 +11,7 @@ import { ref } from 'vue';
 import { useFocusTrap } from './use-focus-trap';
 
 /**
- * Build a container div with the given inner HTML and append it to the document
- * body so `isConnected` works correctly.
- *
- * @param innerHtml - the HTML string to place inside the container
- * @returns the mounted container element
+ * Mount a container with the given inner HTML so `isConnected` holds.
  */
 function buildContainer(innerHtml: string): HTMLElement {
     const div = document.createElement('div');
@@ -27,10 +23,7 @@ function buildContainer(innerHtml: string): HTMLElement {
 }
 
 /**
- * Dispatch a synthetic keydown event on the document active element.
- *
- * @param key - the key value (e.g. 'Tab')
- * @param shiftKey - whether the Shift modifier is held
+ * Dispatch a keydown event on the active element.
  */
 function pressKey(key: string, shiftKey = false): void {
     const target = document.activeElement ?? document.body;
@@ -57,13 +50,12 @@ describe('useFocusTrap', () => {
             expect(() => trap.activate()).not.toThrow();
         });
 
-        it('does not install a keydown listener when there are no focusable descendants', () => {
+        it('deactivate is a safe no-op after a no-op activate', () => {
             const el = ref<HTMLElement | null>(container);
             const trap = useFocusTrap(el);
 
             trap.activate();
 
-            // deactivate should not throw even though activate was a no-op
             expect(() => trap.deactivate()).not.toThrow();
         });
     });
@@ -143,7 +135,6 @@ describe('useFocusTrap', () => {
 
             trap.activate();
 
-            // move focus to last
             (container.querySelector<HTMLElement>('#last') as HTMLElement).focus();
             pressKey('Tab');
 
@@ -169,8 +160,6 @@ describe('useFocusTrap', () => {
             (container.querySelector<HTMLElement>('#middle') as HTMLElement).focus();
             pressKey('Tab');
 
-            // default behaviour: focus stays on middle (no preventDefault in
-            // this path)
             expect(document.activeElement?.id).toBe('middle');
         });
 
@@ -213,11 +202,9 @@ describe('useFocusTrap', () => {
 
             trap.activate();
 
-            // Remove the button so the container is now empty
             (container.querySelector<HTMLElement>('#dyn') as HTMLElement).remove();
 
-            // Fire the Tab event directly on the container (the listener is
-            // attached there)
+            // With the button gone, the event must target the container itself.
             expect(() => {
                 container.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: false, bubbles: true }));
             }).not.toThrow();
@@ -227,9 +214,7 @@ describe('useFocusTrap', () => {
     });
 
     describe('deactivate when no element was focused before activate', () => {
-        it('deactivate is a safe no-op when activeElement was not an HTMLElement at activation time', () => {
-            // Simulate a non-HTMLElement active element (e.g. SVGElement or
-            // null)
+        it('deactivate is a safe no-op when nothing was focused at activation', () => {
             const spy = vi.spyOn(document, 'activeElement', 'get').mockReturnValueOnce(null);
 
             container = buildContainer('<button id="sole">Sole</button>');
@@ -280,7 +265,7 @@ describe('useFocusTrap', () => {
 
             trap.activate();
 
-            trigger.remove(); // detach before deactivate
+            trigger.remove();
 
             expect(() => trap.deactivate()).not.toThrow();
         });
@@ -294,14 +279,12 @@ describe('useFocusTrap', () => {
             trap.activate();
             trap.deactivate();
 
-            // After deactivate, Tab at the last element should not wrap
             (container.querySelector<HTMLElement>('#b') as HTMLElement).focus();
 
             const activeBeforeTab = document.activeElement?.id;
 
-            pressKey('Tab'); // no listener → no wrap
+            pressKey('Tab');
 
-            // Focus stays on 'b' because the listener was removed
             expect(document.activeElement?.id).toBe(activeBeforeTab);
         });
     });

@@ -48,7 +48,7 @@ describe('ToastService', () => {
             expect(service.toasts.value[0]).toMatchObject({ id: 'toast-1', variant: 'success', message: 'hello' });
         });
 
-        it('ids increment across calls', () => {
+        it('increments ids across calls', () => {
             const service = new ToastService();
 
             expect(service.show('success', 'a')).toBe('toast-1');
@@ -89,7 +89,7 @@ describe('ToastService', () => {
             expect(service.toasts.value[0]?.duration).toBe(3_000);
         });
 
-        it('does not schedule a timer when duration is 0 (sticky)', () => {
+        it('keeps a zero-duration toast until dismissed', () => {
             const service = new ToastService(0);
             service.show('success', 'sticky');
 
@@ -98,7 +98,7 @@ describe('ToastService', () => {
             expect(service.toasts.value).toHaveLength(1);
         });
 
-        it('auto-dismisses using the default 5 000 ms when constructed with no argument', () => {
+        it('auto-dismisses after 5000 ms by default', () => {
             const service = new ToastService();
             service.show('success', 'msg');
 
@@ -107,7 +107,7 @@ describe('ToastService', () => {
             expect(service.toasts.value).toHaveLength(0);
         });
 
-        it('multiple toasts are auto-dismissed independently', () => {
+        it('auto-dismisses multiple toasts independently', () => {
             const service = new ToastService();
             service.show('success', 'a', { duration: 1_000 });
             service.show('error', 'b', { duration: 2_000 });
@@ -124,37 +124,16 @@ describe('ToastService', () => {
     });
 
     describe('success / error / information / warning', () => {
-        it('success delegates to show with success variant', () => {
-            const service = new ToastService();
-            const id = service.success('msg');
+        it.each(['success', 'error', 'information', 'warning'] as const)(
+            '%s shows a toast of that variant',
+            variant => {
+                const service = new ToastService();
+                const id = service[variant]('msg');
 
-            expect(id).toBe('toast-1');
-            expect(service.toasts.value[0]?.variant).toBe('success');
-        });
-
-        it('error delegates to show with error variant', () => {
-            const service = new ToastService();
-            const id = service.error('msg');
-
-            expect(id).toBe('toast-1');
-            expect(service.toasts.value[0]?.variant).toBe('error');
-        });
-
-        it('information delegates to show with information variant', () => {
-            const service = new ToastService();
-            const id = service.information('msg');
-
-            expect(id).toBe('toast-1');
-            expect(service.toasts.value[0]?.variant).toBe('information');
-        });
-
-        it('warning delegates to show with warning variant', () => {
-            const service = new ToastService();
-            const id = service.warning('msg');
-
-            expect(id).toBe('toast-1');
-            expect(service.toasts.value[0]?.variant).toBe('warning');
-        });
+                expect(id).toBe('toast-1');
+                expect(service.toasts.value[0]?.variant).toBe(variant);
+            },
+        );
 
         it('convenience methods forward options to show', () => {
             const service = new ToastService(5_000);
@@ -185,7 +164,7 @@ describe('ToastService', () => {
             expect(service.toasts.value).toHaveLength(1);
         });
 
-        it('cancels the auto-dismiss timer so the toast does not reappear/double-dismiss', () => {
+        it('cancels the auto-dismiss timer', () => {
             const service = new ToastService();
             const id = service.show('success', 'msg', { duration: 1_000 });
 
@@ -193,7 +172,6 @@ describe('ToastService', () => {
 
             expect(service.toasts.value).toHaveLength(0);
 
-            // Advancing the clock should not throw or re-add the toast
             vi.advanceTimersByTime(2_000);
 
             expect(service.toasts.value).toHaveLength(0);

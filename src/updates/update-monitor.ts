@@ -1,16 +1,5 @@
 /**
- * Deployed-version monitoring.
- *
- * Static artifacts cannot push "a new release is out" to running tabs, so the
- * monitor polls a small version document (by default the runtime environment
- * document, which deploys rewrite per release) on an interval and whenever the
- * tab regains visibility. When the deployed version differs from the booted
- * version, subscribers are notified once per new version - the application
- * decides what to do (sticky toast, reload, ...).
- *
- * No service worker is involved by design: the application has no offline
- * requirement, and a worker's install/activate lifecycle introduces the very
- * stale-version problems this monitor exists to solve.
+ * Polls the deployed version, since static deploys cannot push new releases.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -44,7 +33,7 @@ const DEFAULT_URL = '/runtime-env.json';
 const DEFAULT_INTERVAL = 300_000;
 
 /**
- * Polls the deployed version and notifies subscribers when it changes.
+ * Polls on an interval and on tab focus, notifying once per new version.
  */
 export class UpdateMonitor {
     /** The version the running application was booted with. */
@@ -82,8 +71,7 @@ export class UpdateMonitor {
      */
     readonly #poll = (): void => {
         this.checkNow().catch(() => {
-            // checkNow swallows transport errors itself; this guards against
-            // subscriber callbacks that throw.
+            // Only a throwing subscriber reaches here.
         });
     };
 
@@ -103,7 +91,7 @@ export class UpdateMonitor {
     }
 
     /**
-     * Begin polling. Calling start on a running monitor is a no-op.
+     * Begin polling; no-op when running.
      */
     start(): void {
         if (this.#timer !== null) {
@@ -130,9 +118,8 @@ export class UpdateMonitor {
     }
 
     /**
-     * Subscribe to update notifications.
+     * Subscribe to newly deployed versions.
      *
-     * @param handler - invoked with the newly deployed version
      * @returns an unsubscribe function
      */
     onUpdate(handler: UpdateHandler): () => void {
@@ -144,10 +131,8 @@ export class UpdateMonitor {
     }
 
     /**
-     * Check the deployed version immediately.
-     *
-     * Transport failures and malformed documents are swallowed: a missed check
-     * is harmless because the next tick retries.
+     * Check the deployed version now, swallowing transport failures and
+     * malformed documents since the next tick retries.
      */
     async checkNow(): Promise<void> {
         let next: string | null;
@@ -180,10 +165,7 @@ export class UpdateMonitor {
 }
 
 /**
- * Extract the APP_VERSION entry from a runtime environment document.
- *
- * @param payload - the parsed version document
- * @returns the deployed version, or null when absent
+ * Read APP_VERSION from a runtime environment document, or null when absent.
  */
 function extractAppVersion(payload: unknown): string | null {
     const version = isRecord(payload) ? payload['APP_VERSION'] : null;
