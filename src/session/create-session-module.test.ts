@@ -13,6 +13,7 @@ import type { HttpClient, HttpRequest, UnauthorizedHandler } from '@sinemacula/f
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { InProcessSessionLock } from '@sinemacula/foundation/session/in-process-session-lock';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import { RecordSessionPersistence } from '@sinemacula/foundation/session/record-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
@@ -21,6 +22,7 @@ import type { SessionState } from '@sinemacula/foundation/session/session-state'
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installApi, resetWebCoreServices } from '../app/services';
+import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
 import { resetSessionContext, sessionContext } from './session-context';
@@ -151,7 +153,7 @@ describe('createSessionModule', () => {
     });
 
     describe('persistence', () => {
-        it('persists a fresh lineage in the window localStorage, exchanging and writing under Web Locks locks named after the key', async () => {
+        it('persists a fresh lineage in an IndexedDB record named after the key, exchanging under a Web Locks lock', async () => {
             const target = harness();
 
             gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
@@ -159,34 +161,32 @@ describe('createSessionModule', () => {
 
             await target.store().login({ email: 'a', password: 'b' });
 
-            const stored = JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null') as SessionSnapshot;
+            const stored = (await target.win.record()) as SessionSnapshot;
 
             expect(stored).toStrictEqual({ revision: 1, session: { lineage: expect.any(String), tokens: tokens() } });
-            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:exchange', 'auth.session:lock']);
+            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:exchange']);
+            expect(target.win.localStorage.getItem(SESSION_KEY)).toBeNull();
 
             gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
             gateway.currentUser.mockResolvedValueOnce(user());
             await target.store().login({ email: 'a', password: 'b' });
 
-            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? 'null')).not.toHaveProperty(
-                'session.lineage',
-                stored.session?.lineage,
-            );
+            expect(await target.win.record()).not.toHaveProperty('session.lineage', stored.session?.lineage);
         });
 
-        it('follows an overridden session key for the snapshot and the locks', async () => {
+        it('follows an overridden session key for the record and the lock', async () => {
             const target = harness({ storageKeys: { session: 'app.session' } });
+            const record = new IndexedDbSessionRecordStore(target.win.indexedDB, 'app.session');
 
-            target.win.localStorage.setItem('app.session', JSON.stringify(snapshot(tokens(), 3)));
-
+            await record.swap(() => JSON.stringify(snapshot(tokens(), 3)));
             await sessionContext().ready();
 
             expect(target.store().accessToken).toBe('access');
-            expect(target.win.navigator.locks?.names).toStrictEqual([]);
 
             await target.store().logout();
 
-            expect(target.win.navigator.locks?.names).toStrictEqual(['app.session:lock', 'app.session:exchange']);
+            expect(target.win.navigator.locks?.names).toStrictEqual(['app.session:exchange']);
+            await expect(record.read()).resolves.toBe(JSON.stringify(snapshot(null, 4)));
         });
 
         it('runs every exchange under the given exchange lock, built over the platform', async () => {
@@ -201,7 +201,7 @@ describe('createSessionModule', () => {
 
             expect(factory).toHaveBeenCalledWith(target.platform);
             expect(run).toHaveBeenCalledOnce();
-            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:lock']);
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
         });
 
         it('keeps the exchanges of a given persistence to this tab unless an exchange lock is given', async () => {
@@ -213,15 +213,30 @@ describe('createSessionModule', () => {
 
             expect(target.store().isAuthenticated).toBe(true);
             expect(target.win.navigator.locks?.names).toStrictEqual([]);
+            expect(sessionContext()).not.toHaveProperty('exchangeLock');
+        });
+
+        it('runs the exchanges of a given persistence under a given exchange lock', async () => {
+            const lock = new InProcessSessionLock();
+            const run = vi.spyOn(lock, 'run');
+            const target = harness({
+                persistence: () => new KeyValueSessionPersistence(new MemoryStorage()),
+                exchangeLock: () => lock,
+            });
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(run).toHaveBeenCalledOnce();
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
         });
 
         it('rejects a sign-in whose storage write fails', async () => {
             const target = harness();
             const failure = new DOMException('quota', 'QuotaExceededError');
 
-            vi.spyOn(target.win.localStorage, 'setItem').mockImplementation(() => {
-                throw failure;
-            });
+            vi.spyOn(IndexedDbSessionRecordStore.prototype, 'swap').mockRejectedValue(failure);
             gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
 
             await expect(target.store().login({ email: 'a', password: 'b' })).rejects.toBe(failure);
@@ -237,35 +252,35 @@ describe('createSessionModule', () => {
             );
         });
 
-        it.each([
-            ['with', false],
-            ['without', true],
-        ])(
-            'keeps the session in memory for the page over a blocked localStorage %s Web Locks',
-            async (_label, withoutLocks) => {
-                const target = harness({}, { storageBlocked: true, withoutLocks });
+        it.each<[string, HarnessSetup]>([
+            ['a blocked localStorage with Web Locks', { storageBlocked: true }],
+            ['a blocked localStorage without Web Locks', { storageBlocked: true, withoutLocks: true }],
+            ['a blocked IndexedDB', { indexedDbBlocked: true }],
+            ['a missing IndexedDB', { withoutIndexedDb: true }],
+        ])('keeps the session in memory for the page over %s', async (_label, setup) => {
+            const target = harness({}, setup);
 
-                gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
-                gateway.currentUser.mockResolvedValueOnce(user());
-                await target.store().login({ email: 'a', password: 'b' });
-                await target.store().hydrate();
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+            await target.store().hydrate();
 
-                expect(target.store().accessToken).toBe('access');
-                expect(target.win.navigator.locks?.names ?? []).toStrictEqual([]);
-                expect(target.observability.warnings).toStrictEqual([
-                    'Site storage is blocked, so the session is kept in memory: it ends on reload and is not shared with other tabs.',
-                ]);
-                expect(target.observability.errors).toStrictEqual([]);
-            },
-        );
+            expect(target.store().accessToken).toBe('access');
+            expect(target.win.navigator.locks?.names ?? []).toStrictEqual([]);
+            expect(target.win.openChannels()).toBe(0);
+            expect(target.observability.warnings).toStrictEqual([
+                'Site storage is blocked, so the session is kept in memory: it ends on reload and is not shared with other tabs.',
+            ]);
+            expect(target.observability.errors).toStrictEqual([]);
+        });
 
-        it('warns of nothing when localStorage is reachable', () => {
+        it('warns of nothing when site storage is reachable', () => {
             const target = harness();
 
             expect(target.observability.warnings).toStrictEqual([]);
         });
 
-        it('surfaces a write failure of the given persistence over a blocked localStorage', async () => {
+        it('surfaces a write failure of the given persistence over blocked storage', async () => {
             const failure = new Error('secure store unavailable');
             const inner = new KeyValueSessionPersistence(new MemoryStorage());
             const target = harness(
@@ -312,16 +327,176 @@ describe('createSessionModule', () => {
 
             expect(factory).toHaveBeenCalledWith(target.platform);
             expect(target.store().accessToken).toBe('custom');
-            expect(target.win.localStorage.length).toBe(0);
+            await expect(target.win.record()).resolves.toBeNull();
+        });
+
+        it('announces each committed write of the given persistence to the other tabs', async () => {
+            const target = harness({ persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) });
+            const other = new target.win.BroadcastChannel(SESSION_KEY);
+            const announced = vi.fn();
+
+            other.addEventListener('message', announced);
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            await vi.waitFor(() => {
+                expect(announced).toHaveBeenCalledOnce();
+            });
+        });
+
+        it('opens no channel when cross-tab sync is disabled', async () => {
+            const target = harness({ crossTabSync: false }, { withoutBroadcastChannel: true });
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(target.store().isAuthenticated).toBe(true);
+            expect(target.win.openChannels()).toBe(0);
+            expect(sessionContext().persistence).toBeInstanceOf(RecordSessionPersistence);
+        });
+
+        it('refuses to register without BroadcastChannel while cross-tab sync is on', () => {
+            expect(() => harness({}, { withoutBroadcastChannel: true })).toThrowError(
+                new SessionError(
+                    'Cross-tab session sync needs the BroadcastChannel API; set crossTabSync to false where it is unavailable.',
+                ),
+            );
+        });
+    });
+
+    describe('legacy localStorage snapshot', () => {
+        it('adopts a session an earlier release persisted, then clears it from localStorage', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }), 4);
+            await sessionContext().ready();
+
+            expect(target.store().accessToken).toBe('legacy');
+            expect(await target.win.record()).toStrictEqual(snapshot(tokens({ accessToken: 'legacy' })));
+            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toStrictEqual(snapshot(null, 5));
+            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:exchange', 'auth.session:lock']);
+        });
+
+        it('waits for an exchange an earlier release has in flight before adopting its session', async () => {
+            const target = harness();
+            const exchange = deferred<undefined>();
+
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'spent' }));
+
+            const earlierRelease = target.win.navigator.locks?.request('auth.session:exchange', async () => {
+                await exchange.promise;
+                persistSnapshot(target.win.localStorage, tokens({ accessToken: 'rotated' }), 2);
+            });
+            const ready = sessionContext().ready();
+
+            exchange.resolve(undefined);
+            await earlierRelease;
+            await ready;
+
+            expect(target.store().accessToken).toBe('rotated');
+        });
+
+        it('retires the legacy session before an exchange that awaits readiness takes the lock', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }));
+            gateway.login.mockImplementationOnce(async () => {
+                await sessionContext().ready();
+
+                return { kind: 'authenticated', tokens: tokens({ accessToken: 'signed-in' }) };
+            });
+            gateway.currentUser.mockResolvedValueOnce(user());
+
+            await expect(target.store().login({ email: 'a', password: 'b' })).resolves.toStrictEqual({
+                kind: 'superseded',
+            });
+            expect(target.win.navigator.locks?.names).toStrictEqual([
+                'auth.session:exchange',
+                'auth.session:lock',
+                'auth.session:exchange',
+            ]);
+        });
+
+        it('keeps the record once written, clearing a later legacy session without adopting it', async () => {
+            const target = harness();
+
+            await target.win.persist(null, 2);
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }), 4);
+            await sessionContext().ready();
+
+            expect(target.store().isAuthenticated).toBe(false);
+            expect(await target.win.record()).toStrictEqual(snapshot(null, 2));
+            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toStrictEqual(snapshot(null, 5));
+        });
+
+        it('clears an unreadable legacy snapshot without reporting it', async () => {
+            const target = harness();
+
+            target.win.localStorage.setItem(SESSION_KEY, 'not json');
+            await sessionContext().ready();
+
+            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toStrictEqual(snapshot(null, 1));
+            expect(target.observability.errors).toStrictEqual([]);
+        });
+
+        it('leaves an empty legacy snapshot alone', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, null, 3);
+            await sessionContext().ready();
+
+            expect(target.win.localStorage.getItem(SESSION_KEY)).toBe(JSON.stringify(snapshot(null, 3)));
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
+        });
+
+        it('reports a failed retirement and still hydrates', async () => {
+            const target = harness();
+            const failure = new DOMException('quota', 'QuotaExceededError');
+
+            await target.win.persist(tokens({ accessToken: 'current' }));
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }));
+            vi.spyOn(target.win.localStorage, 'setItem').mockImplementation(() => {
+                throw failure;
+            });
+            await sessionContext().ready();
+
+            expect(target.store().accessToken).toBe('current');
+            expect(target.observability.errors).toStrictEqual([failure]);
+        });
+
+        it('announces an adopted legacy session to the other tabs', async () => {
+            const target = harness();
+            const other = new target.win.BroadcastChannel(SESSION_KEY);
+            const announced = vi.fn();
+
+            other.addEventListener('message', announced);
+            persistSnapshot(target.win.localStorage, tokens());
+            await sessionContext().ready();
+
+            await vi.waitFor(() => {
+                expect(announced).toHaveBeenCalledOnce();
+            });
+        });
+
+        it('touches no legacy snapshot with a given persistence', async () => {
+            const target = harness({ persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) });
+
+            persistSnapshot(target.win.localStorage, tokens());
+            await sessionContext().ready();
+
+            expect(target.store().isAuthenticated).toBe(false);
+            expect(target.win.localStorage.getItem(SESSION_KEY)).toBe(JSON.stringify(snapshot(tokens())));
         });
     });
 
     describe('readiness', () => {
         it('hydrates once, however often readiness is awaited', async () => {
             const target = harness();
-            const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
+            const load = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             await Promise.all([sessionContext().ready(), sessionContext().ready()]);
 
             expect(load).toHaveBeenCalledTimes(1);
@@ -331,7 +506,7 @@ describe('createSessionModule', () => {
         it('reports a hydration failure and settles signed out', async () => {
             const target = harness();
 
-            target.win.localStorage.setItem(SESSION_KEY, 'not json');
+            await target.win.persistRaw('not json');
 
             await expect(sessionContext().ready()).resolves.toBeUndefined();
             expect(target.observability.errors).toHaveLength(1);
@@ -342,7 +517,7 @@ describe('createSessionModule', () => {
         it('starts hydrating at the stores phase', async () => {
             const target = harness();
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             target.stores();
 
             await vi.waitFor(() => {
@@ -363,7 +538,7 @@ describe('createSessionModule', () => {
         it('attaches the hydrated access token, waiting for hydration', async () => {
             const target = harness();
 
-            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'tok-123' }));
+            await target.win.persist(tokens({ accessToken: 'tok-123' }));
 
             await expect(intercept(target)).resolves.toStrictEqual({
                 ...REQUEST,
@@ -383,7 +558,7 @@ describe('createSessionModule', () => {
         async function signedIn(): Promise<SessionHarness> {
             const target = harness();
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             await sessionContext().ready();
 
             return target;
@@ -446,7 +621,7 @@ describe('createSessionModule', () => {
 
         it('leaves clearing a refused session to the core, clearing it once', async () => {
             const target = await signedIn();
-            const clearIf = vi.spyOn(KeyValueSessionPersistence.prototype, 'clearIf');
+            const clearIf = vi.spyOn(RecordSessionPersistence.prototype, 'clearIf');
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
 
@@ -619,9 +794,7 @@ describe('createSessionModule', () => {
             const target = await signedIn();
             const failure = new DOMException('quota', 'QuotaExceededError');
 
-            vi.spyOn(target.win.localStorage, 'setItem').mockImplementationOnce(() => {
-                throw failure;
-            });
+            vi.spyOn(IndexedDbSessionRecordStore.prototype, 'swap').mockRejectedValueOnce(failure);
             gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens({ accessToken: 'rotated' }) });
 
             await expect(retries(target)).resolves.toBe(false);
@@ -722,7 +895,7 @@ describe('createSessionModule', () => {
             });
 
             installApi(http);
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             await sessionContext().ready();
 
             return { target, http };
@@ -745,10 +918,7 @@ describe('createSessionModule', () => {
                 'GET /users/self Bearer fresh',
             ]);
             expect(target.store().refreshToken).toBe('fresh-refresh');
-            expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toHaveProperty(
-                'session.tokens.accessToken',
-                'fresh',
-            );
+            expect(await target.win.record()).toHaveProperty('session.tokens.accessToken', 'fresh');
         });
 
         it('retries a late 401 for a request sent before a completed refresh without refreshing again', async () => {

@@ -12,6 +12,7 @@ import { createBearerTokenInterceptor } from '@sinemacula/foundation/http/bearer
 import type { HttpClient } from '@sinemacula/foundation/http/http-client';
 import { createDefaultSessionApi } from '@sinemacula/foundation/session/default-session-api';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
+import { RecordSessionPersistence } from '@sinemacula/foundation/session/record-session-persistence';
 import type { PasswordCredentials, SessionApi, SessionDevice } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { SessionLock } from '@sinemacula/foundation/session/session-lock';
@@ -25,10 +26,14 @@ import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-s
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { api, logger, reporting } from '../app/services';
 import type { ModuleDefinition, ModuleRegisterContext, ResolvedPlatform } from '../module/module';
+import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import { StrictWebStorage } from '../storage/strict-web-storage';
 import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
+import { announceWrites } from './announced-session-persistence';
+import { retireLegacySession } from './legacy-session-migration';
+import type { SessionContext } from './session-context';
 import { installSessionContext, sessionContext } from './session-context';
-import type { HydrationReporter } from './session-lifecycle';
+import type { CrossTabSync, HydrationReporter, LegacySession } from './session-lifecycle';
 import { bootSessionLifecycle } from './session-lifecycle';
 import { SessionRefreshCoordinator } from './session-refresh-coordinator';
 import { useSessionStore } from './session-store';
@@ -89,10 +94,10 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Overrides for the route identity. */
     readonly routes?: Partial<SessionRoutes>;
 
-    /** Where the session snapshot persists. Default the target window's localStorage under the session key, serialised across tabs by a Web Locks lock; registering throws when Web Locks is unavailable and this is not given, and where the browser blocks localStorage the session is kept in memory until reload, without cross-tab sync, with one logged warning. Cross-tab sync only observes that localStorage key, so with another persistence disable `crossTabSync` and call the store's `hydrate()` on its own change notifications. */
+    /** Where the session snapshot persists. Default one IndexedDB record, in a database named after the session key, adopting a snapshot an earlier release left in localStorage under that key; registering throws when Web Locks is unavailable and this is not given, and where the browser blocks localStorage or IndexedDB the session is kept in memory until reload, without cross-tab sync, with one logged warning. */
     readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
 
-    /** Serialises the sign-in, refresh and sign-out exchanges of every context sharing the persisted session, so a refresh never presents a token another tab has spent. Default a Web Locks lock beside the default persistence; with another persistence, or where localStorage is blocked, a lock serialising only this tab's exchanges. */
+    /** Serialises the sign-in, refresh and sign-out exchanges of every context sharing the persisted session, so a refresh never presents a token another tab has spent. Default a Web Locks lock beside the default persistence; with another persistence, or where site storage is blocked, a lock serialising only this tab's exchanges. */
     readonly exchangeLock?: (platform: ResolvedPlatform) => SessionLock;
 
     /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed before a realtime reconnect; each tab refreshes proactively at a random point in the earlier half of that window. Default 60 seconds. */
@@ -104,7 +109,7 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Device uuid factory. Default `crypto.randomUUID()`. */
     readonly generateUuid?: () => string;
 
-    /** Mirror session changes other tabs persist. Default true. */
+    /** Mirror session changes other tabs persist through this module, announced on a BroadcastChannel named after the session key; registering throws when that API is unavailable and this is not false. Default true. */
     readonly crossTabSync?: boolean;
 
     /** Refresh the session ahead of its expiry. Default true. */
@@ -159,6 +164,49 @@ interface SharedPersistence {
 
     /** The lock every sharing context's exchanges run under, or undefined for this tab's own. */
     readonly exchangeLock?: SessionLock;
+
+    /** Where earlier releases persisted the session, or null when there is nothing to retire. */
+    readonly legacy: LegacyPersistence | null;
+}
+
+/**
+ * The session's resolved persistence, exchange lock, legacy retirement and
+ * cross-tab sync.
+ */
+interface ResolvedSessionStorage {
+    /** The persistence and exchange lock the session context installs. */
+    readonly storage: Pick<SessionContext, 'persistence' | 'exchangeLock'>;
+
+    /** Retire the legacy snapshot once, or null when there is none. */
+    readonly retired: (() => Promise<void>) | null;
+
+    /** What cross-tab sync observes, or null when it is off. */
+    readonly sync: CrossTabSync | null;
+}
+
+/**
+ * The site storage the default persistence is built over.
+ */
+interface SiteStorage {
+    /** The window localStorage. */
+    readonly area: Storage;
+
+    /** The window IndexedDB. */
+    readonly factory: IDBFactory;
+}
+
+/**
+ * The localStorage persistence earlier releases kept the session in.
+ */
+interface LegacyPersistence {
+    /** The localStorage area holding the legacy snapshot. */
+    readonly area: Storage;
+
+    /** The legacy snapshot's persistence, as earlier releases built it. */
+    readonly persistence: SessionPersistence;
+
+    /** The lock earlier releases run their exchanges under. */
+    readonly lock: SessionLock;
 }
 
 const DEFAULT_ROUTES: SessionRoutes = {
@@ -196,13 +244,13 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
     const routes: SessionRoutes = { ...DEFAULT_ROUTES, ...options.routes };
     const reportHydration = createHydrationReporter();
 
-    let shared: boolean;
+    let crossTabSync: CrossTabSync | null;
 
     return {
         name: options.name ?? 'session',
         routes: [],
         register: context => {
-            shared = registerSession(context, options, storageKeys, routes, reportHydration);
+            crossTabSync = registerSession(context, options, storageKeys, routes, reportHydration);
         },
         stores: [
             pinia => {
@@ -215,7 +263,7 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
             bootSessionLifecycle(context, {
                 routes,
                 sessionKey: storageKeys.session,
-                crossTabSync: (options.crossTabSync ?? true) && shared,
+                crossTabSync,
                 proactiveRefresh: options.proactiveRefresh ?? true,
                 sessionLossRedirect: options.sessionLossRedirect ?? true,
                 realtimeFollowsSession: options.realtimeFollowsSession ?? true,
@@ -231,8 +279,8 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
  * claim the unauthorized handler. Every request and refresh first awaits the
  * session's hydration, which itself sends no request.
  *
- * @returns false when blocked storage left the default persistence in memory,
- * shared with no other tab
+ * @returns what cross-tab sync observes, or null when it is disabled or blocked
+ * storage left the default persistence in memory, shared with no other tab
  */
 function registerSession(
     context: ModuleRegisterContext,
@@ -240,26 +288,20 @@ function registerSession(
     storageKeys: SessionStorageKeys,
     routes: SessionRoutes,
     reportHydration: HydrationReporter,
-): boolean {
+): CrossTabSync | null {
     const { pinia, platform, storage } = context;
     const apiFactory = options.api ?? (http => createDefaultSessionApi<unknown>(http, { now: platform.clock }));
     const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
     const deviceOs = options.deviceOs ?? 'WEB';
 
-    const ready = createReadiness(pinia, reportHydration);
+    const session = resolveSessionStorage(platform, options, storageKeys.session);
+    const ready = createReadiness(pinia, reportHydration, session.retired);
     const coordinator = createRefreshAuthority(pinia, ready);
-
-    const shared =
-        options.persistence === undefined
-            ? createDefaultPersistence(platform, storageKeys.session)
-            : { persistence: options.persistence(platform) };
-    const exchangeLock = options.exchangeLock?.(platform) ?? shared?.exchangeLock;
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
     installSessionContext({
-        persistence: shared?.persistence ?? createTabPersistence(),
-        ...(exchangeLock === undefined ? {} : { exchangeLock }),
+        ...session.storage,
         createLineage: () => crypto.randomUUID(),
         routes,
         storeId: options.storeId ?? 'auth',
@@ -278,7 +320,39 @@ function registerSession(
 
     contributeHttp(context, ready, coordinator);
 
-    return shared !== null;
+    return session.sync;
+}
+
+/**
+ * Resolve where the session persists and the lock its exchanges run under, with
+ * the retirement of any legacy snapshot and what cross-tab sync observes.
+ */
+function resolveSessionStorage(
+    platform: ResolvedPlatform,
+    options: AnySessionModuleOptions,
+    key: string,
+): ResolvedSessionStorage {
+    const shared =
+        options.persistence === undefined
+            ? createDefaultPersistence(platform, key)
+            : { persistence: options.persistence(platform), legacy: null };
+    const channel = shared !== null && (options.crossTabSync ?? true) ? openChannel(platform.targetWindow, key) : null;
+    const persistence = sharedPersistence(shared, channel);
+    const legacy =
+        shared === null || shared.legacy === null ? null : createLegacyRetirement(shared.legacy, persistence);
+    const retired = legacy === null ? null : once(legacy.retire);
+    const exchangeLock = options.exchangeLock?.(platform) ?? shared?.exchangeLock;
+
+    return {
+        storage: {
+            persistence,
+            ...(exchangeLock === undefined
+                ? {}
+                : { exchangeLock: retired === null ? exchangeLock : afterRetirement(exchangeLock, retired) }),
+        },
+        retired,
+        sync: channel === null ? null : { channel, legacy },
+    };
 }
 
 /**
@@ -317,14 +391,21 @@ function contributeHttp(
 }
 
 /**
- * Build the session readiness: hydrate the persisted session once, on first
- * call, reporting a failure instead of rejecting.
+ * Build the session readiness: retire any legacy session, then hydrate the
+ * persisted session once, on first call, reporting a failure instead of
+ * rejecting.
  */
-function createReadiness(pinia: Pinia, reportHydration: HydrationReporter): () => Promise<void> {
+function createReadiness(
+    pinia: Pinia,
+    reportHydration: HydrationReporter,
+    retired: (() => Promise<void>) | null,
+): () => Promise<void> {
     let hydration: Promise<void> | null = null;
 
     return () => {
-        hydration ??= reportHydration(useSessionStore(pinia).hydrate()).then(() => undefined);
+        hydration ??= reportHydration(
+            (retired?.() ?? Promise.resolve()).then(() => useSessionStore(pinia).hydrate()),
+        ).then(() => undefined);
 
         return hydration;
     };
@@ -384,20 +465,19 @@ function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): Sessi
 }
 
 /**
- * Persist the session snapshot in the target window's localStorage, failing
- * loudly, with each write and each credential exchange under its own Web Locks
- * lock every tab shares.
+ * Persist the session snapshot as one IndexedDB record every tab swaps
+ * atomically, with each credential exchange under a Web Locks lock every tab
+ * shares, retiring the localStorage snapshot earlier releases wrote under the
+ * same key and lock names.
  *
- * @returns the persistence and exchange lock, or null when the browser blocks
- * localStorage
+ * @returns the persistence, exchange lock and legacy persistence, or null when
+ * the browser blocks localStorage or IndexedDB
  * @throws {@link SessionError} when the Web Locks API is unavailable
  */
 function createDefaultPersistence(platform: ResolvedPlatform, key: string): SharedPersistence | null {
-    let area: Storage;
+    const site = accessSiteStorage(platform.targetWindow);
 
-    try {
-        area = platform.targetWindow.localStorage;
-    } catch {
+    if (site === null) {
         return null;
     }
 
@@ -410,13 +490,108 @@ function createDefaultPersistence(platform: ResolvedPlatform, key: string): Shar
         );
     }
 
+    const exchangeLock = new WebLocksSessionLock(locks, `${key}:exchange`);
+
     return {
-        persistence: new KeyValueSessionPersistence(new StrictWebStorage(area), {
-            key,
-            lock: new WebLocksSessionLock(locks, `${key}:lock`),
-        }),
-        exchangeLock: new WebLocksSessionLock(locks, `${key}:exchange`),
+        persistence: new RecordSessionPersistence(new IndexedDbSessionRecordStore(site.factory, key)),
+        exchangeLock,
+        legacy: {
+            area: site.area,
+            persistence: new KeyValueSessionPersistence(new StrictWebStorage(site.area), {
+                key,
+                lock: new WebLocksSessionLock(locks, `${key}:lock`),
+            }),
+            lock: exchangeLock,
+        },
     };
+}
+
+/**
+ * Resolve the window's localStorage and IndexedDB, whose getters throw where
+ * site storage is blocked.
+ *
+ * @returns both, or null when either is blocked or IndexedDB is missing
+ */
+function accessSiteStorage(target: Window): SiteStorage | null {
+    try {
+        const area = target.localStorage;
+        const factory: IDBFactory | undefined = target.indexedDB;
+
+        return factory === undefined ? null : { area, factory };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Announce the shared persistence's writes on the channel, if any, or keep the
+ * session in memory where storage is blocked.
+ */
+function sharedPersistence(shared: SharedPersistence | null, channel: BroadcastChannel | null): SessionPersistence {
+    if (shared === null) {
+        return createTabPersistence();
+    }
+
+    return channel === null ? shared.persistence : announceWrites(shared.persistence, channel);
+}
+
+/**
+ * Bind the retirement of the legacy snapshot into the given persistence,
+ * reporting a failure instead of rejecting.
+ */
+function createLegacyRetirement(legacy: LegacyPersistence, persistence: SessionPersistence): LegacySession {
+    return {
+        area: legacy.area,
+        retire: () =>
+            retireLegacySession(legacy.persistence, persistence, legacy.lock).catch((error: unknown) => {
+                reporting().captureError(error);
+            }),
+    };
+}
+
+/**
+ * Run the task on first call only, sharing its settlement with every later
+ * call.
+ */
+function once(task: () => Promise<void>): () => Promise<void> {
+    let run: Promise<void> | null = null;
+
+    return () => {
+        run ??= task();
+
+        return run;
+    };
+}
+
+/**
+ * Hold each exchange until the first legacy retirement has settled, as that
+ * retirement takes the exchange lock and an exchange awaits readiness.
+ */
+function afterRetirement(lock: SessionLock, retired: () => Promise<void>): SessionLock {
+    return {
+        run: async task => {
+            await retired();
+
+            return lock.run(task);
+        },
+    };
+}
+
+/**
+ * Open the channel every tab announces its session writes on.
+ *
+ * @throws {@link SessionError} when the BroadcastChannel API is unavailable
+ */
+function openChannel(target: Window, key: string): BroadcastChannel {
+    const Channel: typeof BroadcastChannel | undefined = (target as Window & typeof globalThis).BroadcastChannel;
+
+    if (Channel === undefined) {
+        throw new SessionError(
+            'Cross-tab session sync needs the BroadcastChannel API; set crossTabSync to false where it is unavailable.',
+        );
+    }
+
+    return new Channel(key);
 }
 
 /**

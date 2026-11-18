@@ -108,6 +108,10 @@
             "types": "./dist/session/session-store.d.ts",
             "import": "./dist/session/session-store.js"
         },
+        "./storage/indexed-db-session-record-store": {
+            "types": "./dist/storage/indexed-db-session-record-store.d.ts",
+            "import": "./dist/storage/indexed-db-session-record-store.js"
+        },
         "./storage/strict-web-storage": {
             "types": "./dist/storage/strict-web-storage.d.ts",
             "import": "./dist/storage/strict-web-storage.js"
@@ -202,6 +206,7 @@
         "@vitejs/plugin-vue": "^6.0.7",
         "@vitest/coverage-v8": "^5.1.0",
         "eslint": "^10.7.0",
+        "fake-indexeddb": "^6.2.8",
         "happy-dom": "^21.0.4",
         "knip": "^6.16.1",
         "mkdist": "^2.4.1",
@@ -223,6 +228,6 @@
         }
     },
     "dependencies": {
-        "@sinemacula/foundation": "github:sinemacula/foundation-ts#master"
+        "@sinemacula/foundation": "^0.1.0"
     }
 }

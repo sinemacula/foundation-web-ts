@@ -9,8 +9,10 @@ import type { WebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
 import { resetWebCoreServices } from '@sinemacula/web-core/app/services';
 import { ConfigurationError } from '@sinemacula/web-core/config/web-environment';
 import { resetSessionContext } from '@sinemacula/web-core/session/session-context';
+import { IndexedDbSessionRecordStore } from '@sinemacula/web-core/storage/indexed-db-session-record-store';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryHistory } from 'vue-router';
 
 import { createPlaygroundApp, renderBootFailure } from '@/boot';
@@ -87,9 +89,8 @@ function currentUser(permissions: readonly string[]): Record<string, unknown> {
 /**
  * Persist a signed-in session where the session module hydrates it from.
  */
-function seedSignedInSession(): void {
-    window.localStorage.setItem(
-        'auth.session',
+async function seedSignedInSession(): Promise<void> {
+    await new IndexedDbSessionRecordStore(window.indexedDB, 'auth.session').swap(() =>
         JSON.stringify({
             revision: 1,
             session: {
@@ -136,6 +137,10 @@ describe('application boot', () => {
 
         return booted;
     }
+
+    beforeEach(() => {
+        vi.stubGlobal('indexedDB', new IDBFactory());
+    });
 
     afterEach(() => {
         booted?.dispose();
@@ -187,7 +192,7 @@ describe('application boot', () => {
         ['holding users.view', ['users.view'], USERS_ROUTE_NAMES.index],
         ['without users.view', ['users.create'], ERRORS_ROUTE_NAMES.forbidden],
     ])('routes a signed-in user %s visiting /users', async (_case, permissions, expected) => {
-        seedSignedInSession();
+        await seedSignedInSession();
 
         const app = await boot({ permissions });
 

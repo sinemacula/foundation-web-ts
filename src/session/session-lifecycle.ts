@@ -9,7 +9,6 @@ import { watch } from 'vue';
 import type { Router } from 'vue-router';
 
 import { sanitiseRedirectTarget } from '@sinemacula/foundation/session/redirect';
-import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { analytics, featureFlags, reporting } from '../app/services';
 import type { ModuleBootContext, ModuleTeardown } from '../module/module';
@@ -24,6 +23,24 @@ import { useSessionStore } from './session-store';
 /** Reports a hydration's failure, resolving whether it succeeded. */
 export type HydrationReporter = (hydration: Promise<void>) => Promise<boolean>;
 
+/** What cross-tab sync observes. */
+export interface CrossTabSync {
+    /** The channel every tab announces its committed session writes on. */
+    readonly channel: BroadcastChannel;
+
+    /** The localStorage snapshot earlier releases may still write, or null when there is none to retire. */
+    readonly legacy: LegacySession | null;
+}
+
+/** The localStorage snapshot earlier releases kept the session in. */
+export interface LegacySession {
+    /** The localStorage area holding it. */
+    readonly area: Storage;
+
+    /** Retire a session found in it; never rejects. */
+    readonly retire: () => Promise<void>;
+}
+
 /** The resolved boot-phase toggles and inputs. */
 export interface SessionLifecycleOptions {
     /** The resolved route identity. */
@@ -32,8 +49,8 @@ export interface SessionLifecycleOptions {
     /** The storage key the session snapshot persists under. */
     readonly sessionKey: string;
 
-    /** Whether to mirror session changes other tabs persist. */
-    readonly crossTabSync: boolean;
+    /** What to observe to mirror session changes other tabs persist, or null not to. */
+    readonly crossTabSync: CrossTabSync | null;
 
     /** Whether to refresh the session ahead of its expiry. */
     readonly proactiveRefresh: boolean;
@@ -91,13 +108,6 @@ export async function bootSessionLifecycle(
 
     await session.ready();
 
-    const area = options.crossTabSync
-        ? accessLocalStorage(
-              context.platform.targetWindow,
-              'Cross-tab session sync observes the window localStorage, which is inaccessible; set crossTabSync ' +
-                  'to false and hydrate the session store on your persistence change notifications.',
-          )
-        : null;
     const store = useSessionStore(context.pinia);
     const fanOut = options.identity === false ? null : createIdentityFanOut(resolveIdentityMapping(options.identity));
     const teardowns: ModuleTeardown[] = [];
@@ -122,8 +132,9 @@ export async function bootSessionLifecycle(
         teardowns.push(wireSessionLossRedirect(context.router, store, options.routes));
     }
 
-    if (area !== null) {
-        teardowns.push(wireCrossTabSync(context.platform.targetWindow, area, store, options, loadUser));
+    if (options.crossTabSync !== null) {
+        teardowns.push(wireCrossTabSync(context.platform.targetWindow, options.crossTabSync, store, options, loadUser));
+        await options.crossTabSync.legacy?.retire();
         await options.reportHydration(store.hydrate());
     }
 
@@ -165,26 +176,12 @@ function wireSessionLossRedirect(router: Router, store: SessionStore, routes: Se
 }
 
 /**
- * Resolve the window's localStorage, whose getter throws where storage is
- * blocked.
- *
- * @throws {@link SessionError} carrying the given guidance when inaccessible
- */
-function accessLocalStorage(target: Window, guidance: string): Storage {
-    try {
-        return target.localStorage;
-    } catch (error) {
-        throw new SessionError(guidance, { cause: error });
-    }
-}
-
-/**
- * Re-hydrate whenever another tab changes the session key in the given
- * localStorage area, or clears it, then load the adopted session's user.
+ * Re-hydrate, then load the adopted user, on another tab's announcement, a
+ * back-forward cache restore or, once retired, a legacy write.
  */
 function wireCrossTabSync(
     target: Window,
-    area: Storage,
+    sync: CrossTabSync,
     store: SessionStore,
     options: SessionLifecycleOptions,
     loadUser: () => Promise<void>,
@@ -199,18 +196,39 @@ function wireCrossTabSync(
     };
 
     /**
-     * Synchronise on a change to the session key, or a clear, of the area.
+     * Synchronise on another tab's announcement.
      */
-    const onStorage = (event: StorageEvent): void => {
-        if (event.storageArea === area && (event.key === options.sessionKey || event.key === null)) {
+    const onMessage = (): void => {
+        void synchronise();
+    };
+
+    /**
+     * Synchronise on a restore from the back-forward cache.
+     */
+    const onPageShow = (event: PageTransitionEvent): void => {
+        if (event.persisted) {
             void synchronise();
         }
     };
 
+    /**
+     * Retire a session an earlier release wrote to the legacy key, then
+     * synchronise.
+     */
+    const onStorage = (event: StorageEvent): void => {
+        if (event.storageArea === sync.legacy?.area && event.key === options.sessionKey) {
+            void sync.legacy.retire().then(synchronise);
+        }
+    };
+
+    sync.channel.addEventListener('message', onMessage);
+    target.addEventListener('pageshow', onPageShow);
     target.addEventListener('storage', onStorage);
 
     return () => {
         disposed = true;
+        sync.channel.close();
+        target.removeEventListener('pageshow', onPageShow);
         target.removeEventListener('storage', onStorage);
     };
 }

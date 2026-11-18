@@ -14,7 +14,7 @@ test.describe('blocked site storage', { tag: '@engine' }, () => {
 
     test.beforeEach(async ({ context }) => {
         await context.addInitScript(() => {
-            for (const area of ['localStorage', 'sessionStorage']) {
+            for (const area of ['localStorage', 'sessionStorage', 'indexedDB']) {
                 Object.defineProperty(window, area, {
                     configurable: true,
                     get: () => {

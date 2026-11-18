@@ -42,7 +42,7 @@ services below.
 | `src/reporting/`     | Installs the global error handlers that feed the foundation error reporter and breadcrumb trail                       | `ErrorReporter`                   | type-only |
 | `src/router/`        | Vue Router binding: router factory, route-meta typing, middleware wiring, chunk-load recovery, navigation progress    | `RouteMiddleware` (contract)      | runtime   |
 | `src/session/`       | The opt-in session module: bearer-auth store, route guards, token refresh, redirect handling, and session persistence | `SessionApi`                      | runtime   |
-| `src/storage/`       | Browser and strict Web Storage adapters, plus the Web Locks session lock                                              | `KeyValueStorage`                 | no        |
+| `src/storage/`       | Browser and strict Web Storage adapters, the IndexedDB session record store and the Web Locks session lock            | `KeyValueStorage`                 | no        |
 | `src/support/`       | Clipboard access                                                                                                      | -                                 | no        |
 | `src/theme/`         | The colour-scheme boot script, DOM applier and `matchMedia` source for the foundation colour-scheme service           | `ColorSchemeService`              | no        |
 | `src/updates/`       | Polls the deployed runtime document for a new release and notifies when one appears                                   | `UpdateMonitor` (no port)         | no        |
@@ -313,29 +313,44 @@ foundation default gateway on the platform clock; required when the application 
 (`crypto.randomUUID()`), the `crossTabSync`/`proactiveRefresh`/`sessionLossRedirect`/`realtimeFollowsSession` toggles
 (all true) and `identity` (per-channel mappings, or `false` to disable).
 
-The session persists as one revisioned snapshot in `localStorage`, `{ revision, session: { lineage, tokens } }`,
-written through `StrictWebStorage` (storage failures surface instead of being swallowed) under a `WebLocksSessionLock`
-(`<key>:lock`) shared by every tab. Every sign-in starts a new lineage (`crypto.randomUUID()`) that its rotations keep,
-so another tab's rotation only updates the tokens, keeping the user, `sessionIdentity()`, the identity fan-out and the
-realtime connection, while another tab's sign-in replaces the session. Sign-in, refresh and sign-out exchanges run
-under a second Web Lock (`<key>:exchange`), so a refresh first adopts a rotation another tab persisted instead of
-presenting a token that tab has spent. The module refuses to register when the Web Locks API is unavailable rather
-than falling back to an unshared lock; supply `persistence` to store the session elsewhere, and pair it with
-`crossTabSync: false` plus your own calls to the store's `hydrate()` when that store does not raise `storage` events.
-A supplied `persistence` serialises only this tab's exchanges unless `exchangeLock` supplies a lock its sharers hold.
-Where the browser blocks site storage (reading `localStorage` throws), the default keeps the session in memory
-instead: sign-in works until the page reloads, no Web Lock is taken, cross-tab sync is skipped whatever
-`crossTabSync` says, and one warning goes to the logger. A `persistence` you supply is never replaced; its failures
-surface. A snapshot that cannot be read, such as one stored in an earlier format, is reported once and leaves the
-session signed out until the next sign-in overwrites it. The storage keys are a public contract:
+The session persists as one revisioned snapshot, `{ revision, session: { lineage, tokens } }`, in a single IndexedDB
+record (database `<key>`, object store `session`, record `snapshot`) through `IndexedDbSessionRecordStore` and the
+foundation `RecordSessionPersistence`. Each conditional write is one readwrite transaction that reads, decides and
+writes atomically for every tab, and resolves only once committed, so no tab can be handed a lock before it sees
+another tab's rotation. Every sign-in starts a new lineage (`crypto.randomUUID()`) that its rotations keep, so another
+tab's rotation only updates the tokens, keeping the user, `sessionIdentity()`, the identity fan-out and the realtime
+connection, while another tab's sign-in replaces the session. Sign-in, refresh and sign-out exchanges run under a Web
+Lock (`<key>:exchange`), so a refresh first adopts a rotation another tab persisted instead of presenting a token that
+tab has spent. The module refuses to register when the Web Locks API is unavailable rather than falling back to an
+unshared lock; supply `persistence` to store the session elsewhere. A supplied `persistence` serialises only this tab's
+exchanges unless `exchangeLock` supplies a lock its sharers hold.
+
+Cross-tab sync never carries the snapshot: after each committed write the module posts an empty message on a
+`BroadcastChannel` named `<key>`, and every other tab re-reads the persisted session, as it also does when the page is
+restored from the back-forward cache. This works for a supplied `persistence` too, for the writes this module makes;
+registering throws when `BroadcastChannel` is unavailable unless `crossTabSync` is false.
+
+Earlier releases kept the snapshot in `localStorage` under `<key>`. Before its first hydration, and under the same
+`<key>:exchange` lock those releases exchange under (so a refresh they have in flight lands first), the module adopts a
+session found there into the IndexedDB record, but only while that record has never been written, then clears the
+`localStorage` snapshot. From then on the record is the only authority: a session a tab still running an earlier
+release writes to `localStorage` is cleared without being adopted, so that tab signs out instead of exchanging tokens
+the record no longer tracks. A failed retirement is reported and the session still hydrates from the record.
+
+Where the browser blocks site storage (reading `localStorage` or `indexedDB` throws, or IndexedDB is missing), the
+default keeps the session in memory instead: sign-in works until the page reloads, no Web Lock is taken, cross-tab
+sync is skipped whatever `crossTabSync` says, and one warning goes to the logger. Once IndexedDB is in use, a failure
+to open it or to commit a write rejects that operation, which is reported, rather than switching the tab to memory. A
+`persistence` you supply is never replaced; its failures surface. A snapshot that cannot be read is reported once and
+leaves the session signed out until the next sign-in overwrites it. The storage keys are a public contract:
 
 | Key          | Default            |
 |--------------|--------------------|
 | `session`    | `auth.session`     |
 | `deviceUuid` | `auth.device_uuid` |
 
-Keys are matched raw against cross-tab `storage` events, so the storage adapter must persist un-namespaced; an
-application wanting a prefix sets it in the keys themselves so event keys still match.
+The session key names the IndexedDB database, the Web Lock, the channel and the retired `localStorage` snapshot, so an
+application wanting a prefix sets it in the key itself.
 
 With `realtimeFollowsSession`, the realtime connection connects once a session is present, reconnects when another
 session replaces it (the store's `sessionIdentity()` tells sessions apart even over identical tokens), retries with
