@@ -12,7 +12,7 @@ import SmCard from '@/components/ui/sm-card.vue';
 import { useI18n } from 'vue-i18n';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { useFocusTrap } from '@sinemacula/web-core/composables/use-focus-trap';
+import { useFocusTrap } from '@sinemacula/foundation-web/composables/use-focus-trap';
 import { confirmDialogs } from '@/services/confirm';
 
 const { t } = useI18n();

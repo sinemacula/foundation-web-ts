@@ -20,7 +20,7 @@ import {
     installStorage,
     installToasts,
     localeSwitcher,
-    resetWebCoreServices,
+    resetFoundationWebServices,
     toasts,
 } from './services';
 
@@ -32,9 +32,9 @@ function createLocaleSwitcherStub(): LocaleSwitcher {
     };
 }
 
-describe('web core services', () => {
+describe('foundation web services', () => {
     afterEach(() => {
-        resetWebCoreServices();
+        resetFoundationWebServices();
     });
 
     describe('locale switcher', () => {
@@ -69,11 +69,11 @@ describe('web core services', () => {
         });
     });
 
-    it('resetWebCoreServices clears both base and web holders', () => {
+    it('resetFoundationWebServices clears both base and web holders', () => {
         installStorage(new MemoryStorage());
         installLocaleSwitcher(createLocaleSwitcherStub());
 
-        resetWebCoreServices();
+        resetFoundationWebServices();
 
         expect(() => appStorage()).toThrow('application storage accessed before initialisation');
         expect(() => localeSwitcher()).toThrow('locale switcher accessed before initialisation');

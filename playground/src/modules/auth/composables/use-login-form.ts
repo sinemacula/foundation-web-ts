@@ -7,7 +7,7 @@
 
 import { HttpError, HttpValidationError } from '@sinemacula/foundation/http/http-error';
 import type { LoginOutcome, PendingAuthentication } from '@sinemacula/foundation/session/session-outcomes';
-import { useSessionStore } from '@sinemacula/web-core/session/session-store';
+import { useSessionStore } from '@sinemacula/foundation-web/session/session-store';
 import { useForm } from 'vee-validate';
 import type { ComputedRef, Ref } from 'vue';
 import { computed, ref } from 'vue';

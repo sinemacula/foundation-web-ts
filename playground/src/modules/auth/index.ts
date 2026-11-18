@@ -5,6 +5,6 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-export { authenticated, authorize } from '@sinemacula/web-core/session/middleware';
-export { useSessionStore as useAuthStore } from '@sinemacula/web-core/session/session-store';
+export { authenticated, authorize } from '@sinemacula/foundation-web/session/middleware';
+export { useSessionStore as useAuthStore } from '@sinemacula/foundation-web/session/session-store';
 export { AUTH_ROUTE_NAMES } from './route-names';

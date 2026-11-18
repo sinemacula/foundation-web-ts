@@ -26,7 +26,7 @@ class ConsumerSmokeError extends Error {}
 const manifest = readJson(join(ROOT, 'package.json'));
 const locked = readJson(join(ROOT, 'package-lock.json')).packages;
 const subpaths = Object.keys(manifest.exports).filter(subpath => subpath !== './eslint');
-const workspace = mkdtempSync(join(tmpdir(), 'web-core-consumer-'));
+const workspace = mkdtempSync(join(tmpdir(), 'foundation-web-consumer-'));
 const consumer = join(workspace, 'consumer');
 
 /**
@@ -110,11 +110,11 @@ function writeManifest(tarball) {
         'package.json',
         JSON.stringify(
             {
-                name: 'web-core-consumer',
+                name: 'foundation-web-consumer',
                 private: true,
                 type: 'module',
                 dependencies: {
-                    '@sinemacula/web-core': `file:${tarball}`,
+                    '@sinemacula/foundation-web': `file:${tarball}`,
                     ...pin(['pinia', 'vue', 'vue-i18n', 'vue-router']),
                 },
                 devDependencies: pin([
@@ -157,7 +157,10 @@ function writeConfigs() {
         ),
     );
 
-    write('eslint.config.js', "import webCore from '@sinemacula/web-core/eslint';\n\nexport default webCore;\n");
+    write(
+        'eslint.config.js',
+        "import foundationWeb from '@sinemacula/foundation-web/eslint';\n\nexport default foundationWeb;\n",
+    );
     write('public/runtime-env.json', '{}\n');
     write(
         'index.html',
@@ -172,7 +175,7 @@ function writeConfigs() {
  */
 function writeEntry() {
     const imports = subpaths.map(
-        subpath => `import * as ${alias(subpath)} from '@sinemacula/web-core/${subpath.slice(2)}';`,
+        subpath => `import * as ${alias(subpath)} from '@sinemacula/foundation-web/${subpath.slice(2)}';`,
     );
 
     write(
@@ -197,7 +200,7 @@ const Home = defineComponent({
     },
 });
 
-const app = await appCreateWebCoreApp.createWebCoreApp({
+const app = await appCreateFoundationWebApp.createFoundationWebApp({
     root: defineComponent({ render: () => h(RouterView) }),
     modules: [
         {
@@ -314,7 +317,10 @@ try {
 
     const config = JSON.parse(bin('eslint', ['--print-config', 'src/main.ts']));
 
-    for (const rule of ['@sinemacula/web-core/no-snake-case-keys', '@sinemacula/web-core/module-import-boundary']) {
+    for (const rule of [
+        '@sinemacula/foundation-web/no-snake-case-keys',
+        '@sinemacula/foundation-web/module-import-boundary',
+    ]) {
         if (config.rules?.[rule] === undefined) {
             throw new ConsumerSmokeError(`The ESLint preset did not enable ${rule}.`);
         }

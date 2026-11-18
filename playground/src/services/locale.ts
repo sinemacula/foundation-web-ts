@@ -8,5 +8,5 @@
 export {
     installLocaleSwitcher as initialiseLocaleSwitcher,
     localeSwitcher,
-    resetWebCoreServices as resetLocaleSwitcher,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetLocaleSwitcher,
+} from '@sinemacula/foundation-web/app/services';

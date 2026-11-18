@@ -15,8 +15,8 @@ import { fullScopeFingerprint, isMutable, mutationScope, parseNameStatus } from 
 const MUTATE = JSON.parse(readFileSync('stryker.config.json', 'utf8')).mutate;
 
 const TRACKED = [
-    'src/app/create-web-core-app.ts',
-    'src/app/create-web-core-app.test.ts',
+    'src/app/create-foundation-web-app.ts',
+    'src/app/create-foundation-web-app.test.ts',
     'src/app/services.ts',
     'src/i18n/locales/en-us.ts',
     'src/session/session-store.ts',
@@ -72,7 +72,11 @@ describe('mutationScope', () => {
             [{ path: 'src/session/store.test.ts', previous: 'src/session/session-store.test.ts' }],
             ['src/session/redirect.ts', 'src/session/session-store.ts'],
         ],
-        ['a deleted test', [{ path: 'src/app/create-web-core-app.test.ts' }], ['src/app/create-web-core-app.ts']],
+        [
+            'a deleted test',
+            [{ path: 'src/app/create-foundation-web-app.test.ts' }],
+            ['src/app/create-foundation-web-app.ts'],
+        ],
         [
             'a test with no source of its own',
             [{ path: 'playground/src/boot.test.ts' }],

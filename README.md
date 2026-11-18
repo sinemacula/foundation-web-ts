@@ -1,19 +1,19 @@
-<h1 align="center">Web Core</h1>
+<h1 align="center">Foundation Web</h1>
 
 <div align="center">
 
-[![Latest Stable Version](https://img.shields.io/npm/v/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
-[![Node Version](https://img.shields.io/node/v/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
-[![Build Status](https://github.com/sinemacula/web-core-ts/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/sinemacula/web-core-ts/actions/workflows/tests.yml)
-[![Quality Gates](https://github.com/sinemacula/web-core-ts/actions/workflows/quality-gates.yml/badge.svg?branch=master)](https://github.com/sinemacula/web-core-ts/actions/workflows/quality-gates.yml)
-[![Maintainability](https://qlty.sh/gh/sinemacula/projects/web-core-ts/maintainability.svg)](https://qlty.sh/gh/sinemacula/projects/web-core-ts)
-[![Code Coverage](https://qlty.sh/gh/sinemacula/projects/web-core-ts/coverage.svg)](https://qlty.sh/gh/sinemacula/projects/web-core-ts)
-[![Total Downloads](https://img.shields.io/npm/dt/@sinemacula/web-core.svg)](https://www.npmjs.com/package/@sinemacula/web-core)
-[![License](https://img.shields.io/github/license/sinemacula/web-core-ts.svg)](LICENSE)
+[![Latest Stable Version](https://img.shields.io/npm/v/@sinemacula/foundation-web.svg)](https://www.npmjs.com/package/@sinemacula/foundation-web)
+[![Node Version](https://img.shields.io/node/v/@sinemacula/foundation-web.svg)](https://www.npmjs.com/package/@sinemacula/foundation-web)
+[![Build Status](https://github.com/sinemacula/foundation-web-ts/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/sinemacula/foundation-web-ts/actions/workflows/tests.yml)
+[![Quality Gates](https://github.com/sinemacula/foundation-web-ts/actions/workflows/quality-gates.yml/badge.svg?branch=master)](https://github.com/sinemacula/foundation-web-ts/actions/workflows/quality-gates.yml)
+[![Maintainability](https://qlty.sh/gh/sinemacula/projects/foundation-web-ts/maintainability.svg)](https://qlty.sh/gh/sinemacula/projects/foundation-web-ts)
+[![Code Coverage](https://qlty.sh/gh/sinemacula/projects/foundation-web-ts/coverage.svg)](https://qlty.sh/gh/sinemacula/projects/foundation-web-ts)
+[![Total Downloads](https://img.shields.io/npm/dt/@sinemacula/foundation-web.svg)](https://www.npmjs.com/package/@sinemacula/foundation-web)
+[![License](https://img.shields.io/github/license/sinemacula/foundation-web-ts.svg)](LICENSE)
 
 </div>
 
-`@sinemacula/web-core` is the Vue kernel Sine Macula web applications are built on. It layers the browser and Vue
+`@sinemacula/foundation-web` is the Vue kernel Sine Macula web applications are built on. It layers the browser and Vue
 bindings - the composition root, feature modules, routing, i18n, the session module, realtime and release monitoring -
 over the platform-agnostic `@sinemacula/foundation`, with no product code and no UI.
 
@@ -22,14 +22,14 @@ kernel, and is the template consuming apps follow.
 
 ## How It Works
 
-An application hands `createWebCoreApp` its root component, an ordered list of feature modules and its configuration.
-The preset boots the foundation core, binds it to Vue, Vue Router and vue-i18n, and installs the browser adapters and
-services below.
+An application hands `createFoundationWebApp` its root component, an ordered list of feature modules and its
+configuration. The preset boots the foundation core, binds it to Vue, Vue Router and vue-i18n, and installs the browser
+adapters and services below.
 
 | Area                 | What it provides                                                                                                      | Port / service                    | Vue       |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------- |
 | `src/activity/`      | Detects when the user has stopped interacting, for policies like auto-logout                                          | `IdleMonitor` (no port)           | no        |
-| `src/app/`           | The composition root: `createWebCoreApp` wires every subsystem in order, plus the service holders and accessors       | `createWebCoreApp`                | runtime   |
+| `src/app/`           | The composition root: `createFoundationWebApp` wires every subsystem in order, plus the service holders and accessors | `createFoundationWebApp`          | runtime   |
 | `src/composables/`   | Reusable Vue composables: focus trap, pagination, route-query state                                                   | -                                 | runtime   |
 | `src/config/`        | The web environment over build-time variables and the runtime document                                                | `EnvironmentSource`               | no        |
 | `src/connectivity/`  | The browser online/offline adapter of the foundation connectivity port                                                | `ConnectivityMonitor`             | no        |
@@ -50,18 +50,18 @@ services below.
 ## Installation
 
 ```bash
-npm install @sinemacula/web-core vue vue-router vue-i18n pinia
+npm install @sinemacula/foundation-web vue vue-router vue-i18n pinia
 ```
 
 `vue`, `vue-router`, `vue-i18n` and `pinia` are peer dependencies. The `exports` map resolves to the compiled `dist/`
-and the `prepare` script builds it, so a git dependency (`github:sinemacula/web-core-ts#<ref>`) installs the same
+and the `prepare` script builds it, so a git dependency (`github:sinemacula/foundation-web-ts#<ref>`) installs the same
 output as the registry tarball.
 
 There is no barrel: import each module by its subpath. The `exports` map is the public surface; anything unlisted is
 internal.
 
 ```ts
-import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
+import { createFoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
 ```
 
 ## Usage
@@ -69,8 +69,8 @@ import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
 ### Modules
 
 An application is composed of feature modules. A module is a plain object satisfying `ModuleDefinition`
-(`src/module/module.ts`); the application owns an explicit, ordered array of them and hands it to `createWebCoreApp`.
-There is no filesystem discovery.
+(`src/module/module.ts`); the application owns an explicit, ordered array of them and hands it to
+`createFoundationWebApp`. There is no filesystem discovery.
 
 | Field      | Semantics                                                                                  |
 |------------|--------------------------------------------------------------------------------------------|
@@ -93,7 +93,7 @@ null). `fallback` may be declared by at most one module, and keeping the catch-a
 
 The registry validates the list and fixes the effective order: declaration order, with the (at most one) `fallback`
 module moved last. A duplicated name throws a `ModuleRegistryError` listing every duplicate; more than one fallback
-throws naming each of them. `createWebCoreApp` builds the registry itself - applications only maintain the array.
+throws naming each of them. `createFoundationWebApp` builds the registry itself - applications only maintain the array.
 
 The lifecycle then runs in registry order. `register` hooks execute first, after configuration, storage, feature
 flags, notifications and observability are installed but before the HTTP client, stores, i18n and router exist, each
@@ -133,11 +133,11 @@ large.
 
 ### Bootstrapping an application
 
-`createWebCoreApp` (`src/app/create-web-core-app.ts`) assembles a complete application from the kernel: it fetches the
-runtime environment document, freezes the configuration, installs every service singleton, runs the module lifecycle
-and wires the colour scheme, i18n, routing, observability, chunk recovery, realtime and the release monitors. The phase
-order is fixed, so the boot's ordering constraints are structural: notifications and observability before the HTTP
-client, storage before stores, stores before i18n and the router.
+`createFoundationWebApp` (`src/app/create-foundation-web-app.ts`) assembles a complete application from the kernel: it
+fetches the runtime environment document, freezes the configuration, installs every service singleton, runs the module
+lifecycle and wires the colour scheme, i18n, routing, observability, chunk recovery, realtime and the release monitors.
+The phase order is fixed, so the boot's ordering constraints are structural: notifications and observability before the
+HTTP client, storage before stores, stores before i18n and the router.
 
 The application's configuration definition must structurally satisfy `FoundationConfig`
 (`@sinemacula/foundation/app/foundation-config`), the slice the preset reads: `api.baseUrl`/`api.timeout`,
@@ -201,9 +201,9 @@ The whole composition root is one call. The canonical example is the playground'
 from `playground/src/main.ts`), shown here as a single entry file with its imports de-aliased:
 
 ```ts
-import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
-import { createWebEnvironment } from '@sinemacula/web-core/config/web-environment';
-import { createSessionModule } from '@sinemacula/web-core/session/create-session-module';
+import { createFoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
+import { createWebEnvironment } from '@sinemacula/foundation-web/config/web-environment';
+import { createSessionModule } from '@sinemacula/foundation-web/session/create-session-module';
 
 import App from './App.vue';
 import { defineConfiguration } from './config';
@@ -213,7 +213,7 @@ import { localeFormats } from './locales/formats';
 import { modules } from './modules';
 
 async function start(): Promise<void> {
-    const app = await createWebCoreApp({
+    const app = await createFoundationWebApp({
         root: App,
         modules: [createSessionModule(), ...modules],
         config: {
@@ -244,25 +244,25 @@ it. The two translation keys are application copy passed as options.
 
 #### start() and dispose()
 
-`createWebCoreApp` resolves once every phase has run; nothing is mounted yet. When a phase fails, everything installed
-so far is torn down and the original error rejects. `start(selector?)` awaits `router.isReady()` and then mounts
-(default `#app`), so initialisation completes before any component renders. A handle starts once: a second `start()`
-rejects, and so does a `start()` after, or racing, `dispose()`. The handle also exposes the assembled `app`, `router`,
-`pinia` and `i18n`, the frozen `config` tree, typed references to every installed service under `services`, and the
-started `monitors`, so tests never need ambient access.
+`createFoundationWebApp` resolves once every phase has run; nothing is mounted yet. When a phase fails, everything
+installed so far is torn down and the original error rejects. `start(selector?)` awaits `router.isReady()` and then
+mounts (default `#app`), so initialisation completes before any component renders. A handle starts once: a second
+`start()` rejects, and so does a `start()` after, or racing, `dispose()`. The handle also exposes the assembled `app`,
+`router`, `pinia` and `i18n`, the frozen `config` tree, typed references to every installed service under `services`,
+and the started `monitors`, so tests never need ambient access.
 
 `dispose()` idempotently unmounts the root and tears down everything the boot installed, in reverse: the monitors,
 chunk recovery, module boot teardowns, realtime disconnect, the page-tracking, global-error-handling and title-sync
 uninstalls, the router history, store disposals, pending toasts and finally the colour-scheme listener. Every step runs
 even when one throws, and `dispose()` then rethrows the failure. Service holders are left installed;
-`resetWebCoreServices()` clears them between tests and before booting a replacement application.
+`resetFoundationWebServices()` clears them between tests and before booting a replacement application.
 
 #### Service accessors
 
-The preset installs every service into a holder exposed by `@sinemacula/web-core/app/services` (`src/app/services.ts`,
-which re-exports the foundation holders and adds the locale switcher). Components, stores and module services read
-them through typed accessors; each throws until its `install*` counterpart has run, which the boot guarantees happens
-before mount:
+The preset installs every service into a holder exposed by `@sinemacula/foundation-web/app/services`
+(`src/app/services.ts`, which re-exports the foundation holders and adds the locale switcher). Components, stores and
+module services read them through typed accessors; each throws until its `install*` counterpart has run, which the boot
+guarantees happens before mount:
 
 | Accessor                   | Service                                                               |
 |----------------------------|-----------------------------------------------------------------------|
@@ -281,7 +281,7 @@ before mount:
 | `realtime()`               | The realtime connection (installed only when the application opts in) |
 
 `appConfig<T>()` keeps configuration app-typed through its generic - the playground wraps it once (`config()` in
-`playground/src/services/config.ts`) and every other accessor is used as-is. `resetWebCoreServices()` clears every
+`playground/src/services/config.ts`) and every other accessor is used as-is. `resetFoundationWebServices()` clears every
 holder between tests.
 
 ### Session module
@@ -375,12 +375,12 @@ permission as missing.
 
 ## ESLint preset
 
-`@sinemacula/web-core/eslint` is a flat-config layer that enforces the feature-module contract, enabled alongside the
-shared `@sinemacula/coding-standards` presets. The first two rules below apply to all TypeScript and Vue source except
-test code (`*.test.*`, `*.spec.*`, `*.test-d.*`, and anything under `__tests__/`, `__mocks__/` or `test-support/`); the
-other four apply to TypeScript under `modules/`. The contract files `module.ts`, `routes.ts` and `route-names.ts` (or
-`.tsx`) are matched anywhere beneath `modules/<name>/`, and a nested module tree belongs to its innermost folder. Paths
-are read relative to the working directory, so run ESLint from the project root.
+`@sinemacula/foundation-web/eslint` is a flat-config layer that enforces the feature-module contract, enabled alongside
+the shared `@sinemacula/coding-standards` presets. The first two rules below apply to all TypeScript and Vue source
+except test code (`*.test.*`, `*.spec.*`, `*.test-d.*`, and anything under `__tests__/`, `__mocks__/` or
+`test-support/`); the other four apply to TypeScript under `modules/`. The contract files `module.ts`, `routes.ts` and
+`route-names.ts` (or `.tsx`) are matched anywhere beneath `modules/<name>/`, and a nested module tree belongs to its
+innermost folder. Paths are read relative to the working directory, so run ESLint from the project root.
 
 ### `no-snake-case-keys`
 
@@ -388,9 +388,9 @@ Forbids snake_case object-literal keys, computed string keys included; map wire 
 
 ### `module-import-boundary`
 
-Forbids the `@sinemacula/web-core` and `@sinemacula/foundation` barrels in favour of subpaths, and imports of another
-module's internals by alias or relative path. A module's public surface is `@/modules/<name>` or its explicit `index`;
-code outside any module, such as the registry, may also import a module's `module.ts` definition.
+Forbids the `@sinemacula/foundation-web` and `@sinemacula/foundation` barrels in favour of subpaths, and imports of
+another module's internals by alias or relative path. A module's public surface is `@/modules/<name>` or its explicit
+`index`; code outside any module, such as the registry, may also import a module's `module.ts` definition.
 
 ### `module-name-matches-folder`
 

@@ -10,7 +10,7 @@
 import path from 'node:path';
 import { createRule, isTestPath, moduleLocation, projectPath, staticString } from './lib.js';
 
-const KERNEL_BARRELS = new Set(['@sinemacula/web-core', '@sinemacula/foundation']);
+const KERNEL_BARRELS = new Set(['@sinemacula/foundation-web', '@sinemacula/foundation']);
 
 // A module's public surface, and its definition (open outside any module).
 const PUBLIC_ENTRY = /^index(?:\.[jt]sx?)?$/;
@@ -38,7 +38,7 @@ export default createRule({
         },
         schema: [],
         messages: {
-            barrel: 'Import a kernel subpath (@sinemacula/web-core/<area>/<file> or @sinemacula/foundation/<area>/<file>), not a package barrel.',
+            barrel: 'Import a kernel subpath (@sinemacula/foundation-web/<area>/<file> or @sinemacula/foundation/<area>/<file>), not a package barrel.',
             crossModule:
                 "Reach module '{{module}}' through its public surface (@/modules/{{module}}), not its internals.",
         },

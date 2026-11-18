@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { guestOnly } from '@sinemacula/web-core/session/middleware';
+import { guestOnly } from '@sinemacula/foundation-web/session/middleware';
 import type { RouteRecordRaw } from 'vue-router';
 
 import { AUTH_ROUTE_NAMES } from './route-names';

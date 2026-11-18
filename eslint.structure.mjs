@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import webCore from './eslint/index.js';
+import foundationWeb from './eslint/index.js';
 
 // Run with --no-inline-config: shared-standards directives name unloaded rules.
-export default webCore;
+export default foundationWeb;

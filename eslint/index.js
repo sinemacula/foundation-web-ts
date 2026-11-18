@@ -1,5 +1,6 @@
 /**
- * Flat-config preset enforcing the web-core `modules/<name>/...` contract.
+ * Flat-config preset enforcing the foundation-web `modules/<name>/...`
+ * contract.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -15,15 +16,15 @@ const MODULE_TS_FILES = ['**/modules/**/*.ts', '**/modules/**/*.tsx'];
 
 /** Rules applied to every TypeScript and Vue file. */
 const CONVENTIONS = {
-    '@sinemacula/web-core/no-snake-case-keys': 'error',
-    '@sinemacula/web-core/module-import-boundary': 'error',
+    '@sinemacula/foundation-web/no-snake-case-keys': 'error',
+    '@sinemacula/foundation-web/module-import-boundary': 'error',
 };
 
 export default [
     {
         files: TS_FILES,
         plugins: {
-            '@sinemacula/web-core': plugin,
+            '@sinemacula/foundation-web': plugin,
         },
         languageOptions: {
             parser: tseslint.parser,
@@ -33,7 +34,7 @@ export default [
     {
         files: VUE_FILES,
         plugins: {
-            '@sinemacula/web-core': plugin,
+            '@sinemacula/foundation-web': plugin,
         },
         languageOptions: {
             parser: vueParser,
@@ -47,10 +48,10 @@ export default [
     {
         files: MODULE_TS_FILES,
         rules: {
-            '@sinemacula/web-core/module-name-matches-folder': 'error',
-            '@sinemacula/web-core/module-export-names': 'error',
-            '@sinemacula/web-core/route-name-namespacing': 'error',
-            '@sinemacula/web-core/route-name-via-constant': 'error',
+            '@sinemacula/foundation-web/module-name-matches-folder': 'error',
+            '@sinemacula/foundation-web/module-export-names': 'error',
+            '@sinemacula/foundation-web/route-name-namespacing': 'error',
+            '@sinemacula/foundation-web/route-name-via-constant': 'error',
         },
     },
 ];

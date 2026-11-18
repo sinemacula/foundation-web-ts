@@ -5,8 +5,8 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { ModuleDefinition } from '@sinemacula/web-core/module/module';
-import { createLocaleLoader } from '@sinemacula/web-core/module/module';
+import type { ModuleDefinition } from '@sinemacula/foundation-web/module/module';
+import { createLocaleLoader } from '@sinemacula/foundation-web/module/module';
 
 import { dashboardRoutes } from './routes';
 

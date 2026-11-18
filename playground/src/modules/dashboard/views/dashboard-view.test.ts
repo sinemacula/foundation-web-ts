@@ -5,15 +5,15 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { installColorScheme } from '@sinemacula/web-core/app/services';
+import { installColorScheme } from '@sinemacula/foundation-web/app/services';
 import { Environment } from '@sinemacula/foundation/config/environment';
 import { ObjectEnvironmentSource } from '@sinemacula/foundation/config/object-environment-source';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
-import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
-import { ConfirmService } from '@sinemacula/web-core/notifications/confirm-service';
+import type { LocaleSwitcher } from '@sinemacula/foundation-web/i18n/application-i18n';
+import { ConfirmService } from '@sinemacula/foundation-web/notifications/confirm-service';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { sessionContext } from '@sinemacula/web-core/session/session-context';
-import { useSessionStore } from '@sinemacula/web-core/session/session-store';
+import { sessionContext } from '@sinemacula/foundation-web/session/session-context';
+import { useSessionStore } from '@sinemacula/foundation-web/session/session-store';
 import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -8,5 +8,5 @@
 export {
     appStorage,
     installStorage as initialiseStorage,
-    resetWebCoreServices as resetStorage,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetStorage,
+} from '@sinemacula/foundation-web/app/services';

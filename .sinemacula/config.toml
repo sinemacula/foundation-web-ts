@@ -3,7 +3,7 @@
 # Blueprint, Build, and Deploy plugins.
 
 [project]
-project_name = "web-core-ts"
+project_name = "foundation-web-ts"
 project_description = "The core framework on which Sine Macula web applications are built."
 copyright = "Sine Macula Limited"
 package_manager = "npm"

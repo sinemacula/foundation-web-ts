@@ -7,7 +7,7 @@
 -->
 
 <script setup lang="ts">
-import { useCan } from '@sinemacula/web-core/session/authorization';
+import { useCan } from '@sinemacula/foundation-web/session/authorization';
 import { useI18n } from 'vue-i18n';
 
 import LocaleSwitcher from '@/components/locale-switcher.vue';

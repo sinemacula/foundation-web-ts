@@ -10,7 +10,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-import { colorScheme } from '@sinemacula/web-core/app/services';
+import { colorScheme } from '@sinemacula/foundation-web/app/services';
 import type { ColorSchemePreference, ResolvedColorScheme } from '@sinemacula/foundation/theme/color-scheme';
 
 const { t } = useI18n();

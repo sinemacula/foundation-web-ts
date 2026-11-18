@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { LocaleMessages } from '@sinemacula/web-core/module/module';
+import type { LocaleMessages } from '@sinemacula/foundation-web/module/module';
 
 export const sharedLocaleLoaders: Readonly<Record<string, () => Promise<LocaleMessages>>> = {
     'en-US': async () => (await import('./en-us')).default,

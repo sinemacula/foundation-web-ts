@@ -1,5 +1,5 @@
 /**
- * The @sinemacula/web-core ESLint plugin; index.js enables its rules.
+ * The @sinemacula/foundation-web ESLint plugin; index.js enables its rules.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -14,7 +14,7 @@ import routeNameViaConstant from './rules/route-name-via-constant.js';
 
 export default {
     meta: {
-        name: '@sinemacula/web-core',
+        name: '@sinemacula/foundation-web',
     },
     rules: {
         'module-name-matches-folder': moduleNameMatchesFolder,

@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { ConfirmService } from '@sinemacula/web-core/notifications/confirm-service';
+import { ConfirmService } from '@sinemacula/foundation-web/notifications/confirm-service';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp, nextTick } from 'vue';
 import { createI18n } from 'vue-i18n';

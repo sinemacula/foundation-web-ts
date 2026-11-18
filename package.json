@@ -1,16 +1,16 @@
 {
-    "name": "@sinemacula/web-core",
+    "name": "@sinemacula/foundation-web",
     "version": "0.0.0",
-    "description": "Framework-agnostic kernel shared by every Sine Macula frontend: configuration, HTTP, routing, modules, i18n and storage.",
+    "description": "Vue and browser kernel for Sine Macula web applications, layered over @sinemacula/foundation: composition root, feature modules, routing, i18n, session and realtime.",
     "license": "Apache-2.0",
     "author": "Ben Carey <bdmc@sinemacula.co.uk>",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/sinemacula/web-core-ts.git"
+        "url": "git+https://github.com/sinemacula/foundation-web-ts.git"
     },
-    "homepage": "https://github.com/sinemacula/web-core-ts#readme",
+    "homepage": "https://github.com/sinemacula/foundation-web-ts#readme",
     "bugs": {
-        "url": "https://github.com/sinemacula/web-core-ts/issues"
+        "url": "https://github.com/sinemacula/foundation-web-ts/issues"
     },
     "keywords": [
         "sine macula",
@@ -28,9 +28,9 @@
     "packageManager": "npm@11.11.0",
     "exports": {
         "./eslint": "./eslint/index.js",
-        "./app/create-web-core-app": {
-            "types": "./dist/app/create-web-core-app.d.ts",
-            "import": "./dist/app/create-web-core-app.js"
+        "./app/create-foundation-web-app": {
+            "types": "./dist/app/create-foundation-web-app.d.ts",
+            "import": "./dist/app/create-foundation-web-app.js"
         },
         "./app/services": {
             "types": "./dist/app/services.d.ts",

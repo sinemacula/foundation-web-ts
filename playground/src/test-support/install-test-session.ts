@@ -5,17 +5,17 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { api } from '@sinemacula/web-core/app/services';
+import { api } from '@sinemacula/foundation-web/app/services';
 import { createDefaultSessionApi } from '@sinemacula/foundation/session/default-session-api';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
-import { scheduleOnTimers } from '@sinemacula/web-core/module/module';
-import { installSessionContext } from '@sinemacula/web-core/session/session-context';
-import { SessionRefreshCoordinator } from '@sinemacula/web-core/session/session-refresh-coordinator';
-import { useSessionStore } from '@sinemacula/web-core/session/session-store';
+import { scheduleOnTimers } from '@sinemacula/foundation-web/module/module';
+import { installSessionContext } from '@sinemacula/foundation-web/session/session-context';
+import { SessionRefreshCoordinator } from '@sinemacula/foundation-web/session/session-refresh-coordinator';
+import { useSessionStore } from '@sinemacula/foundation-web/session/session-store';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 
-export { resetSessionContext } from '@sinemacula/web-core/session/session-context';
+export { resetSessionContext } from '@sinemacula/foundation-web/session/session-context';
 
 /**
  * Install a session context matching the application's defaults.

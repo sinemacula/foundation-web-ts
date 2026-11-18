@@ -5,11 +5,11 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { WebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
-import { resetWebCoreServices } from '@sinemacula/web-core/app/services';
-import { ConfigurationError } from '@sinemacula/web-core/config/web-environment';
-import { resetSessionContext } from '@sinemacula/web-core/session/session-context';
-import { IndexedDbSessionRecordStore } from '@sinemacula/web-core/storage/indexed-db-session-record-store';
+import type { FoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
+import { resetFoundationWebServices } from '@sinemacula/foundation-web/app/services';
+import { ConfigurationError } from '@sinemacula/foundation-web/config/web-environment';
+import { resetSessionContext } from '@sinemacula/foundation-web/session/session-context';
+import { IndexedDbSessionRecordStore } from '@sinemacula/foundation-web/storage/indexed-db-session-record-store';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -102,12 +102,12 @@ async function seedSignedInSession(): Promise<void> {
 }
 
 describe('application boot', () => {
-    let booted: WebCoreApp<Configuration> | null = null;
+    let booted: FoundationWebApp<Configuration> | null = null;
 
     /**
      * Boot the entry point's composition through the platform seams.
      */
-    async function boot(options: BootOptions = {}): Promise<WebCoreApp<Configuration>> {
+    async function boot(options: BootOptions = {}): Promise<FoundationWebApp<Configuration>> {
         const runtime = options.runtime ?? runtimeDocument();
         const fetchFn = vi.fn((input: RequestInfo | URL) => {
             const url = String(input);
@@ -145,7 +145,7 @@ describe('application boot', () => {
     afterEach(() => {
         booted?.dispose();
         booted = null;
-        resetWebCoreServices();
+        resetFoundationWebServices();
         resetSessionContext();
         window.localStorage.clear();
     });

@@ -8,5 +8,5 @@
 export {
     featureFlags,
     installFeatureFlags as initialiseFeatureFlags,
-    resetWebCoreServices as resetFeatureFlags,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetFeatureFlags,
+} from '@sinemacula/foundation-web/app/services';

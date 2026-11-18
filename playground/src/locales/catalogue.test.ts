@@ -6,7 +6,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { LocaleMessages } from '@sinemacula/web-core/module/module';
+import type { LocaleMessages } from '@sinemacula/foundation-web/module/module';
 import { describe, expect, it } from 'vitest';
 
 import { sharedLocaleLoaders } from '@/locales';

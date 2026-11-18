@@ -109,17 +109,17 @@ function recordPhase(phase: BootPhase): void {
 /**
  * The application handle was used outside its start-then-dispose lifecycle.
  */
-export class WebCoreAppError extends Error {
+export class FoundationWebAppError extends Error {
     constructor(message: string) {
         super(message);
-        this.name = 'WebCoreAppError';
+        this.name = 'FoundationWebAppError';
     }
 }
 
 /**
  * Configuration construction options.
  */
-export interface WebCoreConfigOptions<T extends FoundationConfig> {
+export interface FoundationWebConfigOptions<T extends FoundationConfig> {
     /** Builds the environment from the fetched runtime document; the only place build-time variables may appear. Throw to abort boot. Pair with `createWebEnvironment` for the standard dev-chain and production required-keys behaviour. */
     readonly createEnvironment: (runtime: Readonly<Record<string, string>>) => Environment;
 
@@ -133,7 +133,7 @@ export interface WebCoreConfigOptions<T extends FoundationConfig> {
 /**
  * HTTP client construction options.
  */
-export interface WebCoreHttpOptions<T extends FoundationConfig> {
+export interface FoundationWebHttpOptions<T extends FoundationConfig> {
     /** Preset-level interceptors; module contributions are appended after these. */
     readonly interceptors?: readonly RequestInterceptor[];
 
@@ -150,7 +150,7 @@ export interface WebCoreHttpOptions<T extends FoundationConfig> {
 /**
  * Internationalisation options.
  */
-export interface WebCoreI18nOptions {
+export interface FoundationWebI18nOptions {
     /** Shared (non-module) translation loaders keyed by locale. */
     readonly sharedLoaders?: Readonly<Record<string, () => Promise<LocaleMessages>>>;
 
@@ -167,7 +167,7 @@ export interface WebCoreI18nOptions {
 /**
  * Colour-scheme options.
  */
-export interface WebCoreColorSchemeOptions {
+export interface FoundationWebColorSchemeOptions {
     /** The preference applied when nothing is stored. Default 'system'. */
     readonly defaultPreference?: ColorSchemePreference;
 
@@ -188,7 +188,7 @@ export interface WebCoreColorSchemeOptions {
  * Observability adapter factories; without one the local environment gets
  * console adapters and every other environment gets the null adapters.
  */
-export interface WebCoreObservabilityOptions<T extends FoundationConfig> {
+export interface FoundationWebObservabilityOptions<T extends FoundationConfig> {
     /** Error-reporter factory; wins over the environment default. */
     readonly reporter?: (settings: DeepReadonly<T>) => ErrorReporter;
 
@@ -202,7 +202,7 @@ export interface WebCoreObservabilityOptions<T extends FoundationConfig> {
 /**
  * State-only notification services; rendering hosts stay application-side.
  */
-export interface WebCoreNotificationOptions {
+export interface FoundationWebNotificationOptions {
     /** Replacement toast service; defaults to a fresh state-only service. */
     readonly toasts?: ToastService;
 
@@ -213,7 +213,7 @@ export interface WebCoreNotificationOptions {
 /**
  * Chunk-load-failure recovery tuning.
  */
-export interface WebCoreChunkRecoveryOptions {
+export interface FoundationWebChunkRecoveryOptions {
     /** Whether recovery is installed at all. Default true. */
     readonly enabled?: boolean;
 
@@ -227,7 +227,7 @@ export interface WebCoreChunkRecoveryOptions {
 /**
  * Release monitoring options.
  */
-export interface WebCoreMonitorOptions<T extends FoundationConfig> {
+export interface FoundationWebMonitorOptions<T extends FoundationConfig> {
     /** Update-monitor options; omit to take the version-derived defaults. */
     readonly updates?: UpdateMonitorWiring<T>;
 
@@ -238,13 +238,13 @@ export interface WebCoreMonitorOptions<T extends FoundationConfig> {
     };
 
     /** Chunk-load-failure recovery tuning. */
-    readonly chunkRecovery?: WebCoreChunkRecoveryOptions;
+    readonly chunkRecovery?: FoundationWebChunkRecoveryOptions;
 }
 
 /**
  * Platform seams threaded to every subsystem that accepts them.
  */
-export interface WebCorePlatformOptions {
+export interface FoundationWebPlatformOptions {
     /** The fetch implementation; defaults to the global `fetch`. */
     readonly fetchFn?: typeof fetch;
 
@@ -271,10 +271,10 @@ export interface WebCorePlatformOptions {
 }
 
 /**
- * Options accepted by {@link createWebCoreApp}.
+ * Options accepted by {@link createFoundationWebApp}.
  */
-export interface WebCoreAppOptions<T extends FoundationConfig> {
-    /** Root component mounted by {@link WebCoreApp.start}. */
+export interface FoundationWebAppOptions<T extends FoundationConfig> {
+    /** Root component mounted by {@link FoundationWebApp.start}. */
     readonly root: Component;
 
     /** Explicit ordered module list, validated by the module registry. */
@@ -284,19 +284,19 @@ export interface WebCoreAppOptions<T extends FoundationConfig> {
     readonly pinia?: Pinia;
 
     /** Configuration construction options. */
-    readonly config: WebCoreConfigOptions<T>;
+    readonly config: FoundationWebConfigOptions<T>;
 
     /** HTTP client construction options. */
-    readonly http?: WebCoreHttpOptions<T>;
+    readonly http?: FoundationWebHttpOptions<T>;
 
     /** Internationalisation options. */
-    readonly i18n?: WebCoreI18nOptions;
+    readonly i18n?: FoundationWebI18nOptions;
 
     /** Colour-scheme options. */
-    readonly colorScheme?: WebCoreColorSchemeOptions;
+    readonly colorScheme?: FoundationWebColorSchemeOptions;
 
     /** Observability adapter factories. */
-    readonly observability?: WebCoreObservabilityOptions<T>;
+    readonly observability?: FoundationWebObservabilityOptions<T>;
 
     /** Feature-flag provider factory; defaults to the config-driven static adapter. */
     readonly featureFlags?: (settings: DeepReadonly<T>) => FeatureFlags;
@@ -305,19 +305,19 @@ export interface WebCoreAppOptions<T extends FoundationConfig> {
     readonly realtime?: (settings: DeepReadonly<T>) => RealtimeConnection;
 
     /** State-only notification services. */
-    readonly notifications?: WebCoreNotificationOptions;
+    readonly notifications?: FoundationWebNotificationOptions;
 
     /** Release monitoring options. */
-    readonly monitors?: WebCoreMonitorOptions<T>;
+    readonly monitors?: FoundationWebMonitorOptions<T>;
 
     /** Platform seams threaded to every subsystem. */
-    readonly platform?: WebCorePlatformOptions;
+    readonly platform?: FoundationWebPlatformOptions;
 }
 
 /**
  * Direct typed references to every service the preset installed.
  */
-export interface WebCoreServices<T extends object> {
+export interface FoundationWebServices<T extends object> {
     /** The application configuration repository. */
     readonly config: ConfigRepository<T>;
 
@@ -356,9 +356,9 @@ export interface WebCoreServices<T extends object> {
 }
 
 /**
- * The assembled application handle returned by {@link createWebCoreApp}.
+ * The assembled application handle returned by {@link createFoundationWebApp}.
  */
-export interface WebCoreApp<T extends FoundationConfig> {
+export interface FoundationWebApp<T extends FoundationConfig> {
     /** The Vue application instance. */
     readonly app: App<Element>;
 
@@ -375,7 +375,7 @@ export interface WebCoreApp<T extends FoundationConfig> {
     readonly config: DeepReadonly<T>;
 
     /** Direct typed references to every service the preset installed. */
-    readonly services: WebCoreServices<T>;
+    readonly services: FoundationWebServices<T>;
 
     /** The release monitors, each null when it does not run. */
     readonly monitors: {
@@ -391,7 +391,7 @@ export interface WebCoreApp<T extends FoundationConfig> {
      * component renders. A handle starts at most once.
      *
      * @param selector - the mount target; default '#app'
-     * @throws {WebCoreAppError} when the handle was already started, or is
+     * @throws {FoundationWebAppError} when the handle was already started, or is
      * disposed before it mounts
      */
     start(selector?: string | Element): Promise<void>;
@@ -400,7 +400,8 @@ export interface WebCoreApp<T extends FoundationConfig> {
      * Idempotently unmount the application and tear down everything the boot
      * installed, in reverse order, including the router history. Every step
      * runs even when an earlier one throws. Service holders stay installed;
-     * call `resetWebCoreServices` before booting a replacement application.
+     * call `resetFoundationWebServices` before booting a replacement
+     * application.
      *
      * @throws the failing step's error, or an AggregateError when several
      * steps fail
@@ -484,9 +485,9 @@ interface AppIntegration {
  * loaded; only a 404 boots over an empty document
  * @throws {FoundationBootError} when the monitor options cannot work
  */
-export async function createWebCoreApp<T extends FoundationConfig>(
-    options: WebCoreAppOptions<T>,
-): Promise<WebCoreApp<T>> {
+export async function createFoundationWebApp<T extends FoundationConfig>(
+    options: FoundationWebAppOptions<T>,
+): Promise<FoundationWebApp<T>> {
     const platform = resolvePlatform(options.platform);
     const runtimeUrl = options.config.runtimeUrl ?? RUNTIME_ENVIRONMENT_URL;
     const teardowns = new TeardownStack();
@@ -580,7 +581,7 @@ function reportRollbackFailures(failures: readonly unknown[], reporter: ErrorRep
  * never cross the foundation boundary.
  */
 async function bootFoundation<T extends FoundationConfig>(
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
     onColorSchemeError: (error: unknown) => void,
@@ -644,7 +645,7 @@ async function bootFoundation<T extends FoundationConfig>(
  * Run the module phases: instantiate eager stores and wire i18n.
  */
 async function bootModuleLayer<T extends FoundationConfig>(
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
     teardowns: TeardownStack,
@@ -677,7 +678,7 @@ async function bootModuleLayer<T extends FoundationConfig>(
  * realtime and module boot.
  */
 async function wireAppIntegration<T extends FoundationConfig>(
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
     moduleLayer: ModuleLayer,
@@ -733,7 +734,7 @@ async function wireAppIntegration<T extends FoundationConfig>(
  * Run the release phases: chunk-load recovery and the release monitors.
  */
 function wireReleaseMonitors<T extends FoundationConfig>(
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
     foundation: AppFoundation<T>,
@@ -773,7 +774,7 @@ function buildServices<T extends FoundationConfig>(
     foundation: AppFoundation<T>,
     moduleLayer: ModuleLayer,
     integration: AppIntegration,
-): WebCoreServices<T> {
+): FoundationWebServices<T> {
     const { repository, storage, colorScheme, toastService, confirmService, observability, flags } = foundation;
 
     return {
@@ -801,7 +802,7 @@ function assembleApp<T extends FoundationConfig>(
     integration: AppIntegration,
     monitors: WiredMonitors,
     teardowns: TeardownStack,
-): WebCoreApp<T> {
+): FoundationWebApp<T> {
     const { app, pinia, settings } = foundation;
     const { i18n } = moduleLayer;
     const { router } = integration;
@@ -820,11 +821,11 @@ function assembleApp<T extends FoundationConfig>(
         monitors: { updates: monitors.updates, connectivity: monitors.connectivity },
         async start(selector: string | Element = DEFAULT_MOUNT_SELECTOR): Promise<void> {
             if (disposal.signal.aborted) {
-                throw new WebCoreAppError(DISPOSED_MESSAGE);
+                throw new FoundationWebAppError(DISPOSED_MESSAGE);
             }
 
             if (started) {
-                throw new WebCoreAppError(ALREADY_STARTED_MESSAGE);
+                throw new FoundationWebAppError(ALREADY_STARTED_MESSAGE);
             }
 
             started = true;
@@ -832,7 +833,7 @@ function assembleApp<T extends FoundationConfig>(
             await Promise.race([router.isReady(), whenAborted(disposal.signal)]);
 
             if (disposal.signal.aborted) {
-                throw new WebCoreAppError(DISPOSED_MESSAGE);
+                throw new FoundationWebAppError(DISPOSED_MESSAGE);
             }
 
             teardowns.push(() => {
@@ -845,7 +846,7 @@ function assembleApp<T extends FoundationConfig>(
             if (disposal.signal.aborted) {
                 unmountIfMounted(app);
 
-                throw new WebCoreAppError(DISPOSED_MESSAGE);
+                throw new FoundationWebAppError(DISPOSED_MESSAGE);
             }
         },
         dispose(): void {
@@ -878,7 +879,7 @@ function whenAborted(signal: AbortSignal): Promise<void> {
 /**
  * Resolve the platform seams handed to every subsystem and module hook.
  */
-function resolvePlatform(platform: WebCorePlatformOptions | undefined): ResolvedPlatform {
+function resolvePlatform(platform: FoundationWebPlatformOptions | undefined): ResolvedPlatform {
     return {
         fetchFn: platform?.fetchFn ?? ((input, init) => globalThis.fetch(input, init)),
         targetWindow: platform?.targetWindow ?? globalThis.window,
@@ -905,7 +906,7 @@ function resolveBrowserStorage(targetWindow: Window): KeyValueStorage {
  * registering the history's release before the router can fail to build.
  */
 function resolveRouter<T extends FoundationConfig>(
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
     i18n: ApplicationI18n,
@@ -941,7 +942,7 @@ function resolveRouter<T extends FoundationConfig>(
 function resolveColorScheme<T extends FoundationConfig>(
     storage: KeyValueStorage,
     platform: ResolvedPlatform,
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
     onError: (error: unknown) => void,
 ): ColorSchemeService {
     const colorScheme = options.colorScheme;
@@ -965,7 +966,7 @@ function resolveLocale<T extends FoundationConfig>(
     modules: readonly ModuleDefinition[],
     storage: KeyValueStorage,
     platform: ResolvedPlatform,
-    options: WebCoreAppOptions<T>,
+    options: FoundationWebAppOptions<T>,
 ): Promise<WiredLocale> {
     const i18n = options.i18n;
 
@@ -1031,7 +1032,7 @@ function resolveChunkRecovery(
     storage: KeyValueStorage | null,
     reporter: ErrorReporter,
     clock: () => number,
-    tuning: WebCoreChunkRecoveryOptions | undefined,
+    tuning: FoundationWebChunkRecoveryOptions | undefined,
 ): (() => void) | null {
     return wireChunkRecovery({
         router,
@@ -1052,7 +1053,7 @@ function resolveMonitors<T extends FoundationConfig>(
     runtimeUrl: string,
     platform: ResolvedPlatform,
     toastService: ToastService,
-    monitors: WebCoreMonitorOptions<T> | undefined,
+    monitors: FoundationWebMonitorOptions<T> | undefined,
 ): WiredMonitors {
     return wireMonitors({
         settings,

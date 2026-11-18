@@ -7,7 +7,7 @@
 
 import { HttpError, HttpValidationError } from '@sinemacula/foundation/http/http-error';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { useSessionStore } from '@sinemacula/web-core/session/session-store';
+import { useSessionStore } from '@sinemacula/foundation-web/session/session-store';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, defineComponent, h } from 'vue';

@@ -1,7 +1,7 @@
 {
-    "name": "@sinemacula/web-core-playground",
+    "name": "@sinemacula/foundation-web-playground",
     "version": "1.0.0",
-    "description": "Reference application and development harness for @sinemacula/web-core.",
+    "description": "Reference application and development harness for @sinemacula/foundation-web.",
     "private": true,
     "type": "module",
     "license": "Apache-2.0",
@@ -14,7 +14,7 @@
         "size": "size-limit"
     },
     "dependencies": {
-        "@sinemacula/web-core": "file:..",
+        "@sinemacula/foundation-web": "file:..",
         "@vue/devtools-api": "^8.2.1",
         "pinia": "^4.1.0",
         "vee-validate": "^4.15.1",

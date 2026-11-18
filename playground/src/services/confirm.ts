@@ -8,5 +8,5 @@
 export {
     confirmDialogs,
     installConfirm as initialiseConfirm,
-    resetWebCoreServices as resetConfirm,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetConfirm,
+} from '@sinemacula/foundation-web/app/services';

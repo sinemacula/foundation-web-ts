@@ -1,5 +1,5 @@
 /**
- * Shared helpers for the web-core ESLint rules.
+ * Shared helpers for the foundation-web ESLint rules.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { ESLintUtils } from '@typescript-eslint/utils';
 
 /** Shared rule factory linking each rule to its README section. */
-export const createRule = ESLintUtils.RuleCreator(name => `https://github.com/sinemacula/web-core-ts#${name}`);
+export const createRule = ESLintUtils.RuleCreator(name => `https://github.com/sinemacula/foundation-web-ts#${name}`);
 
 const CONTRACT_FILE = /(?:^|\/)(?<file>(?<kind>module|routes|route-names)\.tsx?)$/;
 
