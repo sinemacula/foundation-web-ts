@@ -330,11 +330,12 @@ Cross-tab sync never carries the snapshot: after each committed write the module
 restored from the back-forward cache. This works for a supplied `persistence` too, for the writes this module makes;
 registering throws when `BroadcastChannel` is unavailable unless `crossTabSync` is false.
 
-Earlier releases kept the snapshot in `localStorage` under `<key>`. On first load the module adopts a session found
-there into the IndexedDB record, but only while that record has never been written, then clears the `localStorage`
-snapshot. From then on the record is the only authority: a session a tab still running an earlier release writes to
-`localStorage` is cleared without being adopted, so that tab signs out instead of exchanging tokens the record no
-longer tracks. A failed retirement is reported and the session still hydrates from the record.
+Earlier releases kept the snapshot in `localStorage` under `<key>`. Before its first hydration, and under the same
+`<key>:exchange` lock those releases exchange under (so a refresh they have in flight lands first), the module adopts a
+session found there into the IndexedDB record, but only while that record has never been written, then clears the
+`localStorage` snapshot. From then on the record is the only authority: a session a tab still running an earlier
+release writes to `localStorage` is cleared without being adopted, so that tab signs out instead of exchanging tokens
+the record no longer tracks. A failed retirement is reported and the session still hydrates from the record.
 
 Where the browser blocks site storage (reading `localStorage` or `indexedDB` throws, or IndexedDB is missing), the
 default keeps the session in memory instead: sign-in works until the page reloads, no Web Lock is taken, cross-tab

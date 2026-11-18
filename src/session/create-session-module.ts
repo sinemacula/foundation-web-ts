@@ -31,6 +31,7 @@ import { StrictWebStorage } from '../storage/strict-web-storage';
 import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
 import { announceWrites } from './announced-session-persistence';
 import { retireLegacySession } from './legacy-session-migration';
+import type { SessionContext } from './session-context';
 import { installSessionContext, sessionContext } from './session-context';
 import type { CrossTabSync, HydrationReporter, LegacySession } from './session-lifecycle';
 import { bootSessionLifecycle } from './session-lifecycle';
@@ -169,6 +170,32 @@ interface SharedPersistence {
 }
 
 /**
+ * The session's resolved persistence, exchange lock, legacy retirement and
+ * cross-tab sync.
+ */
+interface ResolvedSessionStorage {
+    /** The persistence and exchange lock the session context installs. */
+    readonly storage: Pick<SessionContext, 'persistence' | 'exchangeLock'>;
+
+    /** Retire the legacy snapshot once, or null when there is none. */
+    readonly retired: (() => Promise<void>) | null;
+
+    /** What cross-tab sync observes, or null when it is off. */
+    readonly sync: CrossTabSync | null;
+}
+
+/**
+ * The site storage the default persistence is built over.
+ */
+interface SiteStorage {
+    /** The window localStorage. */
+    readonly area: Storage;
+
+    /** The window IndexedDB. */
+    readonly factory: IDBFactory;
+}
+
+/**
  * The localStorage persistence earlier releases kept the session in.
  */
 interface LegacyPersistence {
@@ -177,6 +204,9 @@ interface LegacyPersistence {
 
     /** The legacy snapshot's persistence, as earlier releases built it. */
     readonly persistence: SessionPersistence;
+
+    /** The lock earlier releases run their exchanges under. */
+    readonly lock: SessionLock;
 }
 
 const DEFAULT_ROUTES: SessionRoutes = {
@@ -264,26 +294,14 @@ function registerSession(
     const generateUuid = options.generateUuid ?? ((): string => crypto.randomUUID());
     const deviceOs = options.deviceOs ?? 'WEB';
 
-    const shared =
-        options.persistence === undefined
-            ? createDefaultPersistence(platform, storageKeys.session)
-            : { persistence: options.persistence(platform), legacy: null };
-    const channel =
-        shared !== null && (options.crossTabSync ?? true)
-            ? openChannel(platform.targetWindow, storageKeys.session)
-            : null;
-    const persistence = sharedPersistence(shared, channel);
-    const legacy =
-        shared === null || shared.legacy === null ? null : createLegacyRetirement(shared.legacy, persistence);
-    const exchangeLock = options.exchangeLock?.(platform) ?? shared?.exchangeLock;
-    const ready = createReadiness(pinia, reportHydration, legacy?.retire);
+    const session = resolveSessionStorage(platform, options, storageKeys.session);
+    const ready = createReadiness(pinia, reportHydration, session.retired);
     const coordinator = createRefreshAuthority(pinia, ready);
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
     installSessionContext({
-        persistence,
-        ...(exchangeLock === undefined ? {} : { exchangeLock }),
+        ...session.storage,
         createLineage: () => crypto.randomUUID(),
         routes,
         storeId: options.storeId ?? 'auth',
@@ -302,7 +320,39 @@ function registerSession(
 
     contributeHttp(context, ready, coordinator);
 
-    return channel === null ? null : { channel, legacy };
+    return session.sync;
+}
+
+/**
+ * Resolve where the session persists and the lock its exchanges run under, with
+ * the retirement of any legacy snapshot and what cross-tab sync observes.
+ */
+function resolveSessionStorage(
+    platform: ResolvedPlatform,
+    options: AnySessionModuleOptions,
+    key: string,
+): ResolvedSessionStorage {
+    const shared =
+        options.persistence === undefined
+            ? createDefaultPersistence(platform, key)
+            : { persistence: options.persistence(platform), legacy: null };
+    const channel = shared !== null && (options.crossTabSync ?? true) ? openChannel(platform.targetWindow, key) : null;
+    const persistence = sharedPersistence(shared, channel);
+    const legacy =
+        shared === null || shared.legacy === null ? null : createLegacyRetirement(shared.legacy, persistence);
+    const retired = legacy === null ? null : once(legacy.retire);
+    const exchangeLock = options.exchangeLock?.(platform) ?? shared?.exchangeLock;
+
+    return {
+        storage: {
+            persistence,
+            ...(exchangeLock === undefined
+                ? {}
+                : { exchangeLock: retired === null ? exchangeLock : afterRetirement(exchangeLock, retired) }),
+        },
+        retired,
+        sync: channel === null ? null : { channel, legacy },
+    };
 }
 
 /**
@@ -348,13 +398,13 @@ function contributeHttp(
 function createReadiness(
     pinia: Pinia,
     reportHydration: HydrationReporter,
-    retireLegacy: (() => Promise<void>) | undefined,
+    retired: (() => Promise<void>) | null,
 ): () => Promise<void> {
     let hydration: Promise<void> | null = null;
 
     return () => {
         hydration ??= reportHydration(
-            (retireLegacy?.() ?? Promise.resolve()).then(() => useSessionStore(pinia).hydrate()),
+            (retired?.() ?? Promise.resolve()).then(() => useSessionStore(pinia).hydrate()),
         ).then(() => undefined);
 
         return hydration;
@@ -425,17 +475,9 @@ function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): Sessi
  * @throws {@link SessionError} when the Web Locks API is unavailable
  */
 function createDefaultPersistence(platform: ResolvedPlatform, key: string): SharedPersistence | null {
-    let area: Storage;
-    let factory: IDBFactory | undefined;
+    const site = accessSiteStorage(platform.targetWindow);
 
-    try {
-        area = platform.targetWindow.localStorage;
-        factory = platform.targetWindow.indexedDB;
-    } catch {
-        return null;
-    }
-
-    if (factory === undefined) {
+    if (site === null) {
         return null;
     }
 
@@ -448,17 +490,37 @@ function createDefaultPersistence(platform: ResolvedPlatform, key: string): Shar
         );
     }
 
+    const exchangeLock = new WebLocksSessionLock(locks, `${key}:exchange`);
+
     return {
-        persistence: new RecordSessionPersistence(new IndexedDbSessionRecordStore(factory, key)),
-        exchangeLock: new WebLocksSessionLock(locks, `${key}:exchange`),
+        persistence: new RecordSessionPersistence(new IndexedDbSessionRecordStore(site.factory, key)),
+        exchangeLock,
         legacy: {
-            area,
-            persistence: new KeyValueSessionPersistence(new StrictWebStorage(area), {
+            area: site.area,
+            persistence: new KeyValueSessionPersistence(new StrictWebStorage(site.area), {
                 key,
                 lock: new WebLocksSessionLock(locks, `${key}:lock`),
             }),
+            lock: exchangeLock,
         },
     };
+}
+
+/**
+ * Resolve the window's localStorage and IndexedDB, whose getters throw where
+ * site storage is blocked.
+ *
+ * @returns both, or null when either is blocked or IndexedDB is missing
+ */
+function accessSiteStorage(target: Window): SiteStorage | null {
+    try {
+        const area = target.localStorage;
+        const factory: IDBFactory | undefined = target.indexedDB;
+
+        return factory === undefined ? null : { area, factory };
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -481,9 +543,37 @@ function createLegacyRetirement(legacy: LegacyPersistence, persistence: SessionP
     return {
         area: legacy.area,
         retire: () =>
-            retireLegacySession(legacy.persistence, persistence).catch((error: unknown) => {
+            retireLegacySession(legacy.persistence, persistence, legacy.lock).catch((error: unknown) => {
                 reporting().captureError(error);
             }),
+    };
+}
+
+/**
+ * Run the task on first call only, sharing its settlement with every later
+ * call.
+ */
+function once(task: () => Promise<void>): () => Promise<void> {
+    let run: Promise<void> | null = null;
+
+    return () => {
+        run ??= task();
+
+        return run;
+    };
+}
+
+/**
+ * Hold each exchange until the first legacy retirement has settled, as that
+ * retirement takes the exchange lock and an exchange awaits readiness.
+ */
+function afterRetirement(lock: SessionLock, retired: () => Promise<void>): SessionLock {
+    return {
+        run: async task => {
+            await retired();
+
+            return lock.run(task);
+        },
     };
 }
 

@@ -12,9 +12,8 @@ import type {
 } from '@sinemacula/foundation/session/session-persistence';
 
 /**
- * Wrap the persistence so every write it commits posts an empty message on the
- * channel once it has resolved, telling the other tabs to read the persisted
- * session again. A failed announcement never fails the write.
+ * Wrap the persistence so each committed write posts an empty message on the
+ * channel, a failed post never failing the write.
  */
 export function announceWrites(persistence: SessionPersistence, channel: BroadcastChannel): SessionPersistence {
     /**

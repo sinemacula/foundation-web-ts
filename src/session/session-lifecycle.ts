@@ -134,6 +134,7 @@ export async function bootSessionLifecycle(
 
     if (options.crossTabSync !== null) {
         teardowns.push(wireCrossTabSync(context.platform.targetWindow, options.crossTabSync, store, options, loadUser));
+        await options.crossTabSync.legacy?.retire();
         await options.reportHydration(store.hydrate());
     }
 
@@ -175,10 +176,8 @@ function wireSessionLossRedirect(router: Router, store: SessionStore, routes: Se
 }
 
 /**
- * Re-hydrate whenever another tab announces a session write, or the page is
- * restored from the back-forward cache having missed announcements, then load
- * the adopted session's user. A legacy session an earlier release writes is
- * retired first. Tearing down closes the channel.
+ * Re-hydrate, then load the adopted user, on another tab's announcement, a
+ * back-forward cache restore or, once retired, a legacy write.
  */
 function wireCrossTabSync(
     target: Window,
@@ -228,7 +227,6 @@ function wireCrossTabSync(
 
     return () => {
         disposed = true;
-        sync.channel.removeEventListener('message', onMessage);
         sync.channel.close();
         target.removeEventListener('pageshow', onPageShow);
         target.removeEventListener('storage', onStorage);

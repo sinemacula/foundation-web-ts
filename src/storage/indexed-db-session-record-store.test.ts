@@ -201,6 +201,32 @@ describe('IndexedDbSessionRecordStore', () => {
         await expect(store.read()).resolves.toBeNull();
     });
 
+    it('rejects a transaction aborted without an error, leaving the record as it was', async () => {
+        const store = new IndexedDbSessionRecordStore(new IDBFactory(), DATABASE);
+
+        await store.swap(() => 'kept');
+        vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementationOnce(function (this: IDBObjectStore) {
+            this.transaction.abort();
+
+            return {} as IDBRequest<IDBValidKey>;
+        });
+
+        await expect(store.swap(() => 'replaced')).rejects.toThrow(
+            new SessionError('The session record transaction was aborted.'),
+        );
+        await expect(store.read()).resolves.toBe('kept');
+    });
+
+    it('rejects a record the store cannot hold with the failure of the write', async () => {
+        const store = new IndexedDbSessionRecordStore(new IDBFactory(), DATABASE);
+
+        await expect(store.swap(() => (() => 'not cloneable') as unknown as string)).rejects.toHaveProperty(
+            'name',
+            'DataCloneError',
+        );
+        await expect(store.read()).resolves.toBeNull();
+    });
+
     it('rejects an open that fails without an error', async () => {
         const request = { error: null } as unknown as IDBOpenDBRequest;
         const factory = {

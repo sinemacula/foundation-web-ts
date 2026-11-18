@@ -281,21 +281,17 @@ describe('session lifecycle', () => {
         });
 
         it.each([
-            ['resynchronises when', true, 1],
-            ['ignores', false, 0],
-        ])('%s the page is shown from the back-forward cache', async (_label, persisted, extra) => {
-            const target = harness();
-            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
+            ['adopts a session persisted while', true, 'restored'],
+            ['ignores', false, 'access'],
+        ])('%s the page sat in the back-forward cache', async (_label, restored, expected) => {
+            const target = await persisted();
 
             await target.boot();
+            await target.win.persist(tokens({ accessToken: 'restored' }), 2);
+            target.win.dispatchPageShow(restored);
             await settle();
 
-            const reads = read.mock.calls.length;
-
-            target.win.dispatchPageShow(persisted);
-            await settle();
-
-            expect(read).toHaveBeenCalledTimes(reads + extra);
+            expect(target.store().accessToken).toBe(expected);
         });
 
         it('clears a session an earlier release writes in another tab, keeping the held one', async () => {
@@ -330,13 +326,28 @@ describe('session lifecycle', () => {
             expect(target.store().accessToken).toBe('legacy');
         });
 
-        it('stops listening for legacy writes once torn down', async () => {
+        it('adopts a session an earlier release wrote before the listener, while none is recorded', async () => {
+            const target = harness();
+
+            target.stores();
+            await sessionContext().ready();
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }));
+            gateway.currentUser.mockResolvedValueOnce(user());
+
+            await target.boot();
+
+            expect(target.store().accessToken).toBe('legacy');
+            expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual(snapshot(null, 2));
+        });
+
+        it('stops listening for legacy writes and restores once torn down', async () => {
             const target = harness();
             const teardown = await target.boot();
 
             teardown();
             persistSnapshot(target.win.localStorage, tokens(), 3);
             target.win.dispatchStorage({ key: 'auth.session' });
+            await target.win.persist(tokens({ accessToken: 'restored' }));
             target.win.dispatchPageShow(true);
             await settle();
 

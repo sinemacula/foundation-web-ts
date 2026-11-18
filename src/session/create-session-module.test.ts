@@ -213,6 +213,23 @@ describe('createSessionModule', () => {
 
             expect(target.store().isAuthenticated).toBe(true);
             expect(target.win.navigator.locks?.names).toStrictEqual([]);
+            expect(sessionContext()).not.toHaveProperty('exchangeLock');
+        });
+
+        it('runs the exchanges of a given persistence under a given exchange lock', async () => {
+            const lock = new InProcessSessionLock();
+            const run = vi.spyOn(lock, 'run');
+            const target = harness({
+                persistence: () => new KeyValueSessionPersistence(new MemoryStorage()),
+                exchangeLock: () => lock,
+            });
+
+            gateway.login.mockResolvedValueOnce({ kind: 'authenticated', tokens: tokens() });
+            gateway.currentUser.mockResolvedValueOnce(user());
+            await target.store().login({ email: 'a', password: 'b' });
+
+            expect(run).toHaveBeenCalledOnce();
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
         });
 
         it('rejects a sign-in whose storage write fails', async () => {
@@ -337,6 +354,7 @@ describe('createSessionModule', () => {
 
             expect(target.store().isAuthenticated).toBe(true);
             expect(target.win.openChannels()).toBe(0);
+            expect(sessionContext().persistence).toBeInstanceOf(RecordSessionPersistence);
         });
 
         it('refuses to register without BroadcastChannel while cross-tab sync is on', () => {
@@ -358,7 +376,47 @@ describe('createSessionModule', () => {
             expect(target.store().accessToken).toBe('legacy');
             expect(await target.win.record()).toStrictEqual(snapshot(tokens({ accessToken: 'legacy' })));
             expect(JSON.parse(target.win.localStorage.getItem(SESSION_KEY) ?? '')).toStrictEqual(snapshot(null, 5));
-            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:lock']);
+            expect(target.win.navigator.locks?.names).toStrictEqual(['auth.session:exchange', 'auth.session:lock']);
+        });
+
+        it('waits for an exchange an earlier release has in flight before adopting its session', async () => {
+            const target = harness();
+            const exchange = deferred<undefined>();
+
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'spent' }));
+
+            const earlierRelease = target.win.navigator.locks?.request('auth.session:exchange', async () => {
+                await exchange.promise;
+                persistSnapshot(target.win.localStorage, tokens({ accessToken: 'rotated' }), 2);
+            });
+            const ready = sessionContext().ready();
+
+            exchange.resolve(undefined);
+            await earlierRelease;
+            await ready;
+
+            expect(target.store().accessToken).toBe('rotated');
+        });
+
+        it('retires the legacy session before an exchange that awaits readiness takes the lock', async () => {
+            const target = harness();
+
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }));
+            gateway.login.mockImplementationOnce(async () => {
+                await sessionContext().ready();
+
+                return { kind: 'authenticated', tokens: tokens({ accessToken: 'signed-in' }) };
+            });
+            gateway.currentUser.mockResolvedValueOnce(user());
+
+            await expect(target.store().login({ email: 'a', password: 'b' })).resolves.toStrictEqual({
+                kind: 'superseded',
+            });
+            expect(target.win.navigator.locks?.names).toStrictEqual([
+                'auth.session:exchange',
+                'auth.session:lock',
+                'auth.session:exchange',
+            ]);
         });
 
         it('keeps the record once written, clearing a later legacy session without adopting it', async () => {

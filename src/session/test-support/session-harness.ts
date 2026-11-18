@@ -216,11 +216,10 @@ function createChannelBus(): ChannelBus {
         open.add(channel);
 
         return {
-            addEventListener: (_type: string, listener: () => void) => {
-                channel.listeners.add(listener);
-            },
-            removeEventListener: (_type: string, listener: () => void) => {
-                channel.listeners.delete(listener);
+            addEventListener: (type: string, listener: () => void) => {
+                if (type === 'message') {
+                    channel.listeners.add(listener);
+                }
             },
             postMessage: () => {
                 if (!open.has(channel)) {
