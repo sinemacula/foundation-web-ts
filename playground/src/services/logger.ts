@@ -8,5 +8,5 @@
 export {
     installLogger as initialiseLogger,
     logger,
-    resetWebCoreServices as resetLogger,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetLogger,
+} from '@sinemacula/foundation-web/app/services';

@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { colorScheme, resetWebCoreServices } from './services';
+import { colorScheme, resetFoundationWebServices } from './services';
 import type { ColorSchemeWiringConfig, WireColorSchemeOptions } from './wire-color-scheme';
 import { wireColorScheme } from './wire-color-scheme';
 
@@ -82,7 +82,7 @@ function metaColor(doc: Document): string | null {
 
 describe('wireColorScheme', () => {
     afterEach(() => {
-        resetWebCoreServices();
+        resetFoundationWebServices();
         document.documentElement.removeAttribute('data-theme');
         document.querySelector('meta[name="theme-color"]')?.remove();
     });

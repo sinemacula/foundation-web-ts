@@ -24,7 +24,7 @@ describe('appConfig', () => {
         const result = appConfig(env);
 
         expect(result.environment).toBe('production');
-        expect(result.name).toBe('Web Core');
+        expect(result.name).toBe('Foundation Web');
         expect(result.version).toBe('dev');
         expect(result.urls.api).toBe('http://localhost:8000');
         expect(result.urls.app).toBe('http://localhost:5173');
@@ -37,7 +37,7 @@ describe('appConfig', () => {
             new ObjectEnvironmentSource(
                 wire([
                     ['APP_ENV', 'staging'],
-                    ['APP_NAME', 'Web Core'],
+                    ['APP_NAME', 'Foundation Web'],
                     ['APP_VERSION', '1.2.3'],
                     ['API_URL', 'https://api.staging.example.com'],
                     ['APP_URL', 'https://app.staging.example.com'],
@@ -49,7 +49,7 @@ describe('appConfig', () => {
         const result = appConfig(env);
 
         expect(result.environment).toBe('staging');
-        expect(result.name).toBe('Web Core');
+        expect(result.name).toBe('Foundation Web');
         expect(result.version).toBe('1.2.3');
         expect(result.urls.api).toBe('https://api.staging.example.com');
         expect(result.urls.app).toBe('https://app.staging.example.com');

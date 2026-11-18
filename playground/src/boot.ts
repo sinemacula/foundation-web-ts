@@ -5,10 +5,13 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { WebCoreApp, WebCorePlatformOptions } from '@sinemacula/web-core/app/create-web-core-app';
-import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
-import { createWebEnvironment } from '@sinemacula/web-core/config/web-environment';
-import { createSessionModule } from '@sinemacula/web-core/session/create-session-module';
+import type {
+    FoundationWebApp,
+    FoundationWebPlatformOptions,
+} from '@sinemacula/foundation-web/app/create-foundation-web-app';
+import { createFoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
+import { createWebEnvironment } from '@sinemacula/foundation-web/config/web-environment';
+import { createSessionModule } from '@sinemacula/foundation-web/session/create-session-module';
 
 import App from '@/App.vue';
 import type { Configuration } from '@/config';
@@ -29,14 +32,14 @@ export interface PlaygroundBootOptions {
     readonly buildTimeEnv: Readonly<Record<string, unknown>>;
 
     /** Platform seams to replace, such as fetch, storage and history. */
-    readonly platform?: WebCorePlatformOptions;
+    readonly platform?: FoundationWebPlatformOptions;
 }
 
 /**
  * Assemble the application through the kernel preset, ready to start.
  */
-export function createPlaygroundApp(options: PlaygroundBootOptions): Promise<WebCoreApp<Configuration>> {
-    return createWebCoreApp({
+export function createPlaygroundApp(options: PlaygroundBootOptions): Promise<FoundationWebApp<Configuration>> {
+    return createFoundationWebApp({
         root: App,
         modules: [createSessionModule(), ...modules],
         config: {

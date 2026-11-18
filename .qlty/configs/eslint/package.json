@@ -1,5 +1,5 @@
 {
-    "name": "web-core-eslint-tooling",
+    "name": "foundation-web-eslint-tooling",
     "private": true,
     "type": "module",
     "devDependencies": {

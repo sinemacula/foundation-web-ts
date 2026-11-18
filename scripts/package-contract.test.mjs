@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
 const tsconfig = JSON.parse(readFileSync('tsconfig.json', 'utf8'));
 
-const PREFIX = '@sinemacula/web-core/';
+const PREFIX = '@sinemacula/foundation-web/';
 
 describe('package contract', () => {
     it('maps every kernel export, and only those, in the TypeScript paths', () => {

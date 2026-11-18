@@ -1,5 +1,5 @@
 /**
- * Integration tests for createWebCoreApp.
+ * Integration tests for createFoundationWebApp.
  *
  * @author      Ben Carey <bdmc@sinemacula.co.uk>
  * @copyright   2026 Sine Macula Limited
@@ -37,8 +37,8 @@ import type { RouteMiddleware } from '../router/middleware';
 import { next } from '@sinemacula/foundation/router/middleware';
 import { BrowserStorage } from '../storage/browser-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import type { WebCoreApp, WebCoreAppOptions } from './create-web-core-app';
-import { WebCoreAppError, createWebCoreApp, observeBootPhases } from './create-web-core-app';
+import type { FoundationWebApp, FoundationWebAppOptions } from './create-foundation-web-app';
+import { FoundationWebAppError, createFoundationWebApp, observeBootPhases } from './create-foundation-web-app';
 import {
     analytics,
     api,
@@ -51,7 +51,7 @@ import {
     logger,
     realtime,
     reporting,
-    resetWebCoreServices,
+    resetFoundationWebServices,
     toasts,
 } from './services';
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
@@ -285,7 +285,7 @@ type TestConfiguration = ReturnType<typeof defineTestConfiguration>;
 /**
  * Build the config options, optionally pointing at a runtime environment URL.
  */
-function makeConfig(runtimeUrl?: string): WebCoreAppOptions<TestConfiguration>['config'] {
+function makeConfig(runtimeUrl?: string): FoundationWebAppOptions<TestConfiguration>['config'] {
     return {
         createEnvironment: (runtime: Readonly<Record<string, string>>): Environment =>
             createWebEnvironment({ runtime, dev: true }),
@@ -432,9 +432,9 @@ function deferred<T>(): Deferred<T> {
  * Boot the app with the default test options and any overrides.
  */
 function bootApp(
-    overrides: Partial<WebCoreAppOptions<TestConfiguration>> = {},
-): Promise<WebCoreApp<TestConfiguration>> {
-    return createWebCoreApp<TestConfiguration>({
+    overrides: Partial<FoundationWebAppOptions<TestConfiguration>> = {},
+): Promise<FoundationWebApp<TestConfiguration>> {
+    return createFoundationWebApp<TestConfiguration>({
         root: makeRoot(),
         modules: [homeModule()],
         config: makeConfig(),
@@ -443,9 +443,9 @@ function bootApp(
     });
 }
 
-describe('createWebCoreApp', () => {
+describe('createFoundationWebApp', () => {
     afterEach(() => {
-        resetWebCoreServices();
+        resetFoundationWebServices();
     });
 
     describe('boot phases', () => {
@@ -1690,7 +1690,7 @@ describe('createWebCoreApp', () => {
             expect(toastService.toasts.value).toHaveLength(0);
         });
 
-        it('leaves service holders installed after dispose until resetWebCoreServices', async () => {
+        it('leaves service holders installed after dispose until resetFoundationWebServices', async () => {
             const app = await bootApp();
 
             app.dispose();
@@ -1698,7 +1698,7 @@ describe('createWebCoreApp', () => {
             expect(() => api()).not.toThrow();
             expect(() => toasts()).not.toThrow();
 
-            resetWebCoreServices();
+            resetFoundationWebServices();
 
             expect(() => api()).toThrow('http client accessed before initialisation');
             expect(() => toasts()).toThrow('toast service accessed before initialisation');
@@ -1749,7 +1749,7 @@ describe('createWebCoreApp', () => {
             expect(targetWindow.listenerCount('online')).toBe(0);
         }
 
-        it.each<[string, (order: string[]) => Partial<WebCoreAppOptions<TestConfiguration>>, string[]]>([
+        it.each<[string, (order: string[]) => Partial<FoundationWebAppOptions<TestConfiguration>>, string[]]>([
             [
                 'the environment cannot be built',
                 order => ({
@@ -1947,7 +1947,7 @@ describe('createWebCoreApp', () => {
 
             await expect(bootApp({ modules: [homeModule(), failingModule()], platform: seams })).rejects.toBe(failure);
 
-            resetWebCoreServices();
+            resetFoundationWebServices();
 
             const app = await bootApp({ platform: { ...seams, history: createMemoryHistory() } });
 
@@ -2021,7 +2021,7 @@ describe('createWebCoreApp', () => {
         it('rejects and leaves nothing mounted when a component disposes the handle while mounting', async () => {
             const seams = makeSeams();
             const host = seams.targetDocument.createElement('div');
-            let mounting: WebCoreApp<TestConfiguration> | null = null;
+            let mounting: FoundationWebApp<TestConfiguration> | null = null;
 
             const app = await bootApp({
                 root: defineComponent({
@@ -2084,9 +2084,9 @@ describe('createWebCoreApp', () => {
 
             const starting = app.start(document.createElement('div'));
 
-            await expect(starting).rejects.toBeInstanceOf(WebCoreAppError);
+            await expect(starting).rejects.toBeInstanceOf(FoundationWebAppError);
             await expect(starting).rejects.toThrow('The application has been disposed.');
-            await expect(starting).rejects.toHaveProperty('name', 'WebCoreAppError');
+            await expect(starting).rejects.toHaveProperty('name', 'FoundationWebAppError');
         });
 
         it('reports disposal rather than a repeat start once a started handle is disposed', async () => {
@@ -2193,7 +2193,7 @@ describe('createWebCoreApp', () => {
                     expect(vi.getTimerCount()).toBeGreaterThan(0);
 
                     app.dispose();
-                    resetWebCoreServices();
+                    resetFoundationWebServices();
 
                     expect(host.innerHTML).toBe('');
                     expect(vi.getTimerCount()).toBe(0);
@@ -2277,7 +2277,7 @@ describe('createWebCoreApp', () => {
             const first = await bootApp({ realtime: () => makeRealtime([]) });
 
             first.dispose();
-            resetWebCoreServices();
+            resetFoundationWebServices();
 
             const second = await bootApp();
 
@@ -2300,7 +2300,7 @@ describe('createWebCoreApp', () => {
                 const clockValues: number[] = [];
                 const schedules: ScheduleTask[] = [];
 
-                const app = await createWebCoreApp<TestConfiguration>({
+                const app = await createFoundationWebApp<TestConfiguration>({
                     root: makeRoot(),
                     modules: [
                         homeModule({

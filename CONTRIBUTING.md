@@ -10,8 +10,8 @@ Contributions are welcome via GitHub pull requests. This guide covers the expect
 ## Getting Started
 
 ```bash
-git clone git@github.com:sinemacula/web-core-ts.git
-cd web-core-ts
+git clone git@github.com:sinemacula/foundation-web-ts.git
+cd foundation-web-ts
 nvm use
 npm install
 cp playground/.env.example playground/.env   # local development variables (VITE_*)
@@ -26,16 +26,16 @@ npm run dev                                  # playground dev server
 
 ```text
 src/           The kernel package source - one directory per area, tests colocated
-eslint/        The module-contract ESLint preset, published as @sinemacula/web-core/eslint
-playground/    Reference application + dev harness (@sinemacula/web-core-playground)
+eslint/        The module-contract ESLint preset, published as @sinemacula/foundation-web/eslint
+playground/    Reference application + dev harness (@sinemacula/foundation-web-playground)
 e2e/           Playwright suite driving the playground application
 scripts/       Package build and mutation-scope scripts
 ```
 
-The playground consumes the kernel as `"@sinemacula/web-core": "file:.."`. Inside this repository the TypeScript, Vite
-and Vitest configs map only the exported subpaths to `src/`, so the playground and tests run with no build step and
-the playground's imports are exactly what an external consumer writes. For the application-side details - boot
-sequence, runtime environment mechanics, adding a feature module - see [playground/README.md](playground/README.md).
+The playground consumes the kernel as `"@sinemacula/foundation-web": "file:.."`. Inside this repository the TypeScript,
+Vite and Vitest configs map only the exported subpaths to `src/`, so the playground and tests run with no build step and
+the playground's imports are exactly what an external consumer writes. For the application-side details - boot sequence,
+runtime environment mechanics, adding a feature module - see [playground/README.md](playground/README.md).
 
 ## Development Workflow
 
@@ -102,7 +102,8 @@ npx vitest run -t "adopts the persisted session on hydrate"
 - The kernel (root `src/`) stays product-agnostic: no Vue component code, so it stays usable by any Sine Macula
   frontend. Product and application functionality belongs in `playground/`.
 - Every behavioural dependency is a port (interface), with adapters at the edges substituted in tests.
-- No barrel files; consumers import the kernel by subpath (e.g. `@sinemacula/web-core/app/create-web-core-app`).
+- No barrel files; consumers import the kernel by subpath (e.g.
+  `@sinemacula/foundation-web/app/create-foundation-web-app`).
 - Behaviour lives in plain TypeScript; Vue single-file components stay thin (template plus wiring).
 - Imports between playground modules go through a module's public surface (`@/modules/<name>`, its `index.ts`), never
   into its internals.
@@ -113,11 +114,10 @@ npx vitest run -t "adopts the persisted session on hydrate"
 
 ### Design Decisions
 
-- **Service access is application-singleton, not provide/inject.** The preset installs services into holders exposed
-  as typed accessors (`api()`, `toasts()`, ... in `src/app/services.ts`). Accessors keep services usable outside
-  component context (stores, middleware, plain modules) and make test substitution explicit
-  (`resetWebCoreServices()`). Holders are process-global: one application per page; SSR and multi-app scoping are out
-  of scope.
+- **Service access is application-singleton, not provide/inject.** The preset installs services into holders exposed as
+  typed accessors (`api()`, `toasts()`, ... in `src/app/services.ts`). Accessors keep services usable outside component
+  context (stores, middleware, plain modules) and make test substitution explicit (`resetFoundationWebServices()`).
+  Holders are process-global: one application per page; SSR and multi-app scoping are out of scope.
 - **Time is a function seam, not a Clock port.** The preset threads `platform.clock` and `platform.schedule`, and each
   time-dependent unit accepts a clock or timer override where tests need determinism.
 - **No success-side response interceptors.** The error side has a seam (`onResponseError`); response header access

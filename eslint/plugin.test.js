@@ -34,7 +34,7 @@ describe('plugin', () => {
     });
 
     it('names the plugin so flat config can reference it', () => {
-        expect(plugin.meta.name).toBe('@sinemacula/web-core');
+        expect(plugin.meta.name).toBe('@sinemacula/foundation-web');
     });
 
     it.each(RULES)('exposes %s as a well-formed rule', name => {
@@ -45,7 +45,7 @@ describe('plugin', () => {
     });
 
     it.each(RULES)('links %s to its README section', name => {
-        expect(plugin.rules[name].meta.docs.url).toBe(`https://github.com/sinemacula/web-core-ts#${name}`);
+        expect(plugin.rules[name].meta.docs.url).toBe(`https://github.com/sinemacula/foundation-web-ts#${name}`);
         expect(README_ANCHORS).toContain(name);
     });
 });

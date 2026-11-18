@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { useListQuery } from '@sinemacula/web-core/query/use-list-query';
+import { useListQuery } from '@sinemacula/foundation-web/query/use-list-query';
 import { describe, expect, it } from 'vitest';
 
 import { userList } from '@/modules/users/queries/user-list';

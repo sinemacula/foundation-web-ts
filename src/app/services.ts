@@ -78,7 +78,7 @@ export function localeSwitcher(): LocaleSwitcher {
  * Clear every service holder - base and web - back to uninstalled, between
  * tests or before booting a replacement application.
  */
-export function resetWebCoreServices(): void {
+export function resetFoundationWebServices(): void {
     resetFoundationServices();
     localeSwitcherHolder.reset();
 }

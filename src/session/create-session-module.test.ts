@@ -21,7 +21,7 @@ import type { SessionPersistence, SessionSnapshot } from '@sinemacula/foundation
 import type { SessionState } from '@sinemacula/foundation/session/session-state';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { installApi, resetWebCoreServices } from '../app/services';
+import { installApi, resetFoundationWebServices } from '../app/services';
 import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
@@ -99,7 +99,7 @@ describe('createSessionModule', () => {
     });
 
     afterEach(() => {
-        resetWebCoreServices();
+        resetFoundationWebServices();
         resetSessionContext();
     });
 
@@ -806,7 +806,7 @@ describe('createSessionModule', () => {
     describe('session API gateway', () => {
         it('builds the default gateway lazily over the installed HTTP client, once', () => {
             createSessionHarness(createSessionModule());
-            resetWebCoreServices();
+            resetFoundationWebServices();
 
             expect(() => sessionContext().api).toThrowError('http client accessed before initialisation');
 

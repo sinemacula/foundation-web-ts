@@ -6,7 +6,7 @@
 -->
 
 <script setup lang="ts">
-import { createNavigationProgress } from '@sinemacula/web-core/router/navigation-progress';
+import { createNavigationProgress } from '@sinemacula/foundation-web/router/navigation-progress';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 

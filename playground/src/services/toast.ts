@@ -7,6 +7,6 @@
 
 export {
     installToasts as initialiseToasts,
-    resetWebCoreServices as resetToasts,
+    resetFoundationWebServices as resetToasts,
     toasts,
-} from '@sinemacula/web-core/app/services';
+} from '@sinemacula/foundation-web/app/services';

@@ -5,14 +5,14 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { appConfig, appConfigRepository, installConfig } from '@sinemacula/web-core/app/services';
+import { appConfig, appConfigRepository, installConfig } from '@sinemacula/foundation-web/app/services';
 import { ConfigRepository } from '@sinemacula/foundation/config/config-repository';
 import type { Environment } from '@sinemacula/foundation/config/environment';
 
 import type { Configuration } from '@/config';
 import { defineConfiguration } from '@/config';
 
-export { resetWebCoreServices as resetConfiguration } from '@sinemacula/web-core/app/services';
+export { resetFoundationWebServices as resetConfiguration } from '@sinemacula/foundation-web/app/services';
 
 /**
  * Resolve and install the configuration tree; the boot preset does this in

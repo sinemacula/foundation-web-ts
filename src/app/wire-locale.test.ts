@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocaleMessageLoader, ModuleDefinition } from '../module/module';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { localeSwitcher, resetWebCoreServices } from './services';
+import { localeSwitcher, resetFoundationWebServices } from './services';
 import type { LocaleWiringConfig, WireLocaleOptions } from './wire-locale';
 import { wireLocale } from './wire-locale';
 
@@ -48,7 +48,7 @@ function baseOptions(overrides: Partial<WireLocaleOptions> = {}): WireLocaleOpti
 
 describe('wireLocale', () => {
     afterEach(() => {
-        resetWebCoreServices();
+        resetFoundationWebServices();
         document.documentElement.removeAttribute('lang');
         document.documentElement.removeAttribute('dir');
     });

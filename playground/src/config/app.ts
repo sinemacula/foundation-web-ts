@@ -45,7 +45,7 @@ export function appConfig(env: Environment): AppConfig {
 
     return {
         environment: env.string('APP_ENV', 'production'),
-        name: env.string('APP_NAME', 'Web Core'),
+        name: env.string('APP_NAME', 'Foundation Web'),
         version: env.string('APP_VERSION', 'dev'),
         urls: {
             api,

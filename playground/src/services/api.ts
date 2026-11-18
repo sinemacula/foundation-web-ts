@@ -5,4 +5,8 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-export { api, installApi as initialiseApi, resetWebCoreServices as resetApi } from '@sinemacula/web-core/app/services';
+export {
+    api,
+    installApi as initialiseApi,
+    resetFoundationWebServices as resetApi,
+} from '@sinemacula/foundation-web/app/services';

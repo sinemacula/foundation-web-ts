@@ -8,5 +8,5 @@
 export {
     installReporting as initialiseReporting,
     reporting,
-    resetWebCoreServices as resetReporting,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetReporting,
+} from '@sinemacula/foundation-web/app/services';
