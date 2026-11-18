@@ -28,6 +28,9 @@
                 "./src/session/session-refresh-coordinator.ts"
             ],
             "@sinemacula/web-core/session/session-store": ["./src/session/session-store.ts"],
+            "@sinemacula/web-core/storage/indexed-db-session-record-store": [
+                "./src/storage/indexed-db-session-record-store.ts"
+            ],
             "@sinemacula/web-core/storage/strict-web-storage": ["./src/storage/strict-web-storage.ts"],
             "@sinemacula/web-core/storage/web-locks-session-lock": ["./src/storage/web-locks-session-lock.ts"],
             "@sinemacula/web-core/theme/color-scheme-boot": ["./src/theme/color-scheme-boot.ts"]
