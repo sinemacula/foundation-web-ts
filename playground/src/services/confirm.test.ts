@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { ConfirmService } from '@sinemacula/web-core/notifications/confirm-service';
+import { ConfirmService } from '@sinemacula/foundation-web/notifications/confirm-service';
 import { afterEach, describe, expect, it } from 'vitest';
 import { confirmDialogs, initialiseConfirm, resetConfirm } from '@/services/confirm';
 

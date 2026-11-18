@@ -6,34 +6,34 @@
         "jsxImportSource": "vue",
         "paths": {
             "@/*": ["./playground/src/*"],
-            "@sinemacula/web-core/app/create-web-core-app": ["./src/app/create-web-core-app.ts"],
-            "@sinemacula/web-core/app/services": ["./src/app/services.ts"],
-            "@sinemacula/web-core/composables/use-focus-trap": ["./src/composables/use-focus-trap.ts"],
-            "@sinemacula/web-core/config/web-environment": ["./src/config/web-environment.ts"],
-            "@sinemacula/web-core/i18n/application-i18n": ["./src/i18n/application-i18n.ts"],
-            "@sinemacula/web-core/module/module": ["./src/module/module.ts"],
-            "@sinemacula/web-core/notifications/confirm-service": ["./src/notifications/confirm-service.ts"],
-            "@sinemacula/web-core/notifications/toast-service": ["./src/notifications/toast-service.ts"],
-            "@sinemacula/web-core/query/use-list-query": ["./src/query/use-list-query.ts"],
-            "@sinemacula/web-core/query/use-resource": ["./src/query/use-resource.ts"],
-            "@sinemacula/web-core/router/navigation-progress": ["./src/router/navigation-progress.ts"],
-            "@sinemacula/web-core/router/redirect-loop-error": ["./src/router/redirect-loop-error.ts"],
-            "@sinemacula/web-core/session/authorization": ["./src/session/authorization.ts"],
-            "@sinemacula/web-core/session/create-session-module": ["./src/session/create-session-module.ts"],
-            "@sinemacula/web-core/session/middleware": ["./src/session/middleware.ts"],
-            "@sinemacula/web-core/session/redirect": ["./src/session/redirect.ts"],
-            "@sinemacula/web-core/session/session-context": ["./src/session/session-context.ts"],
-            "@sinemacula/web-core/session/session-realtime": ["./src/session/session-realtime.ts"],
-            "@sinemacula/web-core/session/session-refresh-coordinator": [
+            "@sinemacula/foundation-web/app/create-foundation-web-app": ["./src/app/create-foundation-web-app.ts"],
+            "@sinemacula/foundation-web/app/services": ["./src/app/services.ts"],
+            "@sinemacula/foundation-web/composables/use-focus-trap": ["./src/composables/use-focus-trap.ts"],
+            "@sinemacula/foundation-web/config/web-environment": ["./src/config/web-environment.ts"],
+            "@sinemacula/foundation-web/i18n/application-i18n": ["./src/i18n/application-i18n.ts"],
+            "@sinemacula/foundation-web/module/module": ["./src/module/module.ts"],
+            "@sinemacula/foundation-web/notifications/confirm-service": ["./src/notifications/confirm-service.ts"],
+            "@sinemacula/foundation-web/notifications/toast-service": ["./src/notifications/toast-service.ts"],
+            "@sinemacula/foundation-web/query/use-list-query": ["./src/query/use-list-query.ts"],
+            "@sinemacula/foundation-web/query/use-resource": ["./src/query/use-resource.ts"],
+            "@sinemacula/foundation-web/router/navigation-progress": ["./src/router/navigation-progress.ts"],
+            "@sinemacula/foundation-web/router/redirect-loop-error": ["./src/router/redirect-loop-error.ts"],
+            "@sinemacula/foundation-web/session/authorization": ["./src/session/authorization.ts"],
+            "@sinemacula/foundation-web/session/create-session-module": ["./src/session/create-session-module.ts"],
+            "@sinemacula/foundation-web/session/middleware": ["./src/session/middleware.ts"],
+            "@sinemacula/foundation-web/session/redirect": ["./src/session/redirect.ts"],
+            "@sinemacula/foundation-web/session/session-context": ["./src/session/session-context.ts"],
+            "@sinemacula/foundation-web/session/session-realtime": ["./src/session/session-realtime.ts"],
+            "@sinemacula/foundation-web/session/session-refresh-coordinator": [
                 "./src/session/session-refresh-coordinator.ts"
             ],
-            "@sinemacula/web-core/session/session-store": ["./src/session/session-store.ts"],
-            "@sinemacula/web-core/storage/indexed-db-session-record-store": [
+            "@sinemacula/foundation-web/session/session-store": ["./src/session/session-store.ts"],
+            "@sinemacula/foundation-web/storage/indexed-db-session-record-store": [
                 "./src/storage/indexed-db-session-record-store.ts"
             ],
-            "@sinemacula/web-core/storage/strict-web-storage": ["./src/storage/strict-web-storage.ts"],
-            "@sinemacula/web-core/storage/web-locks-session-lock": ["./src/storage/web-locks-session-lock.ts"],
-            "@sinemacula/web-core/theme/color-scheme-boot": ["./src/theme/color-scheme-boot.ts"]
+            "@sinemacula/foundation-web/storage/strict-web-storage": ["./src/storage/strict-web-storage.ts"],
+            "@sinemacula/foundation-web/storage/web-locks-session-lock": ["./src/storage/web-locks-session-lock.ts"],
+            "@sinemacula/foundation-web/theme/color-scheme-boot": ["./src/theme/color-scheme-boot.ts"]
         },
         "types": ["vite/client", "node"],
         "noEmit": true

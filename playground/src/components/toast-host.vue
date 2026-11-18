@@ -11,7 +11,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import { toasts } from '@/services/toast';
-import type { Toast } from '@sinemacula/web-core/notifications/toast-service';
+import type { Toast } from '@sinemacula/foundation-web/notifications/toast-service';
 
 const { t } = useI18n();
 const service = toasts();

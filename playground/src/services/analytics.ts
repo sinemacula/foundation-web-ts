@@ -8,5 +8,5 @@
 export {
     analytics,
     installAnalytics as initialiseAnalytics,
-    resetWebCoreServices as resetAnalytics,
-} from '@sinemacula/web-core/app/services';
+    resetFoundationWebServices as resetAnalytics,
+} from '@sinemacula/foundation-web/app/services';

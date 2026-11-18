@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { ToastService } from '@sinemacula/web-core/notifications/toast-service';
+import { ToastService } from '@sinemacula/foundation-web/notifications/toast-service';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initialiseToasts, resetToasts, toasts } from '@/services/toast';
 

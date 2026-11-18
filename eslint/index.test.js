@@ -12,9 +12,9 @@ import config from './index.js';
 
 const linter = new Linter({ configType: 'flat' });
 
-/** Source breaking every web-core rule that could apply to its file. */
+/** Source breaking every foundation-web rule that could apply to its file. */
 const VIOLATIONS = [
-    "import { x } from '@sinemacula/web-core';",
+    "import { x } from '@sinemacula/foundation-web';",
     'export const payload = { snake_key: x };',
     "export const AUTH_ROUTE_NAMES = { home: 'home' };",
     "export const wrong: ModuleDefinition = { name: 'login' };",
@@ -31,9 +31,9 @@ function ruleIds(messages) {
     return messages.map(message => message.ruleId);
 }
 
-/** The distinct web-core rule names reported, sorted, with the plugin prefix dropped. */
+/** The distinct foundation-web rule names reported, sorted, with the plugin prefix dropped. */
 function reportedRules(messages) {
-    return [...new Set(ruleIds(messages).map(id => id?.replace('@sinemacula/web-core/', '')))].sort();
+    return [...new Set(ruleIds(messages).map(id => id?.replace('@sinemacula/foundation-web/', '')))].sort();
 }
 
 describe('preset config', () => {
@@ -90,7 +90,7 @@ describe('preset config', () => {
         ].join('\n');
 
         expect(ruleIds(lint(code, 'src/components/item-list.vue'))).toEqual([
-            '@sinemacula/web-core/no-snake-case-keys',
+            '@sinemacula/foundation-web/no-snake-case-keys',
         ]);
     });
 });
@@ -108,15 +108,15 @@ describe('preset in a flat config', () => {
         return ruleIds(result.messages);
     }
 
-    it('reports web-core rules after another preset', async () => {
+    it('reports foundation-web rules after another preset', async () => {
         const names = "export const AUTH_ROUTE_NAMES = { login: 'login' } as const;";
         const component =
             '<script setup lang="ts">\nimport { x } from \'@/modules/users/composables/use-thing\';\nx();\n</script>';
 
         expect(await lintText(names, 'src/modules/auth/route-names.ts')).toEqual([
-            '@sinemacula/web-core/route-name-namespacing',
+            '@sinemacula/foundation-web/route-name-namespacing',
         ]);
-        expect(await lintText(component, 'src/App.vue')).toEqual(['@sinemacula/web-core/module-import-boundary']);
+        expect(await lintText(component, 'src/App.vue')).toEqual(['@sinemacula/foundation-web/module-import-boundary']);
     });
 
     it('passes conforming sources', async () => {

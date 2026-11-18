@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { LocaleSwitcher } from '@sinemacula/web-core/i18n/application-i18n';
+import type { LocaleSwitcher } from '@sinemacula/foundation-web/i18n/application-i18n';
 import { afterEach, describe, expect, it } from 'vitest';
 import { computed } from 'vue';
 

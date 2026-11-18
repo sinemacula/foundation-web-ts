@@ -14,7 +14,7 @@ import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { resetWebCoreServices } from '../app/services';
+import { resetFoundationWebServices } from '../app/services';
 import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
@@ -74,7 +74,7 @@ describe('session lifecycle', () => {
 
     afterEach(() => {
         vi.restoreAllMocks();
-        resetWebCoreServices();
+        resetFoundationWebServices();
         resetSessionContext();
     });
 

@@ -1,6 +1,6 @@
 # Playground
 
-The reference application and development harness for [`@sinemacula/web-core`](../README.md).
+The reference application and development harness for [`@sinemacula/foundation-web`](../README.md).
 
 This workspace is a complete Vue 3 SPA built on the kernel. It serves as:
 
@@ -36,12 +36,12 @@ npm run dev
 
 ## How it consumes the kernel
 
-`package.json` declares `"@sinemacula/web-core": "file:.."`. npm links the repository root as a real
+`package.json` declares `"@sinemacula/foundation-web": "file:.."`. npm links the repository root as a real
 dependency, and `vite.config.ts` maps each kernel subpath export to its source file, so imports
 here are what a consuming app writes and need no package build:
 
 ```ts
-import { createWebCoreApp } from '@sinemacula/web-core/app/create-web-core-app';
+import { createFoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
 ```
 
 There are no barrel files - every kernel import is a subpath. The `@/*` alias resolves to this app's own
@@ -57,7 +57,7 @@ scripts/
   generate-runtime-env.mjs  Renders runtime-env.json at deploy time
 src/
   main.ts                   Entry point - boots the app with the build's env and mounts it, or renders the failure
-  boot.ts                   Composition root - one createWebCoreApp call - and the boot failure notice
+  boot.ts                   Composition root - one createFoundationWebApp call - and the boot failure notice
   App.vue                   Application root: router outlet, progress, error panel, notification hosts
   assets/                   Global styles (theme tokens + app layer)
   config/                   Laravel-style typed configuration definitions
@@ -76,8 +76,8 @@ For what lives in the kernel itself, see the [root README](../README.md).
 
 ## Boot sequence
 
-`src/boot.ts` is the whole composition root: one `createWebCoreApp` call, which `src/main.ts` makes with the build's
-`import.meta.env` before `app.start('#app')`. The phase sequence is kernel-owned and documented in the
+`src/boot.ts` is the whole composition root: one `createFoundationWebApp` call, which `src/main.ts` makes with the
+build's `import.meta.env` before `app.start('#app')`. The phase sequence is kernel-owned and documented in the
 [root README](../README.md#bootstrapping-an-application); this app supplies only its own inputs:
 
 - Configuration: `createWebEnvironment` over the fetched `/runtime-env.json`. In development, `VITE_*`

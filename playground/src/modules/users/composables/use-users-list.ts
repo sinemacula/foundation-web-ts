@@ -8,8 +8,8 @@
 import type { ApiQuery } from '@sinemacula/foundation/query/api-query';
 import type { ListResult, PaginationMeta } from '@sinemacula/foundation/query/envelope';
 import type { SortDefault } from '@sinemacula/foundation/query/list-query-definition';
-import { useListQuery } from '@sinemacula/web-core/query/use-list-query';
-import { useResource } from '@sinemacula/web-core/query/use-resource';
+import { useListQuery } from '@sinemacula/foundation-web/query/use-list-query';
+import { useResource } from '@sinemacula/foundation-web/query/use-resource';
 import type { ComputedRef, Ref } from 'vue';
 import { computed, onScopeDispose, ref, toRaw, watch } from 'vue';
 

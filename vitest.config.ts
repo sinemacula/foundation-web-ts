@@ -23,7 +23,7 @@ export default defineConfig({
         alias: [
             { find: '@', replacement: resolve(process.cwd(), 'playground/src') },
             {
-                find: new RegExp(`^@sinemacula/web-core/(${kernelSubpaths.join('|')})$`),
+                find: new RegExp(`^@sinemacula/foundation-web/(${kernelSubpaths.join('|')})$`),
                 replacement: `${fileURLToPath(new URL('./src/', import.meta.url))}$1.ts`,
             },
         ],

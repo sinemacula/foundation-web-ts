@@ -13,7 +13,7 @@ import { ruleTester } from './tester.js';
 ruleTester.run('module-import-boundary', rule, {
     valid: [
         // The kernel packages are reached by subpath.
-        { filename: 'src/app.ts', code: "import { httpClient } from '@sinemacula/web-core/http/client';" },
+        { filename: 'src/app.ts', code: "import { httpClient } from '@sinemacula/foundation-web/http/client';" },
         { filename: 'src/app.ts', code: "import { Environment } from '@sinemacula/foundation/config/environment';" },
         // Another module is reached through its public surface.
         { filename: 'src/modules/auth/module.ts', code: "import { usersModule } from '@/modules/users';" },
@@ -41,7 +41,7 @@ ruleTester.run('module-import-boundary', rule, {
         },
         {
             filename: 'src/modules/users/registry.spec.ts',
-            code: "import { pkg } from '@sinemacula/web-core';",
+            code: "import { pkg } from '@sinemacula/foundation-web';",
         },
         // Backslash (Windows) paths resolve the own module and test folder.
         {
@@ -82,7 +82,7 @@ ruleTester.run('module-import-boundary', rule, {
         // Neither bare package barrel is ever imported.
         {
             filename: 'src/app.ts',
-            code: "import { httpClient } from '@sinemacula/web-core';",
+            code: "import { httpClient } from '@sinemacula/foundation-web';",
             errors: [{ messageId: 'barrel' }],
         },
         {
@@ -159,7 +159,7 @@ ruleTester.run('module-import-boundary', rule, {
         // Type-only imports cross the same boundaries.
         {
             filename: 'src/app.ts',
-            code: "import type { HttpClient } from '@sinemacula/web-core';",
+            code: "import type { HttpClient } from '@sinemacula/foundation-web';",
             errors: [{ messageId: 'barrel' }],
         },
         {
@@ -191,7 +191,7 @@ ruleTester.run('module-import-boundary', rule, {
         },
         {
             filename: 'src/modules/auth/module.ts',
-            code: "export { httpClient } from '@sinemacula/web-core';",
+            code: "export { httpClient } from '@sinemacula/foundation-web';",
             errors: [{ messageId: 'barrel' }],
         },
     ],

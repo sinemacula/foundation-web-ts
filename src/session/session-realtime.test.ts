@@ -14,7 +14,7 @@ import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-v
 import type { RefreshOutcome, RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
-import { installRealtime, resetWebCoreServices } from '../app/services';
+import { installRealtime, resetFoundationWebServices } from '../app/services';
 import { EventSourceConnection } from '../realtime/event-source-connection';
 import type { ModuleTeardown } from '../module/module';
 import type { SessionContext } from './session-context';
@@ -106,7 +106,7 @@ describe('session realtime policy', () => {
 
     afterEach(() => {
         resetSessionContext();
-        resetWebCoreServices();
+        resetFoundationWebServices();
     });
 
     describe('sessionReconnectGuard', () => {
