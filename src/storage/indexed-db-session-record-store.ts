@@ -57,7 +57,7 @@ export class IndexedDbSessionRecordStore implements SessionRecordStore {
 
     /**
      * Hand the stored value to `operate` synchronously in a fresh transaction,
-     * settling once it completes or aborts, a throw aborting it with that error.
+     * settling once it completes or aborts; a throw aborts it with that error.
      */
     async #transact<T>(mode: IDBTransactionMode, operate: (store: IDBObjectStore, stored: unknown) => T): Promise<T> {
         const database = await this.#connect();
