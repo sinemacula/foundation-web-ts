@@ -97,7 +97,7 @@ export interface SessionModuleSettings<U extends SessionUser> {
     /** Where the session snapshot persists. Default one IndexedDB record, in a database named after the session key, adopting a snapshot an earlier release left in localStorage under that key; registering throws when Web Locks is unavailable and this is not given, and where the browser blocks localStorage or IndexedDB the session is kept in memory until reload, without cross-tab sync, with one logged warning. */
     readonly persistence?: (platform: ResolvedPlatform) => SessionPersistence;
 
-    /** Serialises the sign-in, refresh and sign-out exchanges of every context sharing the persisted session, so a refresh never presents a token another tab has spent. Default a Web Locks lock beside the default persistence; with another persistence, or where localStorage is blocked, a lock serialising only this tab's exchanges. */
+    /** Serialises the sign-in, refresh and sign-out exchanges of every context sharing the persisted session, so a refresh never presents a token another tab has spent. Default a Web Locks lock beside the default persistence; with another persistence, or where site storage is blocked, a lock serialising only this tab's exchanges. */
     readonly exchangeLock?: (platform: ResolvedPlatform) => SessionLock;
 
     /** How long before expiry, in milliseconds, the session counts as expiring and is refreshed before a realtime reconnect; each tab refreshes proactively at a random point in the earlier half of that window. Default 60 seconds. */
