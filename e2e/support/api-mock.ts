@@ -76,7 +76,8 @@ interface PersistedSnapshot {
 const DEFAULT_PERMISSIONS: readonly string[] = ['users.view'];
 
 /**
- * Build the browser storage state holding `tokens` as a persisted session.
+ * Build the browser storage state holding `tokens` as a session an earlier
+ * release persisted in localStorage, which the app adopts on its first load.
  */
 export function signedInStorageState(tokens: SessionTokens = SEEDED_SESSION): StorageState {
     return {
@@ -481,13 +482,50 @@ export class MockApi {
  * Read the token pair the app persisted in `page`, or null when it holds none.
  */
 export async function storedTokens(page: Page): Promise<SessionTokens | null> {
-    const raw = await page.evaluate(key => window.localStorage.getItem(key), SESSION_STORAGE_KEY);
+    return tokensOf(await page.evaluate(readSessionRecord, SESSION_STORAGE_KEY));
+}
 
-    if (raw === null) {
-        return null;
-    }
+/**
+ * Read the token pair left in `page`'s localStorage where earlier releases
+ * persisted the session, or null when it holds none.
+ */
+export async function legacyTokens(page: Page): Promise<SessionTokens | null> {
+    return tokensOf(await page.evaluate(key => window.localStorage.getItem(key), SESSION_STORAGE_KEY));
+}
 
-    const snapshot = JSON.parse(raw) as PersistedSnapshot;
+/**
+ * Parse the token pair out of a raw persisted snapshot.
+ */
+function tokensOf(raw: string | null): SessionTokens | null {
+    return raw === null ? null : ((JSON.parse(raw) as PersistedSnapshot).session?.tokens ?? null);
+}
 
-    return snapshot.session?.tokens ?? null;
+/**
+ * Read the raw session record from the page's IndexedDB without creating the
+ * database when the app has not yet.
+ */
+function readSessionRecord(database: string): Promise<string | null> {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(database);
+
+        request.onupgradeneeded = () => {
+            request.transaction?.abort();
+        };
+        request.onerror = () => {
+            resolve(null);
+        };
+        request.onsuccess = () => {
+            const connection = request.result;
+            const read = connection.transaction('session').objectStore('session').get('snapshot');
+
+            read.onsuccess = () => {
+                connection.close();
+                resolve((read.result as string | undefined) ?? null);
+            };
+            read.onerror = () => {
+                connection.close();
+                reject(read.error ?? new Error('The session record could not be read.'));
+            };
+        };
+    });
 }

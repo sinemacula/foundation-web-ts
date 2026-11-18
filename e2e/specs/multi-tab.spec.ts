@@ -64,12 +64,7 @@ test.describe('session across tabs', { tag: '@engine' }, () => {
             expect(api.requestsTo('/users/self')).toHaveLength(2);
         });
 
-        test('tabs refreshing at once share one rotation', async ({ browserName, context, page, api, usersPage }) => {
-            test.skip(
-                browserName !== 'chromium',
-                'WebKit and Firefox can grant the exchange lock before the other tab sees the rotation written to localStorage.',
-            );
-
+        test('tabs refreshing at once share one rotation', async ({ context, page, api, usersPage }) => {
             /**
              * Release the held refresh responses.
              */

@@ -5,6 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
+import { IDBFactory } from 'fake-indexeddb';
 import type { Pinia } from 'pinia';
 import { createPinia, setActivePinia } from 'pinia';
 import { expect } from 'vitest';
@@ -17,21 +18,30 @@ import type { FlagValue } from '@sinemacula/foundation/feature-flags/feature-fla
 import type { HttpClient } from '@sinemacula/foundation/http/http-client';
 import type { ModuleHttpContributions } from '@sinemacula/foundation/http/module-http-contributions';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
+import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installAnalytics, installApi, installFeatureFlags, installLogger, installReporting } from '../../app/services';
 import { createApplicationI18n } from '../../i18n/application-i18n';
 import type { ModuleDefinition, ModuleTeardown, ResolvedPlatform, ScheduleTask } from '../../module/module';
 import { scheduleOnTimers } from '../../module/module';
 import { registerModules } from '../../module/module-registry';
+import { IndexedDbSessionRecordStore } from '../../storage/indexed-db-session-record-store';
 import type { SessionStore } from '../session-store';
 import { useSessionStore } from '../session-store';
 import type { RecordingLockManager } from './session-fixtures';
-import { createLockManager, createWebStorage } from './session-fixtures';
+import { createLockManager, createWebStorage, LINEAGE, SESSION_KEY, snapshot } from './session-fixtures';
 
 /** A window stand-in whose event listeners are dispatched directly. */
 export interface FakeWindow {
     /** The in-memory localStorage. */
     readonly localStorage: Storage;
+
+    /** The in-memory IndexedDB. */
+    // biome-ignore lint/style/useNamingConvention: mirrors the Window property
+    readonly indexedDB: IDBFactory;
+
+    /** A BroadcastChannel delivering to the other channels of this window's bus. */
+    readonly BroadcastChannel: typeof BroadcastChannel;
 
     /** The navigator, with a recording lock manager unless Web Locks is missing. */
     readonly navigator: {
@@ -45,8 +55,26 @@ export interface FakeWindow {
     /** Detach a listener for the given event type. */
     readonly removeEventListener: (type: string, listener: (event: StorageEvent) => void) => void;
 
-    /** Count the attached `storage` listeners. */
+    /** Count the `message` listeners attached to the open channels. */
     readonly listenerCount: () => number;
+
+    /** Count the channels opened and not yet closed. */
+    readonly openChannels: () => number;
+
+    /** Announce a session write from another tab, on the default session key's channel. */
+    readonly announce: () => void;
+
+    /** Persist a snapshot under the default session key as another tab would, without announcing it; null tokens persist a cleared one. */
+    readonly persist: (snapshotTokens: SessionTokens | null, revision?: number, lineage?: string) => Promise<void>;
+
+    /** Store a raw record under the default session key. */
+    readonly persistRaw: (record: string) => Promise<void>;
+
+    /** Read the record under the default session key, parsed, or null when none is stored. */
+    readonly record: () => Promise<unknown>;
+
+    /** Dispatch a `pageshow` event to the `pageshow` listeners. */
+    readonly dispatchPageShow: (persisted: boolean) => void;
 
     /** Dispatch a `storage` event to the `storage` listeners, from the localStorage unless another area is given. */
     readonly dispatchStorage: (init: {
@@ -140,9 +168,83 @@ export interface HarnessSetup {
 
     /** Whether reading the window localStorage throws, as where storage is blocked. */
     readonly storageBlocked?: boolean;
+
+    /** Whether reading the window IndexedDB throws, as where storage is blocked. */
+    readonly indexedDbBlocked?: boolean;
+
+    /** Whether the window lacks IndexedDB. */
+    readonly withoutIndexedDb?: boolean;
+
+    /** Whether the window lacks BroadcastChannel. */
+    readonly withoutBroadcastChannel?: boolean;
+}
+
+/** A channel of a {@link ChannelBus}. */
+interface BusChannel {
+    /** The channel name. */
+    readonly name: string;
+
+    /** The attached `message` listeners. */
+    readonly listeners: Set<() => void>;
+}
+
+/** The channels of one window and the tabs it simulates. */
+interface ChannelBus {
+    /** The BroadcastChannel stand-in over the bus. */
+    readonly Channel: typeof BroadcastChannel;
+
+    /** Every channel opened and not yet closed. */
+    readonly open: Set<BusChannel>;
 }
 
 const EmptyComponent = defineComponent({ render: () => null });
+
+/**
+ * Build a bus of BroadcastChannel stand-ins, each delivering a message to every
+ * other open channel of its name on a later microtask, and throwing once
+ * closed.
+ */
+function createChannelBus(): ChannelBus {
+    const open = new Set<BusChannel>();
+
+    /**
+     * Open a channel on the bus.
+     */
+    function Channel(name: string): BroadcastChannel {
+        const channel: BusChannel = { name, listeners: new Set() };
+
+        open.add(channel);
+
+        return {
+            addEventListener: (_type: string, listener: () => void) => {
+                channel.listeners.add(listener);
+            },
+            removeEventListener: (_type: string, listener: () => void) => {
+                channel.listeners.delete(listener);
+            },
+            postMessage: () => {
+                if (!open.has(channel)) {
+                    throw new DOMException('The channel is closed.', 'InvalidStateError');
+                }
+
+                for (const other of open) {
+                    if (other !== channel && other.name === name) {
+                        queueMicrotask(() => {
+                            for (const listener of other.listeners) {
+                                listener();
+                            }
+                        });
+                    }
+                }
+            },
+            close: () => {
+                open.delete(channel);
+            },
+        } as unknown as BroadcastChannel;
+    }
+
+    return { Channel: Channel as unknown as typeof BroadcastChannel, open };
+}
 
 /**
  * Build a window stand-in, optionally without the Web Locks API.
@@ -150,6 +252,13 @@ const EmptyComponent = defineComponent({ render: () => null });
 export function createFakeWindow(withoutLocks = false): FakeWindow {
     const listeners = new Map<string, Set<(event: StorageEvent) => void>>();
     const localStorage = createWebStorage();
+    const factory = new IDBFactory();
+    const bus = createChannelBus();
+
+    /**
+     * A handle on the record under the default session key.
+     */
+    const recordStore = (): IndexedDbSessionRecordStore => new IndexedDbSessionRecordStore(factory, SESSION_KEY);
 
     /**
      * The listeners attached for the given event type.
@@ -164,6 +273,9 @@ export function createFakeWindow(withoutLocks = false): FakeWindow {
 
     return {
         localStorage,
+        // biome-ignore lint/style/useNamingConvention: mirrors the Window property
+        indexedDB: factory,
+        BroadcastChannel: bus.Channel,
         navigator: { locks: withoutLocks ? undefined : createLockManager() },
         addEventListener: (type, listener) => {
             listenersOf(type).add(listener);
@@ -171,7 +283,27 @@ export function createFakeWindow(withoutLocks = false): FakeWindow {
         removeEventListener: (type, listener) => {
             listenersOf(type).delete(listener);
         },
-        listenerCount: () => listenersOf('storage').size,
+        listenerCount: () => [...bus.open].reduce((count, channel) => count + channel.listeners.size, 0),
+        openChannels: () => bus.open.size,
+        announce: () => {
+            const channel = new bus.Channel(SESSION_KEY);
+
+            channel.postMessage(null);
+            channel.close();
+        },
+        persist: (snapshotTokens, revision = 1, lineage = LINEAGE) =>
+            recordStore().swap(() => JSON.stringify(snapshot(snapshotTokens, revision, lineage))),
+        persistRaw: record => recordStore().swap(() => record),
+        record: async () => {
+            const record = await recordStore().read();
+
+            return record === null ? null : (JSON.parse(record) as unknown);
+        },
+        dispatchPageShow: persisted => {
+            for (const listener of listenersOf('pageshow')) {
+                listener({ persisted } as unknown as StorageEvent);
+            }
+        },
         dispatchStorage: init => {
             const event = { key: init.key, storageArea: init.storageArea ?? localStorage } as StorageEvent;
 
@@ -266,6 +398,22 @@ export function createSessionHarness(module: ModuleDefinition, setup: HarnessSet
                 throw new DOMException('The operation is insecure.', 'SecurityError');
             },
         });
+    }
+
+    if (setup.indexedDbBlocked === true) {
+        Object.defineProperty(win, 'indexedDB', {
+            get: () => {
+                throw new DOMException('The operation is insecure.', 'SecurityError');
+            },
+        });
+    }
+
+    if (setup.withoutIndexedDb === true) {
+        Object.defineProperty(win, 'indexedDB', { value: undefined });
+    }
+
+    if (setup.withoutBroadcastChannel === true) {
+        Object.defineProperty(win, 'BroadcastChannel', { value: undefined });
     }
     const platform: ResolvedPlatform = {
         fetchFn: () => Promise.resolve(new Response()),

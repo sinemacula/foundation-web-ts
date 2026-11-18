@@ -6,7 +6,7 @@
  */
 
 import { expect, test } from '../fixtures/app';
-import { SEEDED_SESSION, storedTokens } from '../support/api-mock';
+import { legacyTokens, SEEDED_SESSION, storedTokens } from '../support/api-mock';
 
 const NOW = Date.parse('2026-06-01T09:00:00Z');
 const EXPIRES_IN_MS = 5 * 60_000;
@@ -15,6 +15,17 @@ const CLOCK_STEP_MS = 1_000;
 
 test.describe('token refresh', { tag: '@engine' }, () => {
     test.use({ seededSession: SEEDED_SESSION });
+
+    test('adopts a session an earlier release left in localStorage, clearing it there', async ({
+        page,
+        dashboardPage,
+    }) => {
+        await dashboardPage.goto();
+
+        await expect(dashboardPage.heading).toBeVisible();
+        await expect.poll(() => storedTokens(page)).toEqual(SEEDED_SESSION);
+        expect(await legacyTokens(page)).toBeNull();
+    });
 
     test('refreshes an expired access token and retries with the new one', async ({ page, api, dashboardPage }) => {
         api.expireAccessToken(SEEDED_SESSION.accessToken);

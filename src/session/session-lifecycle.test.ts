@@ -11,11 +11,11 @@ import type { HttpRequest } from '@sinemacula/foundation/http/http-client';
 import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
-import type { SessionSnapshot } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { resetWebCoreServices } from '../app/services';
+import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
 import { resetSessionContext, sessionContext } from './session-context';
@@ -59,10 +59,10 @@ describe('session lifecycle', () => {
     /**
      * Register over a persisted session whose user loads, without booting.
      */
-    function persisted(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): SessionHarness {
+    async function persisted(options: SessionModuleOptions = {}, setup: HarnessSetup = {}): Promise<SessionHarness> {
         const target = harness(options, setup);
 
-        persistSnapshot(target.win.localStorage, tokens());
+        await target.win.persist(tokens());
         gateway.currentUser.mockResolvedValue(user());
 
         return target;
@@ -81,9 +81,9 @@ describe('session lifecycle', () => {
     describe('boot', () => {
         it('waits for the hydration before wiring anything', async () => {
             const target = harness();
-            const gate = deferred<SessionSnapshot>();
+            const gate = deferred<string | null>();
 
-            vi.spyOn(KeyValueSessionPersistence.prototype, 'load').mockReturnValueOnce(gate.promise);
+            vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read').mockReturnValueOnce(gate.promise);
 
             let booted = false;
             const booting = target.boot().then(teardown => {
@@ -97,14 +97,14 @@ describe('session lifecycle', () => {
             expect(booted).toBe(false);
             expect(target.win.listenerCount()).toBe(0);
 
-            gate.resolve(snapshot(null, 0));
+            gate.resolve(null);
             await booting;
 
             expect(target.win.listenerCount()).toBe(1);
         });
 
         it('loads the user of a hydrated session once wired', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             await target.boot();
 
@@ -120,7 +120,7 @@ describe('session lifecycle', () => {
         });
 
         it('tears everything down', async () => {
-            const target = persisted();
+            const target = await persisted();
             const teardown = await target.boot();
 
             await vi.waitFor(() => {
@@ -131,6 +131,7 @@ describe('session lifecycle', () => {
             await target.store().clearLocal();
 
             expect(target.win.listenerCount()).toBe(0);
+            expect(target.win.openChannels()).toBe(0);
             expect(target.pushes).toStrictEqual([]);
             expect(target.observability.resets).toStrictEqual([]);
         });
@@ -138,7 +139,7 @@ describe('session lifecycle', () => {
 
     describe('session-loss redirect', () => {
         it('sends a lost session to the login route, carrying the current path', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             await target.boot();
             await target.store().clearLocal();
@@ -149,7 +150,7 @@ describe('session lifecycle', () => {
         });
 
         it('carries no return target from the login page itself', async () => {
-            const target = persisted({}, { fullPath: '/login' });
+            const target = await persisted({}, { fullPath: '/login' });
 
             await target.boot();
             await target.store().clearLocal();
@@ -160,7 +161,7 @@ describe('session lifecycle', () => {
         });
 
         it('contains a rejected navigation', async () => {
-            const target = persisted({}, { pushRejection: new Error('navigation aborted') });
+            const target = await persisted({}, { pushRejection: new Error('navigation aborted') });
 
             await target.boot();
             await target.store().clearLocal();
@@ -171,7 +172,7 @@ describe('session lifecycle', () => {
         });
 
         it('redirects when the boot user fetch finds the session refused', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             gateway.currentUser.mockReset();
             gateway.currentUser.mockImplementationOnce(async () => {
@@ -204,7 +205,7 @@ describe('session lifecycle', () => {
         });
 
         it('stays put when disabled', async () => {
-            const target = persisted({ sessionLossRedirect: false });
+            const target = await persisted({ sessionLossRedirect: false });
 
             await target.boot();
             await target.store().clearLocal();
@@ -222,9 +223,9 @@ describe('session lifecycle', () => {
 
             await target.boot();
 
-            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'other-tab' }), 5);
+            await target.win.persist(tokens({ accessToken: 'other-tab' }), 5);
             gateway.currentUser.mockResolvedValueOnce(user({ id: 'u2' }));
-            target.win.dispatchStorage({ key: 'auth.session' });
+            target.win.announce();
 
             await vi.waitFor(() => {
                 expect(target.store().user?.id).toBe('u2');
@@ -233,25 +234,12 @@ describe('session lifecycle', () => {
         });
 
         it('signs out when another tab clears the session', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             await target.boot();
 
-            persistSnapshot(target.win.localStorage, null, 2);
-            target.win.dispatchStorage({ key: 'auth.session' });
-
-            await vi.waitFor(() => {
-                expect(target.store().isAuthenticated).toBe(false);
-            });
-        });
-
-        it('signs out when another tab clears the whole storage', async () => {
-            const target = persisted();
-
-            await target.boot();
-
-            target.win.localStorage.clear();
-            target.win.dispatchStorage({ key: null });
+            await target.win.persist(null, 2);
+            target.win.announce();
 
             await vi.waitFor(() => {
                 expect(target.store().isAuthenticated).toBe(false);
@@ -261,51 +249,125 @@ describe('session lifecycle', () => {
         it.each([
             ['another key', { key: 'theme' }],
             ['another storage area', { key: 'auth.session', storageArea: {} as Storage }],
-        ])('ignores a change to %s', async (_label, event) => {
+        ])('ignores a localStorage change to %s', async (_label, event) => {
             const target = harness();
-            const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
+            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
 
             await target.boot();
             await settle();
 
-            const loads = load.mock.calls.length;
+            const reads = read.mock.calls.length;
 
             target.win.dispatchStorage(event);
             await settle();
 
-            expect(load).toHaveBeenCalledTimes(loads);
+            expect(read).toHaveBeenCalledTimes(reads);
+            expect(target.win.navigator.locks?.names).toStrictEqual([]);
+        });
+
+        it('resynchronises on an announcement from another tab', async () => {
+            const target = harness();
+            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
+
+            await target.boot();
+            await settle();
+
+            const reads = read.mock.calls.length;
+
+            target.win.announce();
+            await settle();
+
+            expect(read).toHaveBeenCalledTimes(reads + 1);
         });
 
         it.each([
-            ['the session key', { key: 'auth.session' }],
-            ['a clear of the storage', { key: null }],
-        ])('resynchronises on a change to %s', async (_label, event) => {
+            ['resynchronises when', true, 1],
+            ['ignores', false, 0],
+        ])('%s the page is shown from the back-forward cache', async (_label, persisted, extra) => {
             const target = harness();
-            const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
+            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
 
             await target.boot();
             await settle();
 
-            const loads = load.mock.calls.length;
+            const reads = read.mock.calls.length;
 
-            target.win.dispatchStorage(event);
+            target.win.dispatchPageShow(persisted);
             await settle();
 
-            expect(load).toHaveBeenCalledTimes(loads + 1);
+            expect(read).toHaveBeenCalledTimes(reads + extra);
+        });
+
+        it('clears a session an earlier release writes in another tab, keeping the held one', async () => {
+            const target = await persisted();
+
+            await target.boot();
+
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }), 3, 'lineage-legacy');
+            target.win.dispatchStorage({ key: 'auth.session' });
+
+            await vi.waitFor(() => {
+                expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual(
+                    snapshot(null, 4),
+                );
+            });
+            expect(target.store().accessToken).toBe('access');
+            expect(await target.win.record()).toStrictEqual(snapshot(tokens()));
+        });
+
+        it('adopts a session an earlier release writes in another tab before any is recorded', async () => {
+            const target = harness();
+
+            await target.boot();
+
+            gateway.currentUser.mockResolvedValueOnce(user({ id: 'u2' }));
+            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'legacy' }), 3);
+            target.win.dispatchStorage({ key: 'auth.session' });
+
+            await vi.waitFor(() => {
+                expect(target.store().user?.id).toBe('u2');
+            });
+            expect(target.store().accessToken).toBe('legacy');
+        });
+
+        it('stops listening for legacy writes once torn down', async () => {
+            const target = harness();
+            const teardown = await target.boot();
+
+            teardown();
+            persistSnapshot(target.win.localStorage, tokens(), 3);
+            target.win.dispatchStorage({ key: 'auth.session' });
+            target.win.dispatchPageShow(true);
+            await settle();
+
+            expect(target.store().isAuthenticated).toBe(false);
+            expect(target.win.localStorage.getItem('auth.session')).toBe(JSON.stringify(snapshot(tokens(), 3)));
+        });
+
+        it('listens for no legacy writes with a given persistence', async () => {
+            const target = harness({ persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) });
+
+            await target.boot();
+
+            persistSnapshot(target.win.localStorage, tokens(), 3);
+            target.win.dispatchStorage({ key: 'auth.session' });
+            await settle();
+
+            expect(target.win.localStorage.getItem('auth.session')).toBe(JSON.stringify(snapshot(tokens(), 3)));
         });
 
         it('loads no user after a failed synchronisation', async () => {
             const target = harness();
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
             await target.boot();
             await vi.waitFor(() => {
                 expect(gateway.currentUser).toHaveBeenCalledTimes(1);
             });
 
-            target.win.localStorage.setItem('auth.session', 'not json');
-            target.win.dispatchStorage({ key: 'auth.session' });
+            await target.win.persistRaw('not json');
+            target.win.announce();
 
             await vi.waitFor(() => {
                 expect(target.observability.errors).toHaveLength(1);
@@ -315,12 +377,12 @@ describe('session lifecycle', () => {
         });
 
         it('reports a failed synchronisation and keeps the session', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             await target.boot();
 
-            target.win.localStorage.setItem('auth.session', 'not json');
-            target.win.dispatchStorage({ key: 'auth.session' });
+            await target.win.persistRaw('not json');
+            target.win.announce();
 
             await vi.waitFor(() => {
                 expect(target.observability.errors).toHaveLength(1);
@@ -331,12 +393,15 @@ describe('session lifecycle', () => {
         it('starts no user fetch once torn down mid-synchronisation', async () => {
             const target = harness();
             const teardown = await target.boot();
-            const gate = deferred<SessionSnapshot>();
+            const gate = deferred<string | null>();
+            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read').mockReturnValueOnce(gate.promise);
 
-            vi.spyOn(KeyValueSessionPersistence.prototype, 'load').mockReturnValueOnce(gate.promise);
-            target.win.dispatchStorage({ key: 'auth.session' });
+            target.win.announce();
+            await vi.waitFor(() => {
+                expect(read).toHaveBeenCalledOnce();
+            });
             teardown();
-            gate.resolve(snapshot(tokens(), 9, 'lineage-other'));
+            gate.resolve(JSON.stringify(snapshot(tokens(), 9, 'lineage-other')));
 
             await vi.waitFor(() => {
                 expect(target.store().isAuthenticated).toBe(true);
@@ -349,7 +414,7 @@ describe('session lifecycle', () => {
 
             target.stores();
             await sessionContext().ready();
-            persistSnapshot(target.win.localStorage, tokens({ accessToken: 'during-boot' }), 3);
+            await target.win.persist(tokens({ accessToken: 'during-boot' }), 3);
             gateway.currentUser.mockResolvedValueOnce(user());
 
             await target.boot();
@@ -361,7 +426,7 @@ describe('session lifecycle', () => {
             const target = harness();
 
             await sessionContext().ready();
-            target.win.localStorage.setItem('auth.session', 'not json');
+            await target.win.persistRaw('not json');
 
             await target.boot();
 
@@ -372,7 +437,7 @@ describe('session lifecycle', () => {
         it('reports a cold boot over an unreadable session once, and a later sign-in heals it', async () => {
             const target = harness();
 
-            target.win.localStorage.setItem('auth.session', 'not json');
+            await target.win.persistRaw('not json');
             await target.boot();
 
             expect(target.observability.errors).toHaveLength(1);
@@ -382,7 +447,7 @@ describe('session lifecycle', () => {
             gateway.currentUser.mockResolvedValueOnce(user());
             await target.store().login({ email: 'a', password: 'b' });
 
-            expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual({
+            expect(await target.win.record()).toStrictEqual({
                 revision: 1,
                 session: { lineage: expect.any(String), tokens: tokens() },
             });
@@ -391,7 +456,7 @@ describe('session lifecycle', () => {
         it('boots signed out over a session stored in the previous format until a sign-in replaces it', async () => {
             const target = harness();
 
-            target.win.localStorage.setItem('auth.session', JSON.stringify({ revision: 4, tokens: tokens() }));
+            await target.win.persistRaw(JSON.stringify({ revision: 4, tokens: tokens() }));
             await target.boot();
 
             expect(target.observability.errors).toStrictEqual([expect.any(SessionError)]);
@@ -407,7 +472,7 @@ describe('session lifecycle', () => {
                 { uuid: expect.any(String), os: 'WEB' },
                 null,
             );
-            expect(JSON.parse(target.win.localStorage.getItem('auth.session') ?? '')).toStrictEqual({
+            expect(await target.win.record()).toStrictEqual({
                 revision: 1,
                 session: { lineage: expect.any(String), tokens: tokens({ accessToken: 'new' }) },
             });
@@ -416,7 +481,7 @@ describe('session lifecycle', () => {
         it('reports a different hydration failure', async () => {
             const target = harness();
 
-            vi.spyOn(KeyValueSessionPersistence.prototype, 'load')
+            vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read')
                 .mockRejectedValueOnce(new SessionError('unreadable'))
                 .mockRejectedValueOnce(new DOMException('blocked', 'SecurityError'));
             await target.boot();
@@ -427,36 +492,33 @@ describe('session lifecycle', () => {
         it('reports the same failure again once a hydration has succeeded', async () => {
             const target = harness();
 
-            target.win.localStorage.setItem('auth.session', 'not json');
+            await target.win.persistRaw('not json');
             await target.boot();
 
-            persistSnapshot(target.win.localStorage, tokens(), 2);
+            await target.win.persist(tokens(), 2);
             gateway.currentUser.mockResolvedValue(user());
-            target.win.dispatchStorage({ key: 'auth.session' });
+            target.win.announce();
             await vi.waitFor(() => {
                 expect(target.store().isAuthenticated).toBe(true);
             });
 
-            target.win.localStorage.setItem('auth.session', 'not json');
-            target.win.dispatchStorage({ key: 'auth.session' });
+            await target.win.persistRaw('not json');
+            target.win.announce();
 
             await vi.waitFor(() => {
                 expect(target.observability.errors).toHaveLength(2);
             });
         });
 
-        it('refuses to boot over a blocked localStorage, naming the option', async () => {
+        it('syncs a given persistence over a blocked localStorage', async () => {
             const target = harness(
                 { persistence: () => new KeyValueSessionPersistence(new MemoryStorage()) },
-                {
-                    storageBlocked: true,
-                },
+                { storageBlocked: true },
             );
-            const refusal: unknown = await target.boot().catch((error: unknown) => error);
 
-            expect(refusal).toBeInstanceOf(SessionError);
-            expect(refusal).toHaveProperty('message', expect.stringContaining('crossTabSync'));
-            expect(refusal).toHaveProperty('cause.name', 'SecurityError');
+            await expect(target.boot()).resolves.toBeTypeOf('function');
+
+            expect(target.win.listenerCount()).toBe(1);
         });
 
         it('boots without listening when blocked storage keeps the default session in memory', async () => {
@@ -479,18 +541,18 @@ describe('session lifecycle', () => {
 
         it('neither listens nor reconciles when disabled', async () => {
             const target = harness({ crossTabSync: false });
-            const load = vi.spyOn(KeyValueSessionPersistence.prototype, 'load');
+            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
 
             await target.boot();
 
             expect(target.win.listenerCount()).toBe(0);
-            expect(load).toHaveBeenCalledTimes(1);
+            expect(read).toHaveBeenCalledTimes(1);
         });
     });
 
     describe('identity fan-out', () => {
         it('identifies the loaded user on every channel', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             await target.boot();
 
@@ -506,7 +568,7 @@ describe('session lifecycle', () => {
         it('omits an absent email and name from the reported identity', async () => {
             const target = harness();
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             gateway.currentUser.mockResolvedValue({ id: 7, email: null, name: null, permissions: [] });
             await target.boot();
 
@@ -516,7 +578,7 @@ describe('session lifecycle', () => {
         });
 
         it('clears every channel on sign-out', async () => {
-            const target = persisted();
+            const target = await persisted();
 
             await target.boot();
             await vi.waitFor(() => {
@@ -554,7 +616,9 @@ describe('session lifecycle', () => {
         });
 
         it('merges per-channel mappings over the defaults', async () => {
-            const target = persisted({ identity: { analytics: (signedIn: SessionUser) => `user-${signedIn.id}` } });
+            const target = await persisted({
+                identity: { analytics: (signedIn: SessionUser) => `user-${signedIn.id}` },
+            });
 
             await target.boot();
 
@@ -567,7 +631,7 @@ describe('session lifecycle', () => {
         it('touches no channel when a session whose user never loaded ends', async () => {
             const target = harness();
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
             await target.boot();
             await vi.waitFor(() => {
@@ -585,7 +649,7 @@ describe('session lifecycle', () => {
         it('fans nothing out when disabled, even when the user cannot be loaded', async () => {
             const target = harness({ identity: false });
 
-            persistSnapshot(target.win.localStorage, tokens());
+            await target.win.persist(tokens());
             gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
             await target.boot();
             await vi.waitFor(() => {
@@ -598,7 +662,7 @@ describe('session lifecycle', () => {
         });
 
         it('fans nothing out when disabled', async () => {
-            const target = persisted({ identity: false });
+            const target = await persisted({ identity: false });
 
             await target.boot();
             await vi.waitFor(() => {
@@ -613,7 +677,7 @@ describe('session lifecycle', () => {
              * Boot over a persisted session whose user has been identified.
              */
             async function identified(options: SessionModuleOptions = {}): Promise<SessionHarness> {
-                const target = persisted(options);
+                const target = await persisted(options);
 
                 await target.boot();
                 await vi.waitFor(() => {
@@ -627,19 +691,19 @@ describe('session lifecycle', () => {
              * Persist the given tokens as another tab's sign-in would, or its
              * rotation of the held session given its lineage, and announce it.
              */
-            function persistElsewhere(
+            async function persistElsewhere(
                 target: SessionHarness,
                 persisted: SessionTokens | null,
                 revision = 2,
                 lineage = 'lineage-elsewhere',
-            ): void {
-                persistSnapshot(target.win.localStorage, persisted, revision, lineage);
-                target.win.dispatchStorage({ key: 'auth.session' });
+            ): Promise<void> {
+                await target.win.persist(persisted, revision, lineage);
+                target.win.announce();
             }
 
             it('keeps the user, identity, channels and realtime connection when another tab rotates the session', async () => {
                 const connection = createRecordingConnection();
-                const target = persisted({}, { realtime: connection });
+                const target = await persisted({}, { realtime: connection });
 
                 await target.boot();
                 await vi.waitFor(() => {
@@ -648,7 +712,7 @@ describe('session lifecycle', () => {
 
                 const identity = target.store().sessionIdentity();
 
-                persistElsewhere(
+                await persistElsewhere(
                     target,
                     tokens({ accessToken: 'rotated', refreshToken: 'rotated-refresh' }),
                     2,
@@ -673,7 +737,7 @@ describe('session lifecycle', () => {
             it('touches no channel when another tab signs the same user in again', async () => {
                 const target = await identified();
 
-                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
+                await persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
@@ -692,7 +756,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockResolvedValue(user({ id: 'u2', email: null, name: null }));
-                persistElsewhere(target, tokens({ accessToken: 'other-user' }));
+                await persistElsewhere(target, tokens({ accessToken: 'other-user' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.analyticsCalls).toStrictEqual(['identify u1', 'reset', 'identify u2']);
@@ -705,7 +769,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockResolvedValue(user({ name: 'Alice Jones' }));
-                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
+                await persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.reportedUsers).toHaveLength(2);
@@ -724,7 +788,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockResolvedValue(user({ email: null }));
-                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
+                await persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.reportedUsers).toHaveLength(2);
@@ -736,7 +800,7 @@ describe('session lifecycle', () => {
                 const target = await identified();
 
                 gateway.currentUser.mockRejectedValue(new NetworkError('offline'));
-                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
+                await persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
 
                 await vi.waitFor(() => {
                     expect(target.observability.resets).toHaveLength(1);
@@ -752,11 +816,11 @@ describe('session lifecycle', () => {
                 const current = deferred<SessionUser>();
 
                 gateway.currentUser.mockReturnValueOnce(superseded.promise).mockReturnValueOnce(current.promise);
-                persistElsewhere(target, tokens({ accessToken: 'first' }));
+                await persistElsewhere(target, tokens({ accessToken: 'first' }));
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
                 });
-                persistElsewhere(target, tokens({ accessToken: 'second' }), 3, 'lineage-third');
+                await persistElsewhere(target, tokens({ accessToken: 'second' }), 3, 'lineage-third');
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(3);
                 });
@@ -772,7 +836,7 @@ describe('session lifecycle', () => {
             });
 
             it('leaves every channel alone when the adopted user fails to load after teardown', async () => {
-                const target = persisted();
+                const target = await persisted();
                 const teardown = await target.boot();
                 const loading = deferred<SessionUser>();
 
@@ -780,13 +844,8 @@ describe('session lifecycle', () => {
                     expect(target.observability.identified).toStrictEqual(['u1']);
                 });
                 gateway.currentUser.mockReturnValueOnce(loading.promise);
-                persistSnapshot(
-                    target.win.localStorage,
-                    tokens({ accessToken: 'signed-in-again' }),
-                    2,
-                    'lineage-elsewhere',
-                );
-                target.win.dispatchStorage({ key: 'auth.session' });
+                await target.win.persist(tokens({ accessToken: 'signed-in-again' }), 2, 'lineage-elsewhere');
+                target.win.announce();
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
                 });
@@ -804,12 +863,12 @@ describe('session lifecycle', () => {
                 const loading = deferred<SessionUser>();
 
                 gateway.currentUser.mockReturnValueOnce(loading.promise);
-                persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
+                await persistElsewhere(target, tokens({ accessToken: 'signed-in-again' }));
                 await vi.waitFor(() => {
                     expect(gateway.currentUser).toHaveBeenCalledTimes(2);
                 });
 
-                persistElsewhere(target, null, 3);
+                await persistElsewhere(target, null, 3);
 
                 await vi.waitFor(() => {
                     expect(target.observability.resets).toHaveLength(1);
@@ -827,17 +886,17 @@ describe('session lifecycle', () => {
          * Register over a persisted session expiring at the given instant, on a
          * platform clock and scheduler the test drives.
          */
-        function expiring(
+        async function expiring(
             expiresAtEpochMs: number,
             options: SessionModuleOptions = {},
             setup: HarnessSetup = {},
-        ): SessionHarness {
+        ): Promise<SessionHarness> {
             now = 1_000_000;
             scheduler = createManualScheduler();
 
             const target = harness(options, { clock: () => now, schedule: scheduler.schedule, ...setup });
 
-            persistSnapshot(target.win.localStorage, tokens({ expiresAtEpochMs }));
+            await target.win.persist(tokens({ expiresAtEpochMs }));
             gateway.currentUser.mockResolvedValue(user());
 
             return target;
@@ -848,7 +907,7 @@ describe('session lifecycle', () => {
         });
 
         it('arms the refresh the skew ahead of expiry on the platform clock, then follows the new expiry', async () => {
-            const target = expiring(1_000_000 + 120_000);
+            const target = await expiring(1_000_000 + 120_000);
 
             gateway.refresh.mockResolvedValueOnce({
                 kind: 'refreshed',
@@ -874,19 +933,19 @@ describe('session lifecycle', () => {
         ])('spreads the refresh over the earlier half of the skew window for a sample of %d', async (sample, delay) => {
             vi.mocked(Math.random).mockReturnValue(sample);
 
-            await expiring(1_000_000 + 120_000).boot();
+            await (await expiring(1_000_000 + 120_000)).boot();
 
             expect(scheduler.delays()).toStrictEqual([delay]);
         });
 
         it('honours a custom skew', async () => {
-            await expiring(1_000_000 + 10_000, { refreshSkewMs: 4_000 }).boot();
+            await (await expiring(1_000_000 + 10_000, { refreshSkewMs: 4_000 })).boot();
 
             expect(scheduler.delays()).toStrictEqual([6_000]);
         });
 
         it('refreshes at once inside the skew', async () => {
-            const target = expiring(1_000_000 + 1_000);
+            const target = await expiring(1_000_000 + 1_000);
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
             await target.boot();
@@ -901,7 +960,7 @@ describe('session lifecycle', () => {
         });
 
         it('disarms when the session ends', async () => {
-            const target = expiring(1_000_000 + 120_000);
+            const target = await expiring(1_000_000 + 120_000);
 
             await target.boot();
             await target.store().clearLocal();
@@ -911,7 +970,7 @@ describe('session lifecycle', () => {
         });
 
         it('re-evaluates at the longest timer delay instead of overflowing', async () => {
-            const target = expiring(1_000_000 + MAX_TIMEOUT_DELAY_MS + 120_000);
+            const target = await expiring(1_000_000 + MAX_TIMEOUT_DELAY_MS + 120_000);
 
             await target.boot();
 
@@ -925,7 +984,7 @@ describe('session lifecycle', () => {
         });
 
         it('arms the refresh itself at exactly the longest timer delay', async () => {
-            const target = expiring(1_000_000 + MAX_TIMEOUT_DELAY_MS + 60_000);
+            const target = await expiring(1_000_000 + MAX_TIMEOUT_DELAY_MS + 60_000);
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'refreshed', tokens: tokens() });
             await target.boot();
@@ -940,7 +999,7 @@ describe('session lifecycle', () => {
         });
 
         it('keeps the session and arms nothing further when the proactive refresh fails transiently', async () => {
-            const target = expiring(1_000_000 + 1_000);
+            const target = await expiring(1_000_000 + 1_000);
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'retryable', error: new NetworkError('offline') });
             await target.boot();
@@ -958,7 +1017,7 @@ describe('session lifecycle', () => {
         });
 
         it('redirects when the proactive refresh is refused', async () => {
-            const target = expiring(1_000_000 + 1_000);
+            const target = await expiring(1_000_000 + 1_000);
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'refused') });
             await target.boot();
@@ -973,7 +1032,7 @@ describe('session lifecycle', () => {
         it('disconnects an open connection when the proactive refresh fails, keeping the session', async () => {
             const connection = createRecordingConnection();
             const failure = new HttpError(422, 'malformed');
-            const target = expiring(1_000_000 + 120_000, {}, { realtime: connection });
+            const target = await expiring(1_000_000 + 120_000, {}, { realtime: connection });
 
             gateway.refresh.mockResolvedValueOnce({ kind: 'failed', error: failure });
             await target.boot();
@@ -992,13 +1051,13 @@ describe('session lifecycle', () => {
         });
 
         it('arms nothing when disabled', async () => {
-            await expiring(1_000_000 + 1_000, { proactiveRefresh: false }).boot();
+            await (await expiring(1_000_000 + 1_000, { proactiveRefresh: false })).boot();
 
             expect(scheduler.delays()).toStrictEqual([]);
         });
 
         it('cancels the armed refresh on teardown', async () => {
-            const teardown = await expiring(1_000_000 + 120_000).boot();
+            const teardown = await (await expiring(1_000_000 + 120_000)).boot();
 
             teardown();
 
@@ -1006,7 +1065,7 @@ describe('session lifecycle', () => {
         });
 
         it('arms nothing for a session that begins after teardown', async () => {
-            const target = expiring(1_000_000 + 120_000);
+            const target = await expiring(1_000_000 + 120_000);
             const teardown = await target.boot();
 
             teardown();
@@ -1024,7 +1083,7 @@ describe('session lifecycle', () => {
     describe('realtime', () => {
         it('connects the realtime connection for a hydrated session', async () => {
             const connection = createRecordingConnection();
-            const target = persisted({}, { realtime: connection });
+            const target = await persisted({}, { realtime: connection });
 
             await target.boot();
 
@@ -1044,7 +1103,7 @@ describe('session lifecycle', () => {
         it('disconnects an open connection when a 401 refresh fails, keeping the session', async () => {
             const connection = createRecordingConnection();
             const failure = new HttpError(422, 'malformed');
-            const target = persisted({}, { realtime: connection });
+            const target = await persisted({}, { realtime: connection });
 
             await target.boot();
             await vi.waitFor(() => {
@@ -1061,7 +1120,7 @@ describe('session lifecycle', () => {
 
         it('leaves the realtime connection alone when it does not follow the session', async () => {
             const connection = createRecordingConnection();
-            const target = persisted({ realtimeFollowsSession: false }, { realtime: connection });
+            const target = await persisted({ realtimeFollowsSession: false }, { realtime: connection });
 
             await target.boot();
             await target.store().clearLocal();
