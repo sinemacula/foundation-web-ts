@@ -1,6 +1,6 @@
 {
     "name": "@sinemacula/foundation-web",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Vue and browser kernel for Sine Macula web applications, layered over @sinemacula/foundation: composition root, feature modules, routing, i18n, session and realtime.",
     "license": "Apache-2.0",
     "author": "Ben Carey <bdmc@sinemacula.co.uk>",
