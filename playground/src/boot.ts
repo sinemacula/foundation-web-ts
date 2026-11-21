@@ -9,7 +9,10 @@ import type {
     FoundationWebApp,
     FoundationWebPlatformOptions,
 } from '@sinemacula/foundation-web/app/create-foundation-web-app';
-import { createFoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
+import {
+    FoundationWebBootError,
+    createFoundationWebApp,
+} from '@sinemacula/foundation-web/app/create-foundation-web-app';
 import { createWebEnvironment } from '@sinemacula/foundation-web/config/web-environment';
 import { createSessionModule } from '@sinemacula/foundation-web/session/create-session-module';
 
@@ -72,6 +75,13 @@ export function renderBootFailure(mount: Element, error: unknown, dev: boolean):
     panel.style.fontFamily = 'sans-serif';
     heading.textContent = 'The application could not start.';
     panel.append(heading);
+
+    if (error instanceof FoundationWebBootError && error.reference !== null) {
+        const reference = doc.createElement('p');
+
+        reference.textContent = `Reference: ${error.reference}`;
+        panel.append(reference);
+    }
 
     if (dev && error instanceof Error) {
         const detail = doc.createElement('p');
