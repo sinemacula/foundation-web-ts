@@ -37,7 +37,6 @@ export interface FakeWindow {
     readonly localStorage: Storage;
 
     /** The in-memory IndexedDB. */
-    // biome-ignore lint/style/useNamingConvention: mirrors the Window property
     readonly indexedDB: IDBFactory;
 
     /** A BroadcastChannel delivering to the other channels of this window's bus. */
@@ -272,7 +271,6 @@ export function createFakeWindow(withoutLocks = false): FakeWindow {
 
     return {
         localStorage,
-        // biome-ignore lint/style/useNamingConvention: mirrors the Window property
         indexedDB: factory,
         BroadcastChannel: bus.Channel,
         navigator: { locks: withoutLocks ? undefined : createLockManager() },
