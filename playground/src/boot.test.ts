@@ -6,6 +6,7 @@
  */
 
 import type { FoundationWebApp } from '@sinemacula/foundation-web/app/create-foundation-web-app';
+import { FoundationWebBootError } from '@sinemacula/foundation-web/app/create-foundation-web-app';
 import { resetFoundationWebServices } from '@sinemacula/foundation-web/app/services';
 import { ConfigurationError } from '@sinemacula/foundation-web/config/web-environment';
 import { resetSessionContext } from '@sinemacula/foundation-web/session/session-context';
@@ -259,7 +260,7 @@ describe('application boot', () => {
 
         delete runtime['API_URL'];
 
-        await expect(boot({ dev: false, runtime })).rejects.toBeInstanceOf(ConfigurationError);
+        await expect(boot({ dev: false, runtime })).rejects.toHaveProperty('cause', expect.any(ConfigurationError));
         await expect(boot({ dev: false, runtime })).rejects.toThrow('API_URL');
     });
 
@@ -276,7 +277,8 @@ describe('application boot', () => {
                 ),
         ],
     ])('fails closed in production naming every required key when the runtime document %s', async (_, response) => {
-        await expect(boot({ dev: false, response })).rejects.toStrictEqual(
+        await expect(boot({ dev: false, response })).rejects.toHaveProperty(
+            'cause',
             new ConfigurationError(
                 'Runtime configuration is missing required keys: API_URL, APP_URL, APP_ENV, APP_VERSION.',
             ),
@@ -313,6 +315,22 @@ describe('renderBootFailure', () => {
 
         expect(mount.querySelector('p')?.textContent).toBe('<img src=x onerror=alert(1)>');
         expect(mount.querySelector('img')).toBeNull();
+    });
+
+    it('shows the reference a boot failure was reported under', () => {
+        const mount = mountNode();
+
+        renderBootFailure(mount, new FoundationWebBootError(new Error('boom'), 'AB12-CD34'), false);
+
+        expect(mount.querySelector('p')?.textContent).toBe('Reference: AB12-CD34');
+    });
+
+    it('omits the reference when the boot failure was not reported', () => {
+        const mount = mountNode();
+
+        renderBootFailure(mount, new FoundationWebBootError(new Error('boom'), null), false);
+
+        expect(mount.querySelector('p')).toBeNull();
     });
 
     it('omits the detail for a non-error failure in development', () => {

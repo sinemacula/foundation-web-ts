@@ -38,7 +38,12 @@ import { next } from '@sinemacula/foundation/router/middleware';
 import { BrowserStorage } from '../storage/browser-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { FoundationWebApp, FoundationWebAppOptions } from './create-foundation-web-app';
-import { FoundationWebAppError, createFoundationWebApp, observeBootPhases } from './create-foundation-web-app';
+import {
+    FoundationWebAppError,
+    FoundationWebBootError,
+    createFoundationWebApp,
+    observeBootPhases,
+} from './create-foundation-web-app';
 import {
     analytics,
     api,
@@ -443,6 +448,20 @@ function bootApp(
     });
 }
 
+/**
+ * Await a boot that must fail, returning its boot error.
+ */
+async function bootFailure(boot: Promise<unknown>): Promise<FoundationWebBootError> {
+    const error: unknown = await boot.then(
+        () => null,
+        (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(FoundationWebBootError);
+
+    return error as FoundationWebBootError;
+}
+
 describe('createFoundationWebApp', () => {
     afterEach(() => {
         resetFoundationWebServices();
@@ -526,7 +545,9 @@ describe('createFoundationWebApp', () => {
 
             fetchFn.mockImplementationOnce(response);
 
-            await expect(bootApp({ platform: makeSeams(fetchFn) })).rejects.toBeInstanceOf(RuntimeEnvironmentError);
+            expect((await bootFailure(bootApp({ platform: makeSeams(fetchFn) }))).cause).toBeInstanceOf(
+                RuntimeEnvironmentError,
+            );
         });
     });
 
@@ -777,7 +798,7 @@ describe('createFoundationWebApp', () => {
         it('rejects module lists that fail registry validation', async () => {
             const boot = bootApp({ modules: [homeModule({ name: 'dupe' }), homeModule({ name: 'dupe' })] });
 
-            await expect(boot).rejects.toBeInstanceOf(ModuleRegistryError);
+            expect((await bootFailure(boot)).cause).toBeInstanceOf(ModuleRegistryError);
             await expect(boot).rejects.toThrow('Duplicate module names: "dupe".');
         });
     });
@@ -1274,7 +1295,7 @@ describe('createFoundationWebApp', () => {
         it('rejects with FoundationBootError when update monitoring is enabled with no way to surface updates', async () => {
             const boot = bootApp({ monitors: { updates: { enabled: true } } });
 
-            await expect(boot).rejects.toBeInstanceOf(FoundationBootError);
+            expect((await bootFailure(boot)).cause).toBeInstanceOf(FoundationBootError);
             await expect(boot).rejects.toThrow(
                 'Update monitoring is enabled but cannot surface updates: ' +
                     'provide monitors.updates.toastKey or monitors.updates.onUpdate.',
@@ -1810,7 +1831,7 @@ describe('createFoundationWebApp', () => {
 
             await expect(
                 bootApp({ realtime: () => makeRealtime(order), platform: seams, ...failingOptions(order) }),
-            ).rejects.toBe(failure);
+            ).rejects.toHaveProperty('cause', failure);
 
             expect(order).toEqual(expected);
             expectWindowReleased(seams.targetWindow);
@@ -1827,13 +1848,116 @@ describe('createFoundationWebApp', () => {
                     monitors: { updates: { enabled: settings => settings.app.environment === 'production' } },
                     platform: seams,
                 }),
-            ).rejects.toBeInstanceOf(FoundationBootError);
+            ).rejects.toHaveProperty('cause', expect.any(FoundationBootError));
 
             expect(order).toEqual(['teardown:alpha', 'realtime.disconnect', 'dispose:store']);
             expectWindowReleased(seams.targetWindow);
         });
 
-        it('reports teardown failures and still rejects with the boot error', async () => {
+        it.each<[string, Partial<FoundationWebAppOptions<TestConfiguration>>]>([
+            [
+                'a register hook throws',
+                {
+                    modules: [
+                        homeModule({
+                            register: () => {
+                                throw failure;
+                            },
+                        }),
+                    ],
+                },
+            ],
+            ['a module boot rejects', { modules: [homeModule(), failingModule()] }],
+        ])('reports the boot failure once under its reference when %s', async (_label, failingOptions) => {
+            const reporter = new NullErrorReporter();
+            const capture = vi.spyOn(reporter, 'captureError');
+
+            const error = await bootFailure(
+                bootApp({
+                    observability: { reporter: () => reporter, reference: () => 'AB12-CD34' },
+                    ...failingOptions,
+                }),
+            );
+
+            expect(error.cause).toBe(failure);
+            expect(error.message).toBe('boot step failed');
+            expect(error.name).toBe('FoundationWebBootError');
+            expect(error.reference).toBe('AB12-CD34');
+            expect(capture).toHaveBeenCalledTimes(1);
+            expect(capture).toHaveBeenCalledWith(failure, { source: 'boot', reference: 'AB12-CD34' });
+        });
+
+        it('reports under a generated reference by default', async () => {
+            const reporter = new NullErrorReporter();
+            const capture = vi.spyOn(reporter, 'captureError');
+
+            const error = await bootFailure(
+                bootApp({ modules: [homeModule(), failingModule()], observability: { reporter: () => reporter } }),
+            );
+
+            expect(error.reference).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+            expect(capture).toHaveBeenCalledWith(failure, { source: 'boot', reference: error.reference });
+        });
+
+        it('rejects with a null reference when the boot fails before a reporter exists', async () => {
+            const reporter = new NullErrorReporter();
+            const capture = vi.spyOn(reporter, 'captureError');
+            const reference = vi.fn(() => 'AB12-CD34');
+            const fetchFn = makeFetch();
+
+            fetchFn.mockImplementationOnce(() => Promise.resolve(jsonResponse(null, 500)));
+
+            const error = await bootFailure(
+                bootApp({ observability: { reporter: () => reporter, reference }, platform: makeSeams(fetchFn) }),
+            );
+
+            expect(error.cause).toBeInstanceOf(RuntimeEnvironmentError);
+            expect(error.reference).toBeNull();
+            expect(reference).not.toHaveBeenCalled();
+            expect(capture).not.toHaveBeenCalled();
+        });
+
+        it.each<[string, (reporter: NullErrorReporter) => () => string]>([
+            [
+                'the reporter throws',
+                reporter => {
+                    vi.spyOn(reporter, 'captureError').mockImplementation(() => {
+                        throw new Error('reporter failed');
+                    });
+
+                    return () => 'AB12-CD34';
+                },
+            ],
+            [
+                'the reference factory throws',
+                () => () => {
+                    throw new Error('reference failed');
+                },
+            ],
+        ])('rejects with a null reference when %s', async (_label, arrange) => {
+            const reporter = new NullErrorReporter();
+            const reference = arrange(reporter);
+
+            const error = await bootFailure(
+                bootApp({
+                    modules: [homeModule(), failingModule()],
+                    observability: { reporter: () => reporter, reference },
+                }),
+            );
+
+            expect(error.cause).toBe(failure);
+            expect(error.reference).toBeNull();
+        });
+
+        it('wraps a non-error failure without converting it', () => {
+            const thrown = Object.create(null) as object;
+            const error = new FoundationWebBootError(thrown, null);
+
+            expect(error.cause).toBe(thrown);
+            expect(error.message).toBe('The application failed to boot.');
+        });
+
+        it('reports teardown failures under the boot failure reference', async () => {
             const teardownFailure = new Error('teardown failed');
             const reporter = new NullErrorReporter();
             const capture = vi.spyOn(reporter, 'captureError');
@@ -1850,13 +1974,15 @@ describe('createFoundationWebApp', () => {
                         }),
                         failingModule(),
                     ],
-                    observability: { reporter: () => reporter },
+                    observability: { reporter: () => reporter, reference: () => 'AB12-CD34' },
                     platform: seams,
                 }),
-            ).rejects.toBe(failure);
+            ).rejects.toHaveProperty('cause', failure);
 
-            expect(capture).toHaveBeenCalledTimes(1);
-            expect(capture).toHaveBeenCalledWith(teardownFailure, { source: 'boot-rollback' });
+            expect(capture.mock.calls).toEqual([
+                [failure, { source: 'boot', reference: 'AB12-CD34' }],
+                [teardownFailure, { source: 'boot-rollback', reference: 'AB12-CD34' }],
+            ]);
             expectWindowReleased(seams.targetWindow);
         });
 
@@ -1913,7 +2039,7 @@ describe('createFoundationWebApp', () => {
                     ],
                     notifications: { confirm: confirmService },
                 }),
-            ).rejects.toBe(failure);
+            ).rejects.toHaveProperty('cause', failure);
 
             expect(opened).toHaveLength(1);
             expect(await opened[0]).toBe(false);
@@ -1939,13 +2065,16 @@ describe('createFoundationWebApp', () => {
                     ],
                     observability: { reporter: () => reporter },
                 }),
-            ).rejects.toBe(failure);
+            ).rejects.toHaveProperty('cause', failure);
         });
 
         it('boots cleanly on the same window after a failed boot', async () => {
             const seams = makeSeams();
 
-            await expect(bootApp({ modules: [homeModule(), failingModule()], platform: seams })).rejects.toBe(failure);
+            await expect(bootApp({ modules: [homeModule(), failingModule()], platform: seams })).rejects.toHaveProperty(
+                'cause',
+                failure,
+            );
 
             resetFoundationWebServices();
 

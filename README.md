@@ -244,12 +244,15 @@ it. The two translation keys are application copy passed as options.
 
 #### start() and dispose()
 
-`createFoundationWebApp` resolves once every phase has run; nothing is mounted yet. When a phase fails, everything
-installed so far is torn down and the original error rejects. `start(selector?)` awaits `router.isReady()` and then
-mounts (default `#app`), so initialisation completes before any component renders. A handle starts once: a second
-`start()` rejects, and so does a `start()` after, or racing, `dispose()`. The handle also exposes the assembled `app`,
-`router`, `pinia` and `i18n`, the frozen `config` tree, typed references to every installed service under `services`,
-and the started `monitors`, so tests never need ambient access.
+`createFoundationWebApp` resolves once every phase has run; nothing is mounted yet. When a phase fails, the failure is
+reported with `source: 'boot'` once the error reporter is wired, everything installed so far is torn down, and the boot
+rejects with a `FoundationWebBootError`: the original error is its `cause`, and `reference` is the short code the report
+carries in its context (null when nothing was reported), for the application's fallback page to show. Teardown failures
+are reported under the same reference. `observability.reference` replaces the default random `XXXX-XXXX` generator.
+`start(selector?)` awaits `router.isReady()` and then mounts (default `#app`), so initialisation completes before any
+component renders. A handle starts once: a second `start()` rejects, and so does a `start()` after, or racing,
+`dispose()`. The handle also exposes the assembled `app`, `router`, `pinia` and `i18n`, the frozen `config` tree, typed
+references to every installed service under `services`, and the started `monitors`, so tests never need ambient access.
 
 `dispose()` idempotently unmounts the root and tears down everything the boot installed, in reverse: the monitors,
 chunk recovery, module boot teardowns, realtime disconnect, the page-tracking, global-error-handling and title-sync
