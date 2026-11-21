@@ -164,13 +164,13 @@ Top-level: `root` (the component mounted by `start()`), `modules` (the explicit 
 
 Defaults and behaviours worth knowing:
 
-- `config.createEnvironment` is caller-owned - the only place build-time variables may appear. It receives the
-  fetched runtime document; pair it with `createWebEnvironment` (`src/config/web-environment.ts`), which chains the
-  runtime document ahead of the prefixed build-time variables (default prefix `VITE_`) in development and, in
-  production, throws a `ConfigurationError` naming every missing `requiredKeys` entry. `config.runtimeUrl` (default
-  `/runtime-env.json`) is one URL for both the runtime-environment fetch and the update monitor's default poll target.
-  A 404 boots over an empty document; any other failure, or no document within 5 seconds, rejects the boot with a
-  `RuntimeEnvironmentError`.
+- `config.createEnvironment` is caller-owned - the only place build-time variables may appear. It receives the fetched
+  runtime document; pair it with `createWebEnvironment` (`src/config/web-environment.ts`), which chains the runtime
+  document ahead of the prefixed build-time variables (default prefix `VITE_`) in development and, in production, throws
+  a `ConfigurationError` naming every missing `requiredKeys` entry. `config.runtimeUrl` (default `/runtime-env.json`) is
+  one URL for both the runtime-environment fetch and the update monitor's default poll target. A 404 boots over an empty
+  document; any other failure, or no document within 5 seconds, rejects the boot with a `RuntimeEnvironmentError` as the
+  `FoundationWebBootError` cause.
 - `http.unexpectedErrorToastKey` arms the default response-error handler: it skips validation failures and 401s,
   raises the application's toast and captures the error with request context. Without it (and without an
   `onResponseError` override) unexpected failures are captured only. The key is application copy - the kernel ships
@@ -180,11 +180,11 @@ Defaults and behaviours worth knowing:
 - Without `observability` factories, the `local` environment gets console adapters and every other environment gets
   the null adapters; a factory receives the full frozen config so adapter selection is config-driven.
 - `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an
-  application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with neither throws a
-  `FoundationBootError` at boot. `monitors.connectivity` defaults to on exactly when the update monitor runs and pauses
-  its polling while offline. `monitors.chunkRecovery` is on by default: a chunk-load or stylesheet-preload failure
-  reloads the tab once per window (default 60s) at the router's URL for the target, guarded in that tab's
-  `sessionStorage`; when that storage is unavailable it reports instead of reloading.
+  application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with neither rejects the boot
+  with a `FoundationBootError` as the `FoundationWebBootError` cause. `monitors.connectivity` defaults to on exactly
+  when the update monitor runs and pauses its polling while offline. `monitors.chunkRecovery` is on by default: a
+  chunk-load or stylesheet-preload failure reloads the tab once per window (default 60s) at the router's URL for the
+  target, guarded in that tab's `sessionStorage`; when that storage is unavailable it reports instead of reloading.
 - Inline `createColorSchemeBootScript({ storageKey, defaultPreference })` (`./theme/color-scheme-boot`) in the host
   page's `<head>`, with the same values passed to `colorScheme`, so the first paint matches the stored scheme. It
   reads `localStorage`, so a custom `platform.storage` is not visible to it.
