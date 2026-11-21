@@ -1,16 +1,5 @@
 # Changelog
 
-## [0.1.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.1.0...v0.1.0) (2026-11-21)
-
-
-### ⚠ BREAKING CHANGES
-
-* report start-up failures under a reference the app can show ([#150](https://github.com/sinemacula/foundation-web-ts/issues/150))
-
-### Features
-
-* report start-up failures under a reference the app can show ([#150](https://github.com/sinemacula/foundation-web-ts/issues/150)) ([94cf7c8](https://github.com/sinemacula/foundation-web-ts/commit/94cf7c8ce310ae47786bd4c5153b02c9ae9cb163))
-
 ## 0.1.0 (2026-11-18)
 
 
