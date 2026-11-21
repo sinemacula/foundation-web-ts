@@ -31,7 +31,6 @@ import { ConfirmService } from '../notifications/confirm-service';
 import { ToastService } from '../notifications/toast-service';
 import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtime-connection';
 import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
-import { NullErrorReporter } from '@sinemacula/foundation/reporting/null-error-reporter';
 import { installGlobalErrorHandling } from '../reporting/install-global-error-handling';
 import { tabRecoveryStorage } from '../router/chunk-error-recovery';
 import { BrowserStorage } from '../storage/browser-storage';
@@ -40,7 +39,8 @@ import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { ColorSchemePreference } from '@sinemacula/foundation/theme/color-scheme';
 import type { ColorSchemeService } from '@sinemacula/foundation/theme/color-scheme-service';
 import type { UpdateMonitor } from '../updates/update-monitor';
-import { installRealtime } from './services';
+import { BootFailureReporter, createBootFailureReference } from './boot-failure';
+import { installRealtime, reporting } from './services';
 import { bootFoundationCore } from '@sinemacula/foundation/app/boot-foundation-core';
 import type { FoundationConfig } from '@sinemacula/foundation/app/foundation-config';
 import { wireChunkRecovery } from './wire-chunk-recovery';
@@ -56,6 +56,7 @@ import { wireRouter } from './wire-router';
 const DEFAULT_MOUNT_SELECTOR = '#app';
 const DISPOSED_MESSAGE = 'The application has been disposed.';
 const ALREADY_STARTED_MESSAGE = 'The application has already been started.';
+const BOOT_FAILED_MESSAGE = 'The application failed to boot.';
 
 // Internal by design: phase insertions must never be breaking API changes.
 const BOOT_PHASES = [
@@ -113,6 +114,20 @@ export class FoundationWebAppError extends Error {
     constructor(message: string) {
         super(message);
         this.name = 'FoundationWebAppError';
+    }
+}
+
+/**
+ * The application failed to boot. The original failure is the `cause`.
+ */
+export class FoundationWebBootError extends Error {
+    /** The reference the failure was reported under, or null when it was not reported under one. */
+    readonly reference: string | null;
+
+    constructor(cause: unknown, reference: string | null) {
+        super(cause instanceof Error ? cause.message : BOOT_FAILED_MESSAGE, { cause });
+        this.name = 'FoundationWebBootError';
+        this.reference = reference;
     }
 }
 
@@ -197,6 +212,9 @@ export interface FoundationWebObservabilityOptions<T extends FoundationConfig> {
 
     /** Logger factory; wins over the environment default. */
     readonly logger?: (settings: DeepReadonly<T>) => Logger;
+
+    /** Generates the reference a boot failure is reported under. Default a random `XXXX-XXXX`. */
+    readonly reference?: () => string;
 }
 
 /**
@@ -476,14 +494,25 @@ interface AppIntegration {
 }
 
 /**
- * Boot a web application through the kernel's phase sequence. A failed boot
- * tears down everything it installed before rethrowing the original error;
- * service holders it installed stay installed.
+ * Error sinks the foundation phases feed before the boot completes.
+ */
+interface BootSinks {
+    /** Receives colour-scheme errors, held until a reporter is wired. */
+    readonly onColorSchemeError: (error: unknown) => void;
+
+    /** Receives the reporter as soon as the core has wired it. */
+    readonly onReporter: (reporter: ErrorReporter) => void;
+}
+
+/**
+ * Boot a web application through the kernel's phase sequence. A failed boot is
+ * reported with `source: 'boot'` once a reporter is wired, then tears down
+ * everything it installed; service holders it installed stay installed.
  *
- * @throws {ModuleRegistryError} when the module list fails validation
- * @throws {RuntimeEnvironmentError} when the runtime document cannot be
- * loaded; only a 404 boots over an empty document
- * @throws {FoundationBootError} when the monitor options cannot work
+ * @throws {FoundationWebBootError} wrapping the original failure, such as a
+ * ModuleRegistryError for an invalid module list, a RuntimeEnvironmentError
+ * when the runtime document cannot be loaded (only a 404 boots over an empty
+ * document), or a FoundationBootError when the monitor options cannot work
  */
 export async function createFoundationWebApp<T extends FoundationConfig>(
     options: FoundationWebAppOptions<T>,
@@ -493,14 +522,18 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
     const teardowns = new TeardownStack();
 
     const colorSchemeErrors = new DeferredErrorSink('color-scheme');
-
-    let reporter: ErrorReporter = new NullErrorReporter();
+    const bootFailures = new BootFailureReporter(options.observability?.reference ?? createBootFailureReference);
 
     try {
-        const foundation = await bootFoundation(options, platform, runtimeUrl, colorSchemeErrors.report, teardowns);
+        const foundation = await bootFoundation(
+            options,
+            platform,
+            runtimeUrl,
+            { onColorSchemeError: colorSchemeErrors.report, onReporter: bootFailures.attach },
+            teardowns,
+        );
 
-        reporter = foundation.observability.reporter;
-        colorSchemeErrors.attach(reporter);
+        colorSchemeErrors.attach(foundation.observability.reporter);
 
         const moduleLayer = await bootModuleLayer(options, platform, foundation, teardowns);
         const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
@@ -508,9 +541,10 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
 
         return assembleApp(foundation, moduleLayer, integration, monitors, teardowns);
     } catch (error) {
-        reportRollbackFailures(teardowns.drain(), reporter);
-
-        throw error;
+        throw new FoundationWebBootError(
+            error,
+            bootFailures.report(error, () => teardowns.drain()),
+        );
     }
 }
 
@@ -563,19 +597,6 @@ class DeferredErrorSink {
 }
 
 /**
- * Report teardown failures from a boot rollback without masking the boot error.
- */
-function reportRollbackFailures(failures: readonly unknown[], reporter: ErrorReporter): void {
-    for (const failure of failures) {
-        try {
-            reporter.captureError(failure, { source: 'boot-rollback' });
-        } catch {
-            // The boot error is the one that must surface.
-        }
-    }
-}
-
-/**
  * Run the web-owned head phases, then the foundation core, bridging module
  * registration through its contributions callback so pinia and the registry
  * never cross the foundation boundary.
@@ -584,7 +605,7 @@ async function bootFoundation<T extends FoundationConfig>(
     options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
-    onColorSchemeError: (error: unknown) => void,
+    sinks: BootSinks,
     teardowns: TeardownStack,
 ): Promise<AppFoundation<T>> {
     recordPhase('module-registry');
@@ -601,7 +622,7 @@ async function bootFoundation<T extends FoundationConfig>(
     recordPhase('color-scheme');
 
     const storage = options.platform?.storage ?? resolveBrowserStorage(platform.targetWindow);
-    const colorScheme = resolveColorScheme(storage, platform, options, onColorSchemeError);
+    const colorScheme = resolveColorScheme(storage, platform, options, sinks.onColorSchemeError);
 
     teardowns.push(() => {
         colorScheme.dispose();
@@ -629,6 +650,9 @@ async function bootFoundation<T extends FoundationConfig>(
             ...(options.observability === undefined ? {} : { observability: options.observability }),
             ...(options.http === undefined ? {} : { http: options.http }),
             collectHttpContributions: ({ config, environment }) => {
+                // The core wires the reporter immediately before registration.
+                sinks.onReporter(reporting());
+
                 recordPhase('register-modules');
 
                 return registerModules(registry.modules, { config, environment, storage, pinia, platform });

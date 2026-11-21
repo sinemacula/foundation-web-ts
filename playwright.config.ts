@@ -19,7 +19,6 @@ export default defineConfig({
     retries: IS_CI ? 2 : 0,
     reporter: [['list'], ['html', { open: 'never', outputFolder: 'build/playwright-report' }]],
     use: {
-        // biome-ignore lint/style/useNamingConvention: Playwright API property
         baseURL: BASE_URL,
         serviceWorkers: 'block',
         trace: 'on-first-retry',

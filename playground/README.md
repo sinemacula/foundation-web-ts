@@ -90,10 +90,10 @@ build's `import.meta.env` before `app.start('#app')`. The phase sequence is kern
 - Application copy: the two toast keys the kernel never defaults, `common.states.error` for unexpected HTTP
   failures and `common.updates.available` for the update monitor.
 
-A failed boot renders a static message into the mount node instead of mounting, with the error's message only in
-development. `src/boot.test.ts` drives the same composition through the kernel's platform seams (fake fetch, memory
-storage, memory history) to pin what is app-specific about it; the phase machinery is covered by the kernel's own
-suite.
+A failed boot renders a static message into the mount node instead of mounting, with the reference the failure was
+reported under when there is one, and the error's message only in development. `src/boot.test.ts` drives the same
+composition through the kernel's platform seams (fake fetch, memory storage, memory history) to pin what is app-specific
+about it; the phase machinery is covered by the kernel's own suite.
 
 ## Configuration (runtime, not build time)
 
