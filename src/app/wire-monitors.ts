@@ -6,9 +6,11 @@
  */
 
 import type { DeepReadonly } from '@sinemacula/foundation/config/config-repository';
-import { BrowserConnectivityMonitor } from '../connectivity/browser-connectivity-monitor';
+import type { ReachabilityProbe } from '@sinemacula/foundation/connectivity/confirmed-connectivity-monitor';
+import { createSiteReachabilityProbe } from '../connectivity/site-reachability-probe';
+import type { ConnectivityTimings } from '../connectivity/web-connectivity-monitor';
+import { WebConnectivityMonitor } from '../connectivity/web-connectivity-monitor';
 import { TeardownStack } from '../module/teardown-stack';
-import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { ToastService } from '../notifications/toast-service';
 import { UpdateMonitor } from '../updates/update-monitor';
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
@@ -47,6 +49,17 @@ export interface UpdateMonitorWiring<T> {
 }
 
 /**
+ * Connectivity-monitor options accepted by {@link wireMonitors}.
+ */
+export interface ConnectivityWiring extends ConnectivityTimings {
+    /** Whether connectivity monitoring runs. Default: on. */
+    readonly enabled?: boolean;
+
+    /** The URL a `HEAD` asks, or a full probe. Defaults to the runtime environment URL. */
+    readonly probe?: string | ReachabilityProbe;
+}
+
+/**
  * Options for {@link wireMonitors}.
  */
 export interface WireMonitorsOptions<T extends MonitorWiringSettings> {
@@ -56,11 +69,8 @@ export interface WireMonitorsOptions<T extends MonitorWiringSettings> {
     /** Update-monitor options; omit to take the version-derived defaults. */
     readonly updates?: UpdateMonitorWiring<T>;
 
-    /** Connectivity monitoring; defaults to on exactly when the update monitor runs. */
-    readonly connectivity?: {
-        /** Whether connectivity monitoring runs. */
-        readonly enabled?: boolean;
-    };
+    /** The connectivity monitor update polling follows, from {@link createConnectivityMonitor}; omit for none. */
+    readonly connectivity?: WebConnectivityMonitor | null;
 
     /** The runtime environment document URL, the update monitor's default poll target. */
     readonly runtimeUrl: string;
@@ -71,10 +81,24 @@ export interface WireMonitorsOptions<T extends MonitorWiringSettings> {
     /** The fetch seam used to poll the version document. */
     readonly fetchFn?: typeof fetch;
 
-    /** The window whose connectivity events are observed. */
+    /** The document the update monitor watches for visibility. */
+    readonly targetDocument?: Document;
+}
+
+/**
+ * The seams {@link createConnectivityMonitor} builds over.
+ */
+export interface ConnectivitySeams {
+    /** The runtime environment document URL, the default probe target. */
+    readonly runtimeUrl: string;
+
+    /** The fetch seam probes go through. */
+    readonly fetchFn?: typeof fetch;
+
+    /** The window whose connectivity and page events are observed. */
     readonly targetWindow?: Window;
 
-    /** The document the update monitor watches for visibility. */
+    /** The document whose visibility gates probing. */
     readonly targetDocument?: Document;
 }
 
@@ -86,7 +110,7 @@ export interface WiredMonitors {
     readonly updates: UpdateMonitor | null;
 
     /** The running connectivity monitor, or null when disabled. */
-    readonly connectivity: ConnectivityMonitor | null;
+    readonly connectivity: WebConnectivityMonitor | null;
 
     /** Stops both monitors and detaches their handlers, silencing any update check still in flight; every step runs even when one throws. */
     readonly teardown: () => void;
@@ -105,7 +129,7 @@ interface Subscribed<M> {
 
 /**
  * Wire the update and connectivity monitors; with connectivity monitoring on,
- * update polling runs only while the browser reports itself online.
+ * update polling runs only while the site is confirmed reachable.
  *
  * @throws {FoundationBootError} when updates are explicitly enabled with
  * neither a toast key nor an update handler
@@ -113,7 +137,7 @@ interface Subscribed<M> {
 export function wireMonitors<T extends MonitorWiringSettings>(options: WireMonitorsOptions<T>): WiredMonitors {
     const updates = wireUpdates(options);
     const updateMonitor = updates?.monitor ?? null;
-    const connectivity = wireConnectivity(options, updateMonitor);
+    const connectivity = wireConnectivity(options.connectivity ?? null, updateMonitor);
     const connectivityMonitor = connectivity?.monitor ?? null;
 
     if (connectivityMonitor?.online ?? true) {
@@ -214,22 +238,43 @@ function resolveUpdatesEnabled<T extends MonitorWiringSettings>(
 }
 
 /**
- * Wire the connectivity monitor, pausing update polling while offline and
- * checking for a new version as soon as the browser is back online.
+ * Build the connectivity monitor, not yet started, or null when disabled.
  */
-function wireConnectivity<T extends MonitorWiringSettings>(
-    options: WireMonitorsOptions<T>,
-    updates: UpdateMonitor | null,
-): Subscribed<ConnectivityMonitor> | null {
-    const enabled = options.connectivity?.enabled ?? updates !== null;
+export function createConnectivityMonitor(
+    wiring: ConnectivityWiring | undefined,
+    seams: ConnectivitySeams,
+): WebConnectivityMonitor | null {
+    const { enabled = true, probe = seams.runtimeUrl, ...timings } = wiring ?? {};
 
     if (!enabled) {
         return null;
     }
 
-    const monitor = new BrowserConnectivityMonitor({
-        ...(options.targetWindow === undefined ? {} : { targetWindow: options.targetWindow }),
+    return new WebConnectivityMonitor({
+        ...timings,
+        probe:
+            typeof probe === 'string'
+                ? createSiteReachabilityProbe({
+                      url: probe,
+                      ...(seams.fetchFn === undefined ? {} : { fetchFn: seams.fetchFn }),
+                  })
+                : probe,
+        ...(seams.targetWindow === undefined ? {} : { targetWindow: seams.targetWindow }),
+        ...(seams.targetDocument === undefined ? {} : { targetDocument: seams.targetDocument }),
     });
+}
+
+/**
+ * Start the connectivity monitor, pausing update polling while offline and
+ * checking for a new version as soon as the site is reachable again.
+ */
+function wireConnectivity(
+    monitor: WebConnectivityMonitor | null,
+    updates: UpdateMonitor | null,
+): Subscribed<WebConnectivityMonitor> | null {
+    if (monitor === null) {
+        return null;
+    }
 
     const unsubscribe = monitor.onChange(online => {
         if (online) {

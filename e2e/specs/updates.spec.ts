@@ -25,18 +25,32 @@ async function refocus(page: Page): Promise<void> {
 }
 
 /**
- * Count the runtime environment fetches `page` makes from now on.
+ * Count the requests `page` makes from now on to the runtime environment with
+ * `method`: a version check is a `GET`, a reachability probe a `HEAD`.
  */
-function countVersionChecks(page: Page): () => number {
+function countRuntimeRequests(page: Page, method: 'GET' | 'HEAD'): () => number {
     let count = 0;
 
     page.on('request', request => {
-        if (new URL(request.url()).pathname === '/runtime-env.json') {
+        if (request.method() === method && new URL(request.url()).pathname === '/runtime-env.json') {
             count += 1;
         }
     });
 
     return () => count;
+}
+
+/**
+ * Advance the page clock a probe interval at a time until `done` holds.
+ */
+async function advanceUntil(page: Page, done: () => boolean): Promise<void> {
+    await expect
+        .poll(async () => {
+            await page.clock.runFor(1_500);
+
+            return done();
+        })
+        .toBe(true);
 }
 
 test.describe('deployed-version updates', () => {
@@ -67,22 +81,31 @@ test.describe('deployed-version updates', () => {
         await expect(toast).toHaveCount(1);
     });
 
-    test('checks for a new version only while online', async ({ context, page, dashboardPage }) => {
+    test('pauses version checks once a loss is confirmed and checks again on recovery', async ({
+        context,
+        page,
+        dashboardPage,
+        guard,
+    }) => {
+        guard.allowConsoleError(/ERR_INTERNET_DISCONNECTED/u);
+        await page.clock.install();
         await serveRuntimeEnvironment(context);
 
         await dashboardPage.goto();
         await expect(dashboardPage.heading).toBeVisible();
 
-        const versionChecks = countVersionChecks(page);
+        const versionChecks = countRuntimeRequests(page, 'GET');
+        const probes = countRuntimeRequests(page, 'HEAD');
 
         await context.setOffline(true);
+        await advanceUntil(page, () => probes() >= 6);
         await refocus(page);
         await refocus(page);
+
+        expect(versionChecks()).toBe(0);
 
         await context.setOffline(false);
-        await refocus(page);
-
-        await expect.poll(versionChecks).toBe(1);
+        await advanceUntil(page, () => versionChecks() === 1);
     });
 });
 

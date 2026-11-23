@@ -5,14 +5,15 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
+import type { ReachabilityProbe } from '@sinemacula/foundation/connectivity/confirmed-connectivity-monitor';
+import type { WebConnectivityMonitor } from '../connectivity/web-connectivity-monitor';
 import { ToastService } from '../notifications/toast-service';
 import type { UpdateMonitor } from '../updates/update-monitor';
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
-import type { MonitorWiringSettings, WireMonitorsOptions } from './wire-monitors';
-import { wireMonitors } from './wire-monitors';
+import type { ConnectivityWiring, MonitorWiringSettings, WireMonitorsOptions } from './wire-monitors';
+import { createConnectivityMonitor, wireMonitors } from './wire-monitors';
 
 const THROW_MESSAGE =
     'Update monitoring is enabled but cannot surface updates: ' +
@@ -72,23 +73,40 @@ interface Harness {
     readonly options: WireMonitorsOptions<MonitorWiringSettings>;
 }
 
+/**
+ * A probe that always finds the site reachable.
+ */
+function isReachable(): Promise<boolean> {
+    return Promise.resolve(true);
+}
+
+/** Wiring overrides; connectivity is given as options and built over the harness seams. */
+type HarnessOverrides = Partial<Omit<WireMonitorsOptions<MonitorWiringSettings>, 'connectivity'>> & {
+    /** The connectivity options the monitor is built from. */
+    readonly connectivity?: ConnectivityWiring;
+
+    /** The window whose connectivity and page events are observed. */
+    readonly targetWindow?: Window;
+};
+
 /** Build the wiring options and collaborators shared by the monitor tests. */
-function makeHarness(
-    overrides: Partial<WireMonitorsOptions<MonitorWiringSettings>> = {},
-    deployedVersion = '2.0.0',
-): Harness {
+function makeHarness(overrides: HarnessOverrides = {}, deployedVersion = '2.0.0'): Harness {
     const settings: MonitorWiringSettings = { app: { version: '1.0.0' } };
     const service = new ToastService();
     const toasts = vi.fn(() => service);
     const fetchFn = makeFetch(deployedVersion);
+    const { connectivity = { probe: isReachable }, targetWindow = makeWindow(), ...rest } = overrides;
+    const seams = {
+        runtimeUrl: '/runtime-env.json',
+        fetchFn,
+        targetDocument: document.implementation.createHTMLDocument('t'),
+        ...rest,
+    };
     const options: WireMonitorsOptions<MonitorWiringSettings> = {
         settings,
-        runtimeUrl: '/runtime-env.json',
         toasts,
-        fetchFn,
-        targetWindow: makeWindow(),
-        targetDocument: document.implementation.createHTMLDocument('t'),
-        ...overrides,
+        ...seams,
+        connectivity: createConnectivityMonitor(connectivity, { ...seams, targetWindow }),
     };
 
     return { settings, service, toasts, fetchFn, options };
@@ -98,10 +116,11 @@ describe('wireMonitors update monitoring', () => {
     it('stays off when neither a toast key nor an update handler is provided', () => {
         const { options } = makeHarness();
 
-        const { updates, connectivity } = wireMonitors(options);
+        const { updates, teardown } = wireMonitors(options);
 
         expect(updates).toBeNull();
-        expect(connectivity).toBeNull();
+
+        teardown();
     });
 
     it('stays off for the dev version sentinel', () => {
@@ -110,10 +129,11 @@ describe('wireMonitors update monitoring', () => {
             updates: { toastKey: 'app.updates.available' },
         });
 
-        const { updates, connectivity } = wireMonitors(options);
+        const { updates, teardown } = wireMonitors(options);
 
         expect(updates).toBeNull();
-        expect(connectivity).toBeNull();
+
+        teardown();
     });
 
     it('arms with a toast key on release builds and raises a sticky toast on a new version', async () => {
@@ -280,10 +300,11 @@ describe('wireMonitors update monitoring', () => {
     it('does not throw when an enabled predicate returns false with no way to surface updates', () => {
         const { options } = makeHarness({ updates: { enabled: () => false } });
 
-        const { updates, connectivity } = wireMonitors(options);
+        const { updates, teardown } = wireMonitors(options);
 
         expect(updates).toBeNull();
-        expect(connectivity).toBeNull();
+
+        teardown();
     });
 
     it('checks for a new version when the injected document becomes visible', () => {
@@ -327,201 +348,191 @@ describe('wireMonitors update monitoring', () => {
 });
 
 describe('wireMonitors connectivity', () => {
-    it('pauses and resumes update polling with the injected window only', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    /** A probe answering `reachable`, flipped by the test. */
+    function makeProbe(reachable = true) {
+        const state = { reachable };
+        const probe = vi.fn<ReachabilityProbe>(() => Promise.resolve(state.reachable));
+
+        return { state, probe };
+    }
+
+    it('pauses update polling once a loss is confirmed and checks for a new version once recovery is', async () => {
         const targetWindow = makeWindow();
-        const { options } = makeHarness({ updates: { toastKey: 'app.updates.available' }, targetWindow });
+        const { state, probe } = makeProbe();
+        const { options, fetchFn } = makeHarness({
+            updates: { toastKey: 'app.updates.available', pollIntervalMs: 600_000 },
+            connectivity: { probe },
+            targetWindow,
+            targetDocument: makeVisibleDocument(),
+        });
 
         const { updates, connectivity, teardown } = wireMonitors(options);
+        const stop = vi.spyOn(updates as UpdateMonitor, 'stop');
+        await vi.advanceTimersByTimeAsync(0);
 
-        expect(connectivity).not.toBeNull();
-
-        const stopSpy = vi.spyOn(updates as UpdateMonitor, 'stop');
-        const startSpy = vi.spyOn(updates as UpdateMonitor, 'start');
-
+        state.reachable = false;
         window.dispatchEvent(new Event('offline'));
 
-        expect(stopSpy).not.toHaveBeenCalled();
+        expect(probe).toHaveBeenCalledTimes(1);
 
         targetWindow.dispatchEvent(new Event('offline'));
+        await vi.advanceTimersByTimeAsync(5_999);
 
-        expect(stopSpy).toHaveBeenCalledTimes(1);
+        expect(stop).not.toHaveBeenCalled();
 
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(connectivity?.online).toBe(false);
+        expect(stop).toHaveBeenCalledTimes(1);
+
+        state.reachable = true;
         targetWindow.dispatchEvent(new Event('online'));
+        await vi.advanceTimersByTimeAsync(6_000);
 
-        expect(startSpy).toHaveBeenCalledTimes(1);
-
-        teardown();
-    });
-
-    it('holds update polling while offline at boot until the window comes back online', async () => {
-        vi.useFakeTimers();
-
-        try {
-            const targetWindow = makeWindow(false);
-            const targetDocument = makeVisibleDocument();
-            const { options, fetchFn } = makeHarness({
-                updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
-                targetWindow,
-                targetDocument,
-            });
-
-            const { connectivity, teardown } = wireMonitors(options);
-
-            await vi.advanceTimersByTimeAsync(5_000);
-            targetDocument.dispatchEvent(new Event('visibilitychange'));
-
-            expect(connectivity?.online).toBe(false);
-            expect(fetchFn).not.toHaveBeenCalled();
-
-            targetWindow.dispatchEvent(new Event('online'));
-            await vi.advanceTimersByTimeAsync(1_000);
-
-            expect(fetchFn).toHaveBeenCalledTimes(2);
-
-            teardown();
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('checks for a new version as soon as the window comes back online', async () => {
-        const targetWindow = makeWindow();
-        const { options, fetchFn, service } = makeHarness({
-            updates: { toastKey: 'app.updates.available', pollIntervalMs: 600_000 },
-            targetWindow,
-        });
-
-        const { teardown } = wireMonitors(options);
-
-        targetWindow.dispatchEvent(new Event('offline'));
-
-        expect(fetchFn).not.toHaveBeenCalled();
-
-        targetWindow.dispatchEvent(new Event('online'));
-        await vi.waitFor(() => {
-            expect(service.toasts.value).toHaveLength(1);
-        });
-
+        expect(connectivity?.online).toBe(true);
         expect(fetchFn).toHaveBeenCalledTimes(1);
 
         teardown();
     });
 
+    it('holds update polling while offline at boot until recovery is confirmed', async () => {
+        const targetWindow = makeWindow(false);
+        const { state, probe } = makeProbe(false);
+        const { options, fetchFn } = makeHarness({
+            updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
+            connectivity: { probe },
+            targetWindow,
+            targetDocument: makeVisibleDocument(),
+        });
+
+        const { connectivity, teardown } = wireMonitors(options);
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(connectivity?.online).toBe(false);
+        expect(fetchFn).not.toHaveBeenCalled();
+
+        state.reachable = true;
+        targetWindow.dispatchEvent(new Event('online'));
+        await vi.advanceTimersByTimeAsync(6_000);
+
+        expect(connectivity?.online).toBe(true);
+        expect(fetchFn).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        expect(fetchFn).toHaveBeenCalledTimes(2);
+
+        teardown();
+    });
+
+    it('passes the confirmation timings through', async () => {
+        const { state, probe } = makeProbe();
+        const { options } = makeHarness({
+            connectivity: { probe, offlineAfter: 0 },
+            targetDocument: makeVisibleDocument(),
+        });
+
+        const { connectivity, teardown } = wireMonitors(options);
+        await vi.advanceTimersByTimeAsync(0);
+        state.reachable = false;
+        connectivity?.hint(false);
+        await vi.advanceTimersByTimeAsync(1_500);
+
+        expect(connectivity?.online).toBe(false);
+
+        teardown();
+    });
+
+    it.each([
+        ['the runtime document by default', undefined, 'http://localhost:3000/runtime-env.json?reachability=1'],
+        ['a configured URL', '/up', 'http://localhost:3000/up?reachability=1'],
+    ])('probes %s through the fetch seam', async (_label, probe, url) => {
+        const { options, fetchFn } = makeHarness({
+            connectivity: probe === undefined ? {} : { probe },
+            targetDocument: makeVisibleDocument(),
+        });
+
+        const { teardown } = wireMonitors(options);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(fetchFn.mock.calls[0]?.[0]).toBe(url);
+        expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({ method: 'HEAD', cache: 'no-store', redirect: 'manual' });
+
+        teardown();
+    });
+
     it('polls regardless of connectivity when connectivity monitoring is disabled', async () => {
-        vi.useFakeTimers();
+        const { options, fetchFn } = makeHarness({
+            updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
+            connectivity: { enabled: false },
+            targetWindow: makeWindow(false),
+        });
 
-        try {
-            const { options, fetchFn } = makeHarness({
-                updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
-                connectivity: { enabled: false },
-                targetWindow: makeWindow(false),
-            });
+        const { connectivity, teardown } = wireMonitors(options);
 
-            const { teardown } = wireMonitors(options);
+        await vi.advanceTimersByTimeAsync(1_000);
 
-            await vi.advanceTimersByTimeAsync(1_000);
+        expect(connectivity).toBeNull();
+        expect(fetchFn).toHaveBeenCalledTimes(1);
 
-            expect(fetchFn).toHaveBeenCalledTimes(1);
-
-            teardown();
-        } finally {
-            vi.useRealTimers();
-        }
+        teardown();
     });
 
     it('stops both monitors on teardown so connectivity changes no longer restart polling', async () => {
-        vi.useFakeTimers();
+        const targetWindow = makeWindow();
+        const { state, probe } = makeProbe();
+        const { options, fetchFn } = makeHarness({
+            updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
+            connectivity: { probe },
+            targetWindow,
+            targetDocument: makeVisibleDocument(),
+        });
 
-        try {
-            const targetWindow = makeWindow();
-            const { options, fetchFn } = makeHarness({
-                updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
-                targetWindow,
-            });
+        const { connectivity, teardown } = wireMonitors(options);
 
-            const { connectivity, teardown } = wireMonitors(options);
+        teardown();
+        connectivity?.start();
+        state.reachable = false;
+        targetWindow.dispatchEvent(new Event('offline'));
+        await vi.advanceTimersByTimeAsync(6_000);
+        state.reachable = true;
+        targetWindow.dispatchEvent(new Event('online'));
+        await vi.advanceTimersByTimeAsync(6_000);
 
-            teardown();
-            connectivity?.start();
-            targetWindow.dispatchEvent(new Event('offline'));
-            targetWindow.dispatchEvent(new Event('online'));
-            await vi.advanceTimersByTimeAsync(5_000);
+        expect(fetchFn).not.toHaveBeenCalled();
 
-            expect(fetchFn).not.toHaveBeenCalled();
-
-            connectivity?.stop();
-        } finally {
-            vi.useRealTimers();
-        }
+        connectivity?.stop();
     });
 
     it('still stops update polling when stopping connectivity throws', async () => {
-        vi.useFakeTimers();
-
-        try {
-            const failure = new Error('stop failed');
-            const { options, fetchFn } = makeHarness({
-                updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
-            });
-
-            const { connectivity, teardown } = wireMonitors(options);
-
-            vi.spyOn(connectivity as ConnectivityMonitor, 'stop').mockImplementation(() => {
-                throw failure;
-            });
-
-            expect(teardown).toThrow(failure);
-
-            await vi.advanceTimersByTimeAsync(5_000);
-
-            expect(fetchFn).not.toHaveBeenCalled();
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('stays off when disabled explicitly while updates run', () => {
-        const { options } = makeHarness({
-            updates: { toastKey: 'app.updates.available' },
-            connectivity: { enabled: false },
+        const failure = new Error('stop failed');
+        const { options, fetchFn } = makeHarness({
+            updates: { toastKey: 'app.updates.available', pollIntervalMs: 1_000 },
         });
 
-        const { updates, connectivity } = wireMonitors(options);
+        const { connectivity, teardown } = wireMonitors(options);
 
-        expect(updates).not.toBeNull();
-        expect(connectivity).toBeNull();
+        vi.spyOn(connectivity as WebConnectivityMonitor, 'stop').mockImplementation(() => {
+            throw failure;
+        });
 
-        updates?.stop();
+        expect(teardown).toThrow(failure);
+
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        expect(fetchFn).not.toHaveBeenCalled();
     });
 
-    it('runs without an update monitor when enabled explicitly', () => {
-        const reportError = vi.fn();
-        const targetWindow = makeWindow();
-
-        vi.stubGlobal('reportError', reportError);
-
-        try {
-            const { options } = makeHarness({ connectivity: { enabled: true }, targetWindow });
-
-            const { updates, connectivity, teardown } = wireMonitors(options);
-
-            expect(updates).toBeNull();
-            expect(connectivity).not.toBeNull();
-
-            targetWindow.dispatchEvent(new Event('offline'));
-            targetWindow.dispatchEvent(new Event('online'));
-
-            expect(connectivity?.online).toBe(true);
-            expect(reportError).not.toHaveBeenCalled();
-
-            teardown();
-        } finally {
-            vi.unstubAllGlobals();
-        }
-    });
-
-    it('uses the platform defaults when no seams are given', () => {
-        const { updates, connectivity } = wireMonitors({
+    it('wires no connectivity monitor unless given one', () => {
+        const { updates, connectivity, teardown } = wireMonitors({
             settings: { app: { version: '1.0.0' } },
             runtimeUrl: '/runtime-env.json',
             toasts: () => new ToastService(),
@@ -529,9 +540,53 @@ describe('wireMonitors connectivity', () => {
         });
 
         expect(updates).not.toBeNull();
-        expect(connectivity).not.toBeNull();
+        expect(connectivity).toBeNull();
 
-        updates?.stop();
-        connectivity?.stop();
+        teardown();
+    });
+
+    it('runs without an update monitor by default', async () => {
+        const reportError = vi.fn();
+        const { state, probe } = makeProbe();
+
+        vi.stubGlobal('reportError', reportError);
+
+        const { options } = makeHarness({ connectivity: { probe }, targetDocument: makeVisibleDocument() });
+        const { updates, connectivity, teardown } = wireMonitors(options);
+
+        expect(updates).toBeNull();
+
+        await vi.advanceTimersByTimeAsync(0);
+        state.reachable = false;
+        connectivity?.hint(false);
+        await vi.advanceTimersByTimeAsync(6_000);
+        state.reachable = true;
+        connectivity?.hint(true);
+        await vi.advanceTimersByTimeAsync(6_000);
+
+        expect(connectivity?.online).toBe(true);
+        expect(reportError).not.toHaveBeenCalled();
+
+        teardown();
+    });
+
+    it('uses the platform defaults when no seams are given', async () => {
+        const fetchFn = vi.fn(async () => new Response(null, { status: 404 }));
+
+        vi.stubGlobal('fetch', fetchFn);
+
+        const { updates, connectivity, teardown } = wireMonitors({
+            settings: { app: { version: '1.0.0' } },
+            runtimeUrl: '/runtime-env.json',
+            toasts: () => new ToastService(),
+            updates: { toastKey: 'app.updates.available' },
+            connectivity: createConnectivityMonitor(undefined, { runtimeUrl: '/runtime-env.json' }),
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(updates).not.toBeNull();
+        expect(connectivity?.online).toBe(true);
+
+        teardown();
     });
 });
