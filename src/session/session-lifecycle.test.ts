@@ -280,18 +280,33 @@ describe('session lifecycle', () => {
             expect(read).toHaveBeenCalledTimes(reads + 1);
         });
 
-        it.each([
-            ['adopts a session persisted while', true, 'restored'],
-            ['ignores', false, 'access'],
-        ])('%s the page sat in the back-forward cache', async (_label, restored, expected) => {
+        it('adopts a session persisted while the page sat in the back-forward cache', async () => {
             const target = await persisted();
 
             await target.boot();
             await target.win.persist(tokens({ accessToken: 'restored' }), 2);
-            target.win.dispatchPageShow(restored);
+            target.win.dispatchPageShow(true);
+
+            await vi.waitFor(() => {
+                expect(target.store().accessToken).toBe('restored');
+            });
+        });
+
+        it('ignores a page shown without the back-forward cache', async () => {
+            const target = await persisted();
+            const read = vi.spyOn(IndexedDbSessionRecordStore.prototype, 'read');
+
+            await target.boot();
+            await settle();
+            await target.win.persist(tokens({ accessToken: 'restored' }), 2);
+
+            const reads = read.mock.calls.length;
+
+            target.win.dispatchPageShow(false);
             await settle();
 
-            expect(target.store().accessToken).toBe(expected);
+            expect(read).toHaveBeenCalledTimes(reads);
+            expect(target.store().accessToken).toBe('access');
         });
 
         it('clears a session an earlier release writes in another tab, keeping the held one', async () => {
