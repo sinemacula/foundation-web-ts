@@ -36,6 +36,10 @@
             "types": "./dist/app/services.d.ts",
             "import": "./dist/app/services.js"
         },
+        "./composables/use-connectivity": {
+            "types": "./dist/composables/use-connectivity.d.ts",
+            "import": "./dist/composables/use-connectivity.js"
+        },
         "./composables/use-focus-trap": {
             "types": "./dist/composables/use-focus-trap.d.ts",
             "import": "./dist/composables/use-focus-trap.js"

@@ -8,7 +8,7 @@
 import type { Pinia } from 'pinia';
 import { createPinia, defineStore } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defineComponent, h, onMounted, onUnmounted } from 'vue';
+import { defineComponent, h, inject, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { RouteRecordRaw, RouterHistory } from 'vue-router';
 import { createMemoryHistory, createWebHistory } from 'vue-router';
@@ -19,6 +19,7 @@ import type { Environment } from '@sinemacula/foundation/config/environment';
 import { RuntimeEnvironmentError } from '@sinemacula/foundation/config/runtime-environment-error';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { UpdateMonitor } from '../updates/update-monitor';
+import { CONNECTIVITY_MONITOR, useConnectivity } from '../composables/use-connectivity';
 import { createWebEnvironment } from '../config/web-environment';
 import type * as DocumentTitle from '../i18n/document-title';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
@@ -1602,6 +1603,7 @@ describe('createFoundationWebApp', () => {
                 'history.destroy',
                 'dispose:store-2',
                 'dispose:store-1',
+                'connectivity.stop',
                 'confirm.cancelAll',
                 'toasts.clear',
                 'color-scheme',
@@ -1610,7 +1612,7 @@ describe('createFoundationWebApp', () => {
 
             app.dispose();
 
-            expect(order).toHaveLength(16);
+            expect(order).toHaveLength(17);
         });
 
         it('no longer recovers chunk failures once disposed', async () => {
@@ -2371,33 +2373,136 @@ describe('createFoundationWebApp', () => {
     });
 
     describe('connectivity', () => {
-        it('holds update polling while booted offline until the window comes back online', async () => {
-            vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        /**
+         * Seams whose document is visible and whose API requests go to `api`.
+         */
+        function connectivitySeams(onLine: boolean, api: (url: string) => Response = () => jsonResponse(null)) {
+            const targetDocument = document.implementation.createHTMLDocument('t');
+
+            Object.defineProperty(targetDocument, 'visibilityState', { value: 'visible' });
+
+            return {
+                ...makeSeams(makeFetch(wire([['APP_VERSION', '1.0.0']]), api)),
+                targetWindow: makeWindow(['en-US'], onLine),
+                targetDocument,
+            };
+        }
+
+        it('holds update polling while booted offline until recovery is confirmed', async () => {
+            vi.useFakeTimers();
 
             try {
-                const seams = {
-                    ...makeSeams(makeFetch(wire([['APP_VERSION', '1.0.0']]))),
-                    targetWindow: makeWindow(['en-US'], false),
-                };
+                const seams = connectivitySeams(false);
                 const app = await bootApp({
-                    monitors: { updates: { toastKey: 'app.updates.available' } },
+                    monitors: { updates: { toastKey: 'app.updates.available', pollIntervalMs: 600_000 } },
                     platform: seams,
                 });
-
-                expect(vi.getTimerCount()).toBe(0);
+                const start = vi.spyOn(app.monitors.updates as UpdateMonitor, 'start');
 
                 seams.targetWindow.dispatchToListeners('online', new Event('online'));
+                await vi.advanceTimersByTimeAsync(4_999);
 
-                expect(vi.getTimerCount()).toBe(1);
+                expect(app.monitors.connectivity?.online).toBe(false);
+                expect(start).not.toHaveBeenCalled();
 
-                seams.targetWindow.dispatchToListeners('offline', new Event('offline'));
+                await vi.advanceTimersByTimeAsync(1_500);
 
-                expect(vi.getTimerCount()).toBe(0);
+                expect(app.monitors.connectivity?.online).toBe(true);
+                expect(start).toHaveBeenCalledTimes(1);
 
                 app.dispose();
             } finally {
                 vi.useRealTimers();
             }
+        });
+
+        it('probes once a request fails to reach the API and tells the application observer', async () => {
+            vi.useFakeTimers();
+
+            try {
+                const seams = connectivitySeams(true, url => {
+                    if (url.includes('/items')) {
+                        throw new TypeError('Failed to fetch');
+                    }
+
+                    return jsonResponse(null);
+                });
+                const onTransport = vi.fn();
+                const app = await bootApp({ http: { onTransport }, platform: seams });
+                await vi.advanceTimersByTimeAsync(0);
+
+                /**
+                 * Count the reachability probes sent so far.
+                 */
+                const probes = (): number =>
+                    seams.fetchFn.mock.calls.filter(([, init]) => init?.method === 'HEAD').length;
+
+                expect(probes()).toBe(1);
+
+                await expect(app.services.http.get('items')).rejects.toThrow();
+
+                expect(probes()).toBe(2);
+                expect(onTransport).toHaveBeenCalledWith(false, expect.objectContaining({ method: 'GET' }));
+
+                app.dispose();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('provides the monitor to components', async () => {
+            const seen: boolean[] = [];
+            const app = await bootApp({
+                root: defineComponent({
+                    setup() {
+                        seen.push(useConnectivity().value);
+
+                        return () => h('div');
+                    },
+                }),
+                platform: connectivitySeams(true),
+            });
+
+            document.body.innerHTML = '<div id="app"></div>';
+            await app.start();
+
+            expect(seen).toStrictEqual([true]);
+
+            app.dispose();
+        });
+
+        it('provides the monitor to eager stores', async () => {
+            const seen: boolean[] = [];
+            const useStatus = defineStore('status', () => ({ online: useConnectivity() }));
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        stores: [
+                            pinia => {
+                                const store = useStatus(pinia);
+
+                                seen.push(store.online);
+
+                                return store;
+                            },
+                        ],
+                    }),
+                ],
+                platform: connectivitySeams(true),
+            });
+
+            expect(seen).toStrictEqual([true]);
+
+            app.dispose();
+        });
+
+        it('provides nothing when connectivity monitoring is disabled', async () => {
+            const app = await bootApp({ monitors: { connectivity: { enabled: false } } });
+
+            expect(app.monitors.connectivity).toBeNull();
+            expect(app.app.runWithContext(() => inject(CONNECTIVITY_MONITOR, null))).toBeNull();
+
+            app.dispose();
         });
     });
 
@@ -2459,7 +2564,7 @@ describe('createFoundationWebApp', () => {
                 expect(featureFlags()).toBeInstanceOf(StaticFeatureFlags);
                 expect(featureFlags().isEnabled('beta')).toBe(true);
                 expect(app.monitors.updates).toBeNull();
-                expect(app.monitors.connectivity).toBeNull();
+                expect(app.monitors.connectivity).not.toBeNull();
                 expect(app.services.realtime).toBeNull();
                 expect(() => realtime()).toThrow('realtime connection accessed before initialisation');
                 expect(clockValues).toHaveLength(1);

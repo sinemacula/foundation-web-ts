@@ -30,9 +30,9 @@ adapters and services below.
 | -------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------- |
 | `src/activity/`      | Detects when the user has stopped interacting, for policies like auto-logout                                          | `IdleMonitor` (no port)           | no        |
 | `src/app/`           | The composition root: `createFoundationWebApp` wires every subsystem in order, plus the service holders and accessors | `createFoundationWebApp`          | runtime   |
-| `src/composables/`   | Reusable Vue composables: focus trap, pagination, route-query state                                                   | -                                 | runtime   |
+| `src/composables/`   | Reusable Vue composables: connectivity, focus trap, pagination, route-query state                                     | -                                 | runtime   |
 | `src/config/`        | The web environment over build-time variables and the runtime document                                                | `EnvironmentSource`               | no        |
-| `src/connectivity/`  | The browser online/offline adapter of the foundation connectivity port                                                | `ConnectivityMonitor`             | no        |
+| `src/connectivity/`  | Confirmed browser connectivity: online/offline hints, site reachability probes, paused while the page is hidden       | `ConnectivityMonitor`             | no        |
 | `src/feature-flags/` | The `useFeatureFlag` composable over the foundation feature-flag provider                                             | `FeatureFlags`                    | runtime   |
 | `src/i18n/`          | Detects and persists the active locale, wires vue-i18n, and syncs the document title                                  | `LocaleSwitcher` (service)        | runtime   |
 | `src/module/`        | The feature-module contract and the registry that validates, orders, boots and collects messages from modules         | `ModuleDefinition` (contract)     | type-only |
@@ -181,8 +181,8 @@ Defaults and behaviours worth knowing:
   the null adapters; a factory receives the full frozen config so adapter selection is config-driven.
 - `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an
   application-owned sticky-toast key) or `onUpdate` is provided; enabling it explicitly with neither rejects the boot
-  with a `FoundationBootError` as the `FoundationWebBootError` cause. `monitors.connectivity` defaults to on exactly
-  when the update monitor runs and pauses its polling while offline. `monitors.chunkRecovery` is on by default: a
+  with a `FoundationBootError` as the `FoundationWebBootError` cause. `monitors.connectivity` is on by default; see
+  [Offline detection](#offline-detection). `monitors.chunkRecovery` is on by default: a
   chunk-load or stylesheet-preload failure reloads the tab once per window (default 60s) at the router's URL for the
   target, guarded in that tab's `sessionStorage`; when that storage is unavailable it reports instead of reloading.
 - Inline `createColorSchemeBootScript({ storageKey, defaultPreference })` (`./theme/color-scheme-boot`) in the host
@@ -194,6 +194,28 @@ Defaults and behaviours worth knowing:
   the full boot: fake fetch, `MemoryStorage`, `createMemoryHistory`, a detached document, a fixed clock, a hand-run
   `schedule` (delayed work, cancelled through the function it returns; defaults to the global timers) and an injected
   pinia.
+
+#### Offline detection
+
+`monitors.connectivity` publishes a change of connectivity only once reachability probes confirm it, so a brief
+interruption never flips an offline banner on and off. The starting state is the browser's own, unconfirmed. The probe
+sends an uncached `HEAD` to the runtime environment URL; any response counts as reachable, a redirect or a network
+failure as unreachable. Going offline or back online takes two or more consecutive results spanning 5 seconds, and one
+result the other way cancels the pending change. While online it checks every 30 seconds, sooner when a request through
+the HTTP client fails to reach the server or the browser reports itself offline; while offline it rechecks on a backoff
+capped at 30 seconds. Probing pauses while the page is hidden. `probe` takes another URL or a full probe function,
+alongside `offlineAfter`, `onlineAfter`, `probeInterval`, `probeTimeout`, `heartbeatInterval` and `recoveryBackoff`; a
+service worker must let the probe reach the network.
+
+Read it with `app.monitors.connectivity`, or in a component with `useConnectivity()`
+(`./composables/use-connectivity`), a read-only ref that unsubscribes with the component:
+
+```ts
+const online = useConnectivity();
+```
+
+`http.onTransport` still receives every request attempt's outcome after the monitor. A boot with no network fails before
+any component renders, since the runtime environment document is fetched first.
 
 #### Entry point
 

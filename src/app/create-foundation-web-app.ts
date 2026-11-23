@@ -17,9 +17,15 @@ import { installPageTracking } from '@sinemacula/foundation/analytics/install-pa
 import type { ConfigRepository, DeepReadonly } from '@sinemacula/foundation/config/config-repository';
 import type { Environment } from '@sinemacula/foundation/config/environment';
 import { RUNTIME_ENVIRONMENT_URL } from '../config/runtime-environment';
+import type { ConnectivityHintSink } from '@sinemacula/foundation/connectivity/confirmed-connectivity-monitor';
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { FeatureFlags } from '@sinemacula/foundation/feature-flags/feature-flags';
-import type { HttpClient, RequestInterceptor, ResponseErrorHandler } from '@sinemacula/foundation/http/http-client';
+import type {
+    HttpClient,
+    RequestInterceptor,
+    ResponseErrorHandler,
+    TransportObserver,
+} from '@sinemacula/foundation/http/http-client';
 import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
 import type { Logger } from '@sinemacula/foundation/logging/logger';
 import type { LocaleMessages, ModuleDefinition, ResolvedPlatform, ScheduleTask } from '../module/module';
@@ -48,8 +54,10 @@ import { wireColorScheme } from './wire-color-scheme';
 import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
 import type { WiredLocale } from './wire-locale';
 import { wireLocale } from './wire-locale';
-import type { UpdateMonitorWiring, WiredMonitors } from './wire-monitors';
-import { wireMonitors } from './wire-monitors';
+import { CONNECTIVITY_MONITOR } from '../composables/use-connectivity';
+import type { ConnectivityWiring, UpdateMonitorWiring, WiredMonitors } from './wire-monitors';
+import { createConnectivityMonitor, wireMonitors } from './wire-monitors';
+import type { WebConnectivityMonitor } from '../connectivity/web-connectivity-monitor';
 import type { WiredObservability } from '@sinemacula/foundation/app/wire-observability';
 import { wireRouter } from './wire-router';
 
@@ -158,6 +166,9 @@ export interface FoundationWebHttpOptions<T extends FoundationConfig> {
     /** Arms the default handler's toast; the kernel ships no translation keys. */
     readonly unexpectedErrorToastKey?: string;
 
+    /** Told of every attempt's transport outcome, after the connectivity monitor. */
+    readonly onTransport?: TransportObserver;
+
     /** Full adapter override; receives the resolved construction inputs. */
     readonly client?: (tools: WireHttpClientTools<T>) => HttpClient;
 }
@@ -249,11 +260,8 @@ export interface FoundationWebMonitorOptions<T extends FoundationConfig> {
     /** Update-monitor options; omit to take the version-derived defaults. */
     readonly updates?: UpdateMonitorWiring<T>;
 
-    /** Connectivity monitoring; defaults to on exactly when the update monitor runs. */
-    readonly connectivity?: {
-        /** Whether connectivity monitoring runs. */
-        readonly enabled?: boolean;
-    };
+    /** Confirmed connectivity monitoring, on by default and fed by the HTTP client. */
+    readonly connectivity?: ConnectivityWiring;
 
     /** Chunk-load-failure recovery tuning. */
     readonly chunkRecovery?: FoundationWebChunkRecoveryOptions;
@@ -502,6 +510,9 @@ interface BootSinks {
 
     /** Receives the reporter as soon as the core has wired it. */
     readonly onReporter: (reporter: ErrorReporter) => void;
+
+    /** Receives each request attempt's transport outcome. */
+    readonly onTransport: (reachable: boolean) => void;
 }
 
 /**
@@ -523,21 +534,38 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
 
     const colorSchemeErrors = new DeferredErrorSink('color-scheme');
     const bootFailures = new BootFailureReporter(options.observability?.reference ?? createBootFailureReference);
+    const transportHints = new LateHintSink();
 
     try {
         const foundation = await bootFoundation(
             options,
             platform,
             runtimeUrl,
-            { onColorSchemeError: colorSchemeErrors.report, onReporter: bootFailures.attach },
+            {
+                onColorSchemeError: colorSchemeErrors.report,
+                onReporter: bootFailures.attach,
+                onTransport: transportHints.hint,
+            },
             teardowns,
         );
 
         colorSchemeErrors.attach(foundation.observability.reporter);
 
+        const connectivity = startConnectivity(options, platform, runtimeUrl, foundation, teardowns);
+
+        transportHints.attach(connectivity);
+
         const moduleLayer = await bootModuleLayer(options, platform, foundation, teardowns);
         const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
-        const monitors = wireReleaseMonitors(options, platform, runtimeUrl, foundation, integration, teardowns);
+        const monitors = wireReleaseMonitors(
+            options,
+            platform,
+            runtimeUrl,
+            foundation,
+            integration,
+            connectivity,
+            teardowns,
+        );
 
         return assembleApp(foundation, moduleLayer, integration, monitors, teardowns);
     } catch (error) {
@@ -545,6 +573,29 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
             error,
             bootFailures.report(error, () => teardowns.drain()),
         );
+    }
+}
+
+/**
+ * Forwards transport hints to the connectivity monitor once the boot has wired
+ * one.
+ */
+class LateHintSink {
+    /** The wired monitor, or null until then. */
+    #target: ConnectivityHintSink | null = null;
+
+    /**
+     * Forward a hint, dropping it while no monitor is wired.
+     */
+    readonly hint = (reachable: boolean): void => {
+        this.#target?.hint(reachable);
+    };
+
+    /**
+     * Forward later hints to the wired monitor, if any.
+     */
+    attach(target: ConnectivityHintSink | null): void {
+        this.#target = target;
     }
 }
 
@@ -648,7 +699,7 @@ async function bootFoundation<T extends FoundationConfig>(
             confirm: confirmService,
             ...(options.featureFlags === undefined ? {} : { featureFlags: options.featureFlags }),
             ...(options.observability === undefined ? {} : { observability: options.observability }),
-            ...(options.http === undefined ? {} : { http: options.http }),
+            http: withTransportHints(options.http, sinks.onTransport),
             collectHttpContributions: ({ config, environment }) => {
                 // The core wires the reporter immediately before registration.
                 sinks.onReporter(reporting());
@@ -663,6 +714,23 @@ async function bootFoundation<T extends FoundationConfig>(
     );
 
     return { ...core, storage, colorScheme, registry, app, pinia, toastService, confirmService };
+}
+
+/**
+ * Route every request attempt's transport outcome to the connectivity monitor
+ * first, then to the application's own observer.
+ */
+function withTransportHints<T extends FoundationConfig>(
+    http: FoundationWebHttpOptions<T> | undefined,
+    hint: (reachable: boolean) => void,
+): FoundationWebHttpOptions<T> {
+    return {
+        ...http,
+        onTransport: (reachable, request) => {
+            hint(reachable);
+            http?.onTransport?.(reachable, request);
+        },
+    };
 }
 
 /**
@@ -755,6 +823,35 @@ async function wireAppIntegration<T extends FoundationConfig>(
 }
 
 /**
+ * Build, provide and start the connectivity monitor ahead of the module phases,
+ * so eager stores can read it and failing requests hint it.
+ */
+function startConnectivity<T extends FoundationConfig>(
+    options: FoundationWebAppOptions<T>,
+    platform: ResolvedPlatform,
+    runtimeUrl: string,
+    foundation: AppFoundation<T>,
+    teardowns: TeardownStack,
+): WebConnectivityMonitor | null {
+    const monitor = createConnectivityMonitor(options.monitors?.connectivity, {
+        runtimeUrl,
+        fetchFn: platform.fetchFn,
+        targetWindow: platform.targetWindow,
+        targetDocument: platform.targetDocument,
+    });
+
+    if (monitor !== null) {
+        teardowns.push(() => {
+            monitor.stop();
+        });
+        foundation.app.provide(CONNECTIVITY_MONITOR, monitor);
+        monitor.start();
+    }
+
+    return monitor;
+}
+
+/**
  * Run the release phases: chunk-load recovery and the release monitors.
  */
 function wireReleaseMonitors<T extends FoundationConfig>(
@@ -763,6 +860,7 @@ function wireReleaseMonitors<T extends FoundationConfig>(
     runtimeUrl: string,
     foundation: AppFoundation<T>,
     integration: AppIntegration,
+    connectivity: WebConnectivityMonitor | null,
     teardowns: TeardownStack,
 ): WiredMonitors {
     const { settings, observability, toastService } = foundation;
@@ -784,7 +882,14 @@ function wireReleaseMonitors<T extends FoundationConfig>(
 
     recordPhase('monitors');
 
-    const monitors = resolveMonitors(settings, runtimeUrl, platform, toastService, options.monitors);
+    const monitors = resolveMonitors(
+        settings,
+        runtimeUrl,
+        platform,
+        toastService,
+        options.monitors?.updates,
+        connectivity,
+    );
 
     teardowns.push(monitors.teardown);
 
@@ -1077,16 +1182,16 @@ function resolveMonitors<T extends FoundationConfig>(
     runtimeUrl: string,
     platform: ResolvedPlatform,
     toastService: ToastService,
-    monitors: FoundationWebMonitorOptions<T> | undefined,
+    updates: UpdateMonitorWiring<T> | undefined,
+    connectivity: WebConnectivityMonitor | null,
 ): WiredMonitors {
     return wireMonitors({
         settings,
         runtimeUrl,
         toasts: () => toastService,
-        ...(monitors?.updates === undefined ? {} : { updates: monitors.updates }),
-        ...(monitors?.connectivity === undefined ? {} : { connectivity: monitors.connectivity }),
+        ...(updates === undefined ? {} : { updates }),
+        connectivity,
         fetchFn: platform.fetchFn,
-        targetWindow: platform.targetWindow,
         targetDocument: platform.targetDocument,
     });
 }
