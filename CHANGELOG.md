@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.2.0...v0.3.0) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **connectivity:** confirmed offline detection with useConnectivity ([#155](https://github.com/sinemacula/foundation-web-ts/issues/155))
+
+### Features
+
+* **connectivity:** confirmed offline detection with useConnectivity ([#155](https://github.com/sinemacula/foundation-web-ts/issues/155)) ([be23f64](https://github.com/sinemacula/foundation-web-ts/commit/be23f640e1e4d13d986116d73a3ab7870af323a4))
+
 ## [0.2.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.1.0...v0.2.0) (2026-11-21)
 
 
