@@ -687,10 +687,7 @@ async function bootFoundation<T extends FoundationConfig>(
         colorScheme.dispose();
     });
 
-    const cookieSupport = new CookieSupport({ targetWindow: platform.targetWindow });
-
-    app.provide(COOKIE_SUPPORT, cookieSupport);
-
+    const cookieSupport = provideCookieSupport(app, platform.targetWindow);
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
 
@@ -1077,6 +1074,17 @@ function resolveRouter<T extends FoundationConfig>(
     });
 
     return router;
+}
+
+/**
+ * Check whether the window keeps cookies and provide the result to components.
+ */
+function provideCookieSupport(app: App<Element>, targetWindow: Window): CookieSupport {
+    const cookieSupport = new CookieSupport({ targetWindow });
+
+    app.provide(COOKIE_SUPPORT, cookieSupport);
+
+    return cookieSupport;
 }
 
 /**

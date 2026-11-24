@@ -7,8 +7,7 @@
 
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { InjectionKey, Ref } from 'vue';
-import { inject } from 'vue';
-import { followFlag } from './follow-flag';
+import { followProvidedFlag } from './follow-flag';
 
 /**
  * Thrown by {@link useConnectivity} when no connectivity monitor is provided.
@@ -35,11 +34,9 @@ export const CONNECTIVITY_MONITOR: InjectionKey<ConnectivityMonitor> = Symbol('c
  * disabled or the caller is outside the application
  */
 export function useConnectivity(): Readonly<Ref<boolean>> {
-    const monitor = inject(CONNECTIVITY_MONITOR, null);
-
-    if (monitor === null) {
-        throw new ConnectivityUnavailableError();
-    }
-
-    return followFlag(monitor.online, handler => monitor.onChange(handler));
+    return followProvidedFlag(
+        CONNECTIVITY_MONITOR,
+        () => new ConnectivityUnavailableError(),
+        monitor => monitor.online,
+    );
 }

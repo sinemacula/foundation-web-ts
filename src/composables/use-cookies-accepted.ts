@@ -6,9 +6,8 @@
  */
 
 import type { InjectionKey, Ref } from 'vue';
-import { inject } from 'vue';
 import type { CookieSupport } from '../cookies/cookie-support';
-import { followFlag } from './follow-flag';
+import { followProvidedFlag } from './follow-flag';
 
 /**
  * Thrown by {@link useCookiesAccepted} outside the application.
@@ -35,11 +34,9 @@ export const COOKIE_SUPPORT: InjectionKey<CookieSupport> = Symbol('cookie-suppor
  * application
  */
 export function useCookiesAccepted(): Readonly<Ref<boolean>> {
-    const support = inject(COOKIE_SUPPORT, null);
-
-    if (support === null) {
-        throw new CookieSupportUnavailableError();
-    }
-
-    return followFlag(support.accepted, handler => support.onChange(handler));
+    return followProvidedFlag(
+        COOKIE_SUPPORT,
+        () => new CookieSupportUnavailableError(),
+        support => support.accepted,
+    );
 }
