@@ -305,7 +305,8 @@ function registerSession(
 
     const session = resolveSessionStorage(platform, options, storageKeys.session);
     const ready = createReadiness(pinia, reportHydration, session.retired);
-    const coordinator = createRefreshAuthority(pinia, ready, platform.clock, cookieRefusals);
+    const dispatch: RefreshDispatch = { live: false };
+    const coordinator = createRefreshAuthority(pinia, ready, dispatch, cookieRefusals);
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
@@ -321,7 +322,9 @@ function registerSession(
         refreshSkewMs: options.refreshSkewMs ?? DEFAULT_REFRESH_SKEW_MS,
         device: () => deviceFingerprint(storage, storageKeys.deviceUuid, generateUuid, deviceOs),
         get api(): SessionApi<SessionUser, unknown> {
-            gateway ??= apiFactory(api());
+            gateway ??= observeRefreshes(apiFactory(api()), () => {
+                dispatch.live = isLive(useSessionStore(pinia).expiresAtEpochMs, platform.clock());
+            });
 
             return gateway;
         },
@@ -449,18 +452,46 @@ function createHydrationReporter(): HydrationReporter {
 }
 
 /**
+ * Whether the access token was live when the latest refresh request was sent.
+ */
+interface RefreshDispatch {
+    /** Whether the access token was live at that moment. */
+    live: boolean;
+}
+
+/**
+ * Delegate to the gateway, calling `onRefresh` as each refresh request is sent,
+ * after any wait for the exchange lock.
+ */
+function observeRefreshes<U extends SessionUser, C>(
+    gateway: SessionApi<U, C>,
+    onRefresh: () => void,
+): SessionApi<U, C> {
+    return {
+        login: (credentials, device, refreshToken) => gateway.login(credentials, device, refreshToken),
+        refresh: refreshToken => {
+            onRefresh();
+
+            return gateway.refresh(refreshToken);
+        },
+        logout: sessionTokens => gateway.logout(sessionTokens),
+        currentUser: () => gateway.currentUser(),
+    };
+}
+
+/**
  * Build the single refresh authority. Each refresh first awaits readiness, so
  * an empty store is never refreshed, and a failure is reported once however
  * many callers share it. A refresh whose session another one replaced by the
  * time it settles reports `superseded`, so its outcome never ends the renewal
- * of the session that replaced it. A refresh refused for a missing cookie while
- * its access token was live reports the cookie refused: the cookie outlives
- * that token, so it was withheld or cleared, not expired.
+ * of the session that replaced it. A refresh refused for a missing cookie
+ * though its access token was live when sent reports the cookie refused: the
+ * cookie outlives that token, so it was withheld or cleared, not expired.
  */
 function createRefreshAuthority(
     pinia: Pinia,
     ready: () => Promise<void>,
-    clock: () => number,
+    dispatch: RefreshDispatch,
     cookieRefusals: CookieRefusals,
 ): SessionRefreshCoordinator {
     return new SessionRefreshCoordinator(async () => {
@@ -468,7 +499,6 @@ function createRefreshAuthority(
 
         const store = useSessionStore(pinia);
         const owner = store.sessionIdentity();
-        const live = isLive(store.expiresAtEpochMs, clock());
         const outcome = await store.refresh();
 
         if (outcome.kind === 'failed') {
@@ -481,7 +511,7 @@ function createRefreshAuthority(
             return SUPERSEDED;
         }
 
-        if (live && outcome.kind === 'rejected' && isRefreshCookieMissing(outcome.error)) {
+        if (dispatch.live && outcome.kind === 'rejected' && isRefreshCookieMissing(outcome.error)) {
             cookieRefusals.report();
         }
 

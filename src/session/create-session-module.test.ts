@@ -878,6 +878,34 @@ describe('createSessionModule', () => {
             teardown();
         });
 
+        it('leaves cookies accepted when the access token expired while the refresh waited for the exchange lock', async () => {
+            let clock = now;
+            const support = new CookieSupport({ targetWindow: createCookieWindow().targetWindow });
+            const lock = new InProcessSessionLock();
+            const run = lock.run.bind(lock);
+
+            vi.spyOn(lock, 'run').mockImplementation(task => {
+                clock = now + 2;
+
+                return run(task);
+            });
+
+            const target = harness({ exchangeLock: () => lock }, { clock: () => clock, cookieSupport: support });
+
+            await target.win.persist(tokens({ expiresAtEpochMs: now + 1 }));
+            await sessionContext().ready();
+
+            const teardown = await target.boot();
+
+            gateway.refresh.mockResolvedValueOnce(missingCookie());
+
+            await expect(sessionContext().coordinator.refresh()).resolves.toMatchObject({ kind: 'rejected' });
+            expect(gateway.refresh).toHaveBeenCalledOnce();
+            expect(support.accepted).toBe(true);
+
+            teardown();
+        });
+
         it('leaves cookies accepted for an ordinary refusal', async () => {
             const { target, support } = await hydrated(now + 1);
 
@@ -965,17 +993,32 @@ describe('createSessionModule', () => {
             expect(target.store().expiresAtEpochMs).toBe(61_000);
         });
 
-        it('passes the installed HTTP client to a custom gateway factory', () => {
+        it('passes the installed HTTP client to a custom gateway factory and delegates every call to it', async () => {
             const factory = vi.fn((_http: HttpClient) => gateway);
+            const device = { uuid: 'device', os: 'WEB' };
+            const issued = { kind: 'authenticated', tokens: tokens() } as const;
+            const refreshed = { kind: 'refreshed', tokens: tokens() } as const;
 
             createSessionHarness(createSessionModule({ api: factory }));
 
             const installed = createHttpClientStub();
 
             installApi(installed);
+            gateway.login.mockResolvedValueOnce(issued);
+            gateway.refresh.mockResolvedValueOnce(refreshed);
+            gateway.currentUser.mockResolvedValueOnce(user());
 
-            expect(sessionContext().api).toBe(gateway);
+            const { api: delegate } = sessionContext();
+
+            await expect(delegate.login({ email: 'a', password: 'b' }, device, 'held')).resolves.toBe(issued);
+            await expect(delegate.refresh('held')).resolves.toBe(refreshed);
+            await expect(delegate.currentUser()).resolves.toStrictEqual(user());
+            await delegate.logout(tokens());
+
             expect(factory).toHaveBeenCalledWith(installed);
+            expect(gateway.login).toHaveBeenCalledWith({ email: 'a', password: 'b' }, device, 'held');
+            expect(gateway.refresh).toHaveBeenCalledWith('held');
+            expect(gateway.logout).toHaveBeenCalledWith(tokens());
         });
     });
 
