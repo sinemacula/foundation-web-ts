@@ -2532,21 +2532,40 @@ describe('createFoundationWebApp', () => {
             return seen;
         }
 
-        it('checks cookies through the platform window and provides the result to components', async () => {
+        /**
+         * Build a test window whose cookies the browser keeps.
+         */
+        function cookieKeepingWindow(): TestWindow {
             const base = makeWindow();
             const cookies = createCookieWindow().targetWindow;
-            const targetWindow = Object.assign(base, {
+
+            return Object.assign(base, {
                 navigator: { ...base.navigator, cookieEnabled: true },
                 location: cookies.location,
                 crypto: cookies.crypto,
                 document: cookies.document,
             });
+        }
 
-            await expect(acceptedOver(targetWindow)).resolves.toStrictEqual([true]);
+        it('checks cookies through the platform window and provides the result to components', async () => {
+            await expect(acceptedOver(cookieKeepingWindow())).resolves.toStrictEqual([true]);
         });
 
         it('provides blocked cookies when the platform window refuses them', async () => {
             await expect(acceptedOver(makeWindow())).resolves.toStrictEqual([false]);
+        });
+
+        it('exposes the cookie support it provides to components on the handle', async () => {
+            const app = await bootApp({ platform: { ...makeSeams(), targetWindow: cookieKeepingWindow() } });
+            const accepted = app.app.runWithContext(useCookiesAccepted);
+
+            expect(accepted.value).toBe(true);
+
+            app.services.cookieSupport.block();
+
+            expect(accepted.value).toBe(false);
+
+            app.dispose();
         });
     });
 

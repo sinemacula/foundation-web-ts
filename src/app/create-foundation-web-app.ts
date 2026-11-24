@@ -379,6 +379,9 @@ export interface FoundationWebServices<T extends object> {
     /** The colour-scheme service. */
     readonly colorScheme: ColorSchemeService;
 
+    /** Whether the browser keeps cookies, checked once at boot. */
+    readonly cookieSupport: CookieSupport;
+
     /** The realtime connection, or null when none was installed. */
     readonly realtime: RealtimeConnection | null;
 }
@@ -455,6 +458,9 @@ interface AppFoundation<T extends FoundationConfig> {
 
     /** The installed colour-scheme service. */
     readonly colorScheme: ColorSchemeService;
+
+    /** Whether the browser keeps cookies, provided to components. */
+    readonly cookieSupport: CookieSupport;
 
     /** The validated module registry. */
     readonly registry: ModuleRegistry;
@@ -552,7 +558,6 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
         );
 
         colorSchemeErrors.attach(foundation.observability.reporter);
-        foundation.app.provide(COOKIE_SUPPORT, new CookieSupport({ targetWindow: platform.targetWindow }));
 
         const connectivity = startConnectivity(options, platform, runtimeUrl, foundation, teardowns);
 
@@ -682,6 +687,10 @@ async function bootFoundation<T extends FoundationConfig>(
         colorScheme.dispose();
     });
 
+    const cookieSupport = new CookieSupport({ targetWindow: platform.targetWindow });
+
+    app.provide(COOKIE_SUPPORT, cookieSupport);
+
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
 
@@ -716,7 +725,7 @@ async function bootFoundation<T extends FoundationConfig>(
         { fetchFn: platform.fetchFn },
     );
 
-    return { ...core, storage, colorScheme, registry, app, pinia, toastService, confirmService };
+    return { ...core, storage, colorScheme, cookieSupport, registry, app, pinia, toastService, confirmService };
 }
 
 /**
@@ -907,7 +916,8 @@ function buildServices<T extends FoundationConfig>(
     moduleLayer: ModuleLayer,
     integration: AppIntegration,
 ): FoundationWebServices<T> {
-    const { repository, storage, colorScheme, toastService, confirmService, observability, flags } = foundation;
+    const { repository, storage, colorScheme, cookieSupport, toastService, confirmService, observability, flags } =
+        foundation;
 
     return {
         config: repository,
@@ -921,6 +931,7 @@ function buildServices<T extends FoundationConfig>(
         featureFlags: flags,
         localeSwitcher: moduleLayer.switcher,
         colorScheme,
+        cookieSupport,
         realtime: integration.realtime,
     };
 }

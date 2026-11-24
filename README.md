@@ -221,12 +221,13 @@ any component renders, since the runtime environment document is fetched first.
 #### Blocked cookies
 
 An application whose refresh token is an HttpOnly cookie cannot keep a session in a browser that refuses it, so the
-kernel reports whether cookies work, to show a cookies blocked view instead of the sign-in form. It checks once per
-page load: the browser must have cookies enabled and keep a short-lived test cookie. Browsers raise no event when the
-setting changes, so a retry reloads the page. The session module also reports cookies blocked when a refresh is refused
-because it arrived without its cookie (`ApiErrorCode.RefreshCookieMissing`) while the access token issued with that
-cookie was still live, so the cookie was withheld or cleared rather than expired. Read it in a component with
-`useCookiesAccepted()` (`./composables/use-cookies-accepted`), a read-only ref that unsubscribes with the component:
+kernel reports whether cookies work, to show a cookies blocked view instead of the sign-in form. It checks once per page
+load: the browser must have cookies enabled and keep a short-lived test cookie. Browsers raise no event when the setting
+changes, so a retry reloads the page. The session module also reports cookies blocked when a refresh is refused because
+it arrived without its cookie (`ApiErrorCode.RefreshCookieMissing`) while the access token issued with that cookie was
+still live, so the cookie was withheld or cleared rather than expired. Read it in a component with
+`useCookiesAccepted()` (`./composables/use-cookies-accepted`), a read-only ref that unsubscribes with the component; the
+application handle exposes the same `CookieSupport` as `services.cookieSupport`:
 
 ```ts
 const cookiesAccepted = useCookiesAccepted();
