@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.3.0...v0.4.0) (2026-11-24)
+
+
+### Features
+
+* **cookies:** report whether the browser accepts cookies ([#160](https://github.com/sinemacula/foundation-web-ts/issues/160)) ([f6809d7](https://github.com/sinemacula/foundation-web-ts/commit/f6809d7485c7ef7e3e1b4fcf31c3d626c35d96e5))
+
 ## [0.3.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.2.0...v0.3.0) (2026-11-23)
 
 
