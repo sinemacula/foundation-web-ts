@@ -10,18 +10,21 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 
 import { FetchHttpClient } from '@sinemacula/foundation/http/fetch-http-client';
 import type { HttpClient, HttpRequest, UnauthorizedHandler } from '@sinemacula/foundation/http/http-client';
-import { HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
+import { ApiErrorCode, HttpError, NetworkError } from '@sinemacula/foundation/http/http-error';
 import { InProcessSessionLock } from '@sinemacula/foundation/session/in-process-session-lock';
 import { KeyValueSessionPersistence } from '@sinemacula/foundation/session/key-value-session-persistence';
 import { RecordSessionPersistence } from '@sinemacula/foundation/session/record-session-persistence';
 import type { SessionApi } from '@sinemacula/foundation/session/session-api';
 import { SessionError } from '@sinemacula/foundation/session/session-error';
+import { FakeAuthServer } from '@sinemacula/foundation/session/test-support/fake-auth-server';
 import type { RefreshResult } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionPersistence, SessionSnapshot } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionState } from '@sinemacula/foundation/session/session-state';
 import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installApi, resetFoundationWebServices } from '../app/services';
+import { CookieSupport } from '../cookies/cookie-support';
+import { createCookieWindow } from '../cookies/test-support/cookie-window';
 import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import type { SessionModuleOptions } from './create-session-module';
 import { createSessionModule } from './create-session-module';
@@ -803,6 +806,164 @@ describe('createSessionModule', () => {
         });
     });
 
+    describe('refused refresh cookies', () => {
+        const now = 1_000_000;
+
+        /** A refresh refused because it arrived without the refresh cookie. */
+        const missingCookie = (): RefreshResult => ({
+            kind: 'rejected',
+            error: new HttpError(401, 'Unauthenticated.', null, { code: ApiErrorCode.RefreshCookieMissing }),
+        });
+
+        /**
+         * Register over a hydrated session whose access token expires at the
+         * given time, with cookie support whose check passed.
+         */
+        async function hydrated(expiresAtEpochMs: number | null): Promise<{
+            /** The registered module. */
+            target: SessionHarness;
+
+            /** The cookie support the booted application provides. */
+            support: CookieSupport;
+        }> {
+            const support = new CookieSupport({ targetWindow: createCookieWindow().targetWindow });
+            const target = harness({}, { clock: () => now, cookieSupport: support });
+
+            await target.win.persist(tokens({ expiresAtEpochMs }));
+            await sessionContext().ready();
+
+            return { target, support };
+        }
+
+        it('blocks cookies when a live session refreshes without its cookie', async () => {
+            const { target, support } = await hydrated(now + 1);
+            const teardown = await target.boot();
+
+            gateway.refresh.mockResolvedValueOnce(missingCookie());
+
+            await expect(sessionContext().coordinator.refresh()).resolves.toMatchObject({ kind: 'rejected' });
+            expect(support.accepted).toBe(false);
+
+            teardown();
+        });
+
+        it('holds a refusal from before boot until the cookie support attaches', async () => {
+            const { target, support } = await hydrated(now + 1);
+
+            gateway.refresh.mockResolvedValueOnce(missingCookie());
+            await sessionContext().coordinator.refresh();
+
+            expect(support.accepted).toBe(true);
+
+            const teardown = await target.boot();
+
+            expect(support.accepted).toBe(false);
+
+            teardown();
+        });
+
+        it.each([
+            ['the access token had expired', now],
+            ['the access token expiry is unknown', null],
+        ])('leaves cookies accepted when %s, as the cookie may have expired with it', async (_, expiresAt) => {
+            const { target, support } = await hydrated(expiresAt);
+
+            gateway.refresh.mockResolvedValueOnce(missingCookie());
+            await sessionContext().coordinator.refresh();
+
+            const teardown = await target.boot();
+
+            expect(support.accepted).toBe(true);
+
+            teardown();
+        });
+
+        it('leaves cookies accepted when the access token expired while the refresh waited for the exchange lock', async () => {
+            let clock = now;
+            const support = new CookieSupport({ targetWindow: createCookieWindow().targetWindow });
+            const lock = new InProcessSessionLock();
+            const run = lock.run.bind(lock);
+
+            vi.spyOn(lock, 'run').mockImplementation(task => {
+                clock = now + 2;
+
+                return run(task);
+            });
+
+            const target = harness({ exchangeLock: () => lock }, { clock: () => clock, cookieSupport: support });
+
+            await target.win.persist(tokens({ expiresAtEpochMs: now + 1 }));
+            await sessionContext().ready();
+
+            const teardown = await target.boot();
+
+            gateway.refresh.mockResolvedValueOnce(missingCookie());
+
+            await expect(sessionContext().coordinator.refresh()).resolves.toMatchObject({ kind: 'rejected' });
+            expect(gateway.refresh).toHaveBeenCalledOnce();
+            expect(support.accepted).toBe(true);
+
+            teardown();
+        });
+
+        it('leaves cookies accepted for an ordinary refusal', async () => {
+            const { target, support } = await hydrated(now + 1);
+
+            gateway.refresh.mockResolvedValueOnce({ kind: 'rejected', error: new HttpError(401, 'Unauthenticated.') });
+            await sessionContext().coordinator.refresh();
+
+            const teardown = await target.boot();
+
+            expect(support.accepted).toBe(true);
+
+            teardown();
+        });
+
+        it('blocks cookies after signing in to a server whose cookie the browser refuses', async () => {
+            const server = new FakeAuthServer({ now: () => now, transport: 'cookie', cookiesBlocked: true });
+            const support = new CookieSupport({ targetWindow: createCookieWindow().targetWindow });
+            const target = createSessionHarness(
+                createSessionModule({ api: () => server.api({ accessToken: () => target.store().accessToken }) }),
+                { clock: () => now, cookieSupport: support },
+            );
+            const teardown = await target.boot();
+
+            await expect(
+                target.store().login({ email: 'alice@example.com', password: 'secret' }),
+            ).resolves.toStrictEqual({
+                kind: 'authenticated',
+            });
+            await sessionContext().coordinator.refresh();
+
+            expect(support.accepted).toBe(false);
+            expect(target.store().isAuthenticated).toBe(false);
+
+            teardown();
+        });
+
+        it('leaves cookies accepted when another sign-in replaced the session meanwhile', async () => {
+            const { target, support } = await hydrated(now + 1);
+            const store = target.store() as unknown as Store<'auth', SessionState>;
+
+            gateway.refresh.mockResolvedValueOnce(missingCookie());
+            store.$onAction(({ name, after }) => {
+                if (name === 'refresh') {
+                    after(() => {
+                        store.$patch({ accessToken: 'signed-in-elsewhere' });
+                    });
+                }
+            });
+
+            await expect(sessionContext().coordinator.refresh()).resolves.toStrictEqual({ kind: 'superseded' });
+
+            const teardown = await target.boot();
+
+            expect(support.accepted).toBe(true);
+
+            teardown();
+        });
+    });
+
     describe('session API gateway', () => {
         it('builds the default gateway lazily over the installed HTTP client, once', () => {
             createSessionHarness(createSessionModule());
@@ -832,17 +993,32 @@ describe('createSessionModule', () => {
             expect(target.store().expiresAtEpochMs).toBe(61_000);
         });
 
-        it('passes the installed HTTP client to a custom gateway factory', () => {
+        it('passes the installed HTTP client to a custom gateway factory and delegates every call to it', async () => {
             const factory = vi.fn((_http: HttpClient) => gateway);
+            const device = { uuid: 'device', os: 'WEB' };
+            const issued = { kind: 'authenticated', tokens: tokens() } as const;
+            const refreshed = { kind: 'refreshed', tokens: tokens() } as const;
 
             createSessionHarness(createSessionModule({ api: factory }));
 
             const installed = createHttpClientStub();
 
             installApi(installed);
+            gateway.login.mockResolvedValueOnce(issued);
+            gateway.refresh.mockResolvedValueOnce(refreshed);
+            gateway.currentUser.mockResolvedValueOnce(user());
 
-            expect(sessionContext().api).toBe(gateway);
+            const { api: delegate } = sessionContext();
+
+            await expect(delegate.login({ email: 'a', password: 'b' }, device, 'held')).resolves.toBe(issued);
+            await expect(delegate.refresh('held')).resolves.toBe(refreshed);
+            await expect(delegate.currentUser()).resolves.toStrictEqual(user());
+            await delegate.logout(tokens());
+
             expect(factory).toHaveBeenCalledWith(installed);
+            expect(gateway.login).toHaveBeenCalledWith({ email: 'a', password: 'b' }, device, 'held');
+            expect(gateway.refresh).toHaveBeenCalledWith('held');
+            expect(gateway.logout).toHaveBeenCalledWith(tokens());
         });
     });
 

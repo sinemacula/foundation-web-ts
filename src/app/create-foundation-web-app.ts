@@ -55,9 +55,11 @@ import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-c
 import type { WiredLocale } from './wire-locale';
 import { wireLocale } from './wire-locale';
 import { CONNECTIVITY_MONITOR } from '../composables/use-connectivity';
+import { COOKIE_SUPPORT } from '../composables/use-cookies-accepted';
 import type { ConnectivityWiring, UpdateMonitorWiring, WiredMonitors } from './wire-monitors';
 import { createConnectivityMonitor, wireMonitors } from './wire-monitors';
 import type { WebConnectivityMonitor } from '../connectivity/web-connectivity-monitor';
+import { CookieSupport } from '../cookies/cookie-support';
 import type { WiredObservability } from '@sinemacula/foundation/app/wire-observability';
 import { wireRouter } from './wire-router';
 
@@ -377,6 +379,9 @@ export interface FoundationWebServices<T extends object> {
     /** The colour-scheme service. */
     readonly colorScheme: ColorSchemeService;
 
+    /** Whether the browser keeps cookies, checked once at boot. */
+    readonly cookieSupport: CookieSupport;
+
     /** The realtime connection, or null when none was installed. */
     readonly realtime: RealtimeConnection | null;
 }
@@ -453,6 +458,9 @@ interface AppFoundation<T extends FoundationConfig> {
 
     /** The installed colour-scheme service. */
     readonly colorScheme: ColorSchemeService;
+
+    /** Whether the browser keeps cookies, provided to components. */
+    readonly cookieSupport: CookieSupport;
 
     /** The validated module registry. */
     readonly registry: ModuleRegistry;
@@ -679,6 +687,7 @@ async function bootFoundation<T extends FoundationConfig>(
         colorScheme.dispose();
     });
 
+    const cookieSupport = provideCookieSupport(app, platform.targetWindow);
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
 
@@ -713,7 +722,7 @@ async function bootFoundation<T extends FoundationConfig>(
         { fetchFn: platform.fetchFn },
     );
 
-    return { ...core, storage, colorScheme, registry, app, pinia, toastService, confirmService };
+    return { ...core, storage, colorScheme, cookieSupport, registry, app, pinia, toastService, confirmService };
 }
 
 /**
@@ -904,7 +913,8 @@ function buildServices<T extends FoundationConfig>(
     moduleLayer: ModuleLayer,
     integration: AppIntegration,
 ): FoundationWebServices<T> {
-    const { repository, storage, colorScheme, toastService, confirmService, observability, flags } = foundation;
+    const { repository, storage, colorScheme, cookieSupport, toastService, confirmService, observability, flags } =
+        foundation;
 
     return {
         config: repository,
@@ -918,6 +928,7 @@ function buildServices<T extends FoundationConfig>(
         featureFlags: flags,
         localeSwitcher: moduleLayer.switcher,
         colorScheme,
+        cookieSupport,
         realtime: integration.realtime,
     };
 }
@@ -1063,6 +1074,17 @@ function resolveRouter<T extends FoundationConfig>(
     });
 
     return router;
+}
+
+/**
+ * Check whether the window keeps cookies and provide the result to components.
+ */
+function provideCookieSupport(app: App<Element>, targetWindow: Window): CookieSupport {
+    const cookieSupport = new CookieSupport({ targetWindow });
+
+    app.provide(COOKIE_SUPPORT, cookieSupport);
+
+    return cookieSupport;
 }
 
 /**

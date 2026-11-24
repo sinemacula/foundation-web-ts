@@ -30,9 +30,10 @@ adapters and services below.
 | -------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --------- |
 | `src/activity/`      | Detects when the user has stopped interacting, for policies like auto-logout                                          | `IdleMonitor` (no port)           | no        |
 | `src/app/`           | The composition root: `createFoundationWebApp` wires every subsystem in order, plus the service holders and accessors | `createFoundationWebApp`          | runtime   |
-| `src/composables/`   | Reusable Vue composables: connectivity, focus trap, pagination, route-query state                                     | -                                 | runtime   |
+| `src/composables/`   | Reusable Vue composables: connectivity, cookie support, focus trap, pagination, route-query state                     | -                                 | runtime   |
 | `src/config/`        | The web environment over build-time variables and the runtime document                                                | `EnvironmentSource`               | no        |
 | `src/connectivity/`  | Confirmed browser connectivity: online/offline hints, site reachability probes, paused while the page is hidden       | `ConnectivityMonitor`             | no        |
+| `src/cookies/`       | Whether the browser keeps the cookies the application relies on, checked once per page load                           | `CookieSupport` (no port)         | no        |
 | `src/feature-flags/` | The `useFeatureFlag` composable over the foundation feature-flag provider                                             | `FeatureFlags`                    | runtime   |
 | `src/i18n/`          | Detects and persists the active locale, wires vue-i18n, and syncs the document title                                  | `LocaleSwitcher` (service)        | runtime   |
 | `src/module/`        | The feature-module contract and the registry that validates, orders, boots and collects messages from modules         | `ModuleDefinition` (contract)     | type-only |
@@ -216,6 +217,21 @@ const online = useConnectivity();
 
 `http.onTransport` still receives every request attempt's outcome after the monitor. A boot with no network fails before
 any component renders, since the runtime environment document is fetched first.
+
+#### Blocked cookies
+
+An application whose refresh token is an HttpOnly cookie cannot keep a session in a browser that refuses it, so the
+kernel reports whether cookies work, to show a cookies blocked view instead of the sign-in form. It checks once per page
+load: the browser must have cookies enabled and keep a short-lived test cookie. Browsers raise no event when the setting
+changes, so a retry reloads the page. The session module also reports cookies blocked when a refresh is refused because
+it arrived without its cookie (`ApiErrorCode.RefreshCookieMissing`) while the access token issued with that cookie was
+still live, so the cookie was withheld or cleared rather than expired. Read it in a component with
+`useCookiesAccepted()` (`./composables/use-cookies-accepted`), a read-only ref that unsubscribes with the component; the
+application handle exposes the same `CookieSupport` as `services.cookieSupport`:
+
+```ts
+const cookiesAccepted = useCookiesAccepted();
+```
 
 #### Entry point
 

@@ -20,6 +20,8 @@ import { RuntimeEnvironmentError } from '@sinemacula/foundation/config/runtime-e
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { UpdateMonitor } from '../updates/update-monitor';
 import { CONNECTIVITY_MONITOR, useConnectivity } from '../composables/use-connectivity';
+import { useCookiesAccepted } from '../composables/use-cookies-accepted';
+import { createCookieWindow } from '../cookies/test-support/cookie-window';
 import { createWebEnvironment } from '../config/web-environment';
 import type * as DocumentTitle from '../i18n/document-title';
 import { StaticFeatureFlags } from '@sinemacula/foundation/feature-flags/static-feature-flags';
@@ -2501,6 +2503,67 @@ describe('createFoundationWebApp', () => {
 
             expect(app.monitors.connectivity).toBeNull();
             expect(app.app.runWithContext(() => inject(CONNECTIVITY_MONITOR, null))).toBeNull();
+
+            app.dispose();
+        });
+    });
+
+    describe('cookie support', () => {
+        /**
+         * Boot over the given window and read cookie support from the root.
+         */
+        async function acceptedOver(targetWindow: TestWindow): Promise<boolean[]> {
+            const seen: boolean[] = [];
+            const app = await bootApp({
+                root: defineComponent({
+                    setup() {
+                        seen.push(useCookiesAccepted().value);
+
+                        return () => h('div');
+                    },
+                }),
+                platform: { ...makeSeams(), targetWindow },
+            });
+
+            document.body.innerHTML = '<div id="app"></div>';
+            await app.start();
+            app.dispose();
+
+            return seen;
+        }
+
+        /**
+         * Build a test window whose cookies the browser keeps.
+         */
+        function cookieKeepingWindow(): TestWindow {
+            const base = makeWindow();
+            const cookies = createCookieWindow().targetWindow;
+
+            return Object.assign(base, {
+                navigator: { ...base.navigator, cookieEnabled: true },
+                location: cookies.location,
+                crypto: cookies.crypto,
+                document: cookies.document,
+            });
+        }
+
+        it('checks cookies through the platform window and provides the result to components', async () => {
+            await expect(acceptedOver(cookieKeepingWindow())).resolves.toStrictEqual([true]);
+        });
+
+        it('provides blocked cookies when the platform window refuses them', async () => {
+            await expect(acceptedOver(makeWindow())).resolves.toStrictEqual([false]);
+        });
+
+        it('exposes the cookie support it provides to components on the handle', async () => {
+            const app = await bootApp({ platform: { ...makeSeams(), targetWindow: cookieKeepingWindow() } });
+            const accepted = app.app.runWithContext(useCookiesAccepted);
+
+            expect(accepted.value).toBe(true);
+
+            app.services.cookieSupport.block();
+
+            expect(accepted.value).toBe(false);
 
             app.dispose();
         });

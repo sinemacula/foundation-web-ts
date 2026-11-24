@@ -21,6 +21,8 @@ import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtim
 import type { SessionTokens } from '@sinemacula/foundation/session/session-tokens';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { installAnalytics, installApi, installFeatureFlags, installLogger, installReporting } from '../../app/services';
+import { COOKIE_SUPPORT } from '../../composables/use-cookies-accepted';
+import type { CookieSupport } from '../../cookies/cookie-support';
 import { createApplicationI18n } from '../../i18n/application-i18n';
 import type { ModuleDefinition, ModuleTeardown, ResolvedPlatform, ScheduleTask } from '../../module/module';
 import { scheduleOnTimers } from '../../module/module';
@@ -176,6 +178,9 @@ export interface HarnessSetup {
 
     /** Whether the window lacks BroadcastChannel. */
     readonly withoutBroadcastChannel?: boolean;
+
+    /** The cookie support the booted application provides. Default none. */
+    readonly cookieSupport?: CookieSupport;
 }
 
 /** A channel of a {@link ChannelBus}. */
@@ -452,8 +457,14 @@ export function createSessionHarness(module: ModuleDefinition, setup: HarnessSet
             }
         },
         boot: async () => {
+            const app = createApp(EmptyComponent);
+
+            if (setup.cookieSupport !== undefined) {
+                app.provide(COOKIE_SUPPORT, setup.cookieSupport);
+            }
+
             const teardown = await module.boot?.({
-                app: createApp(EmptyComponent),
+                app,
                 router,
                 pinia,
                 i18n: createApplicationI18n('en-GB'),
