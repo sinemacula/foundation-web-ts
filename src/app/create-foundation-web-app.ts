@@ -55,9 +55,11 @@ import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-c
 import type { WiredLocale } from './wire-locale';
 import { wireLocale } from './wire-locale';
 import { CONNECTIVITY_MONITOR } from '../composables/use-connectivity';
+import { COOKIE_SUPPORT } from '../composables/use-cookies-accepted';
 import type { ConnectivityWiring, UpdateMonitorWiring, WiredMonitors } from './wire-monitors';
 import { createConnectivityMonitor, wireMonitors } from './wire-monitors';
 import type { WebConnectivityMonitor } from '../connectivity/web-connectivity-monitor';
+import { CookieSupport } from '../cookies/cookie-support';
 import type { WiredObservability } from '@sinemacula/foundation/app/wire-observability';
 import { wireRouter } from './wire-router';
 
@@ -550,6 +552,7 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
         );
 
         colorSchemeErrors.attach(foundation.observability.reporter);
+        foundation.app.provide(COOKIE_SUPPORT, new CookieSupport({ targetWindow: platform.targetWindow }));
 
         const connectivity = startConnectivity(options, platform, runtimeUrl, foundation, teardowns);
 

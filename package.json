@@ -40,6 +40,10 @@
             "types": "./dist/composables/use-connectivity.d.ts",
             "import": "./dist/composables/use-connectivity.js"
         },
+        "./composables/use-cookies-accepted": {
+            "types": "./dist/composables/use-cookies-accepted.d.ts",
+            "import": "./dist/composables/use-cookies-accepted.js"
+        },
         "./composables/use-focus-trap": {
             "types": "./dist/composables/use-focus-trap.d.ts",
             "import": "./dist/composables/use-focus-trap.js"

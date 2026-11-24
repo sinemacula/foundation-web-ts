@@ -7,7 +7,8 @@
 
 import type { ConnectivityMonitor } from '@sinemacula/foundation/connectivity/connectivity-monitor';
 import type { InjectionKey, Ref } from 'vue';
-import { getCurrentScope, inject, onScopeDispose, readonly, shallowRef } from 'vue';
+import { inject } from 'vue';
+import { followFlag } from './follow-flag';
 
 /**
  * Thrown by {@link useConnectivity} when no connectivity monitor is provided.
@@ -40,14 +41,5 @@ export function useConnectivity(): Readonly<Ref<boolean>> {
         throw new ConnectivityUnavailableError();
     }
 
-    const online = shallowRef(monitor.online);
-    const unsubscribe = monitor.onChange(next => {
-        online.value = next;
-    });
-
-    if (getCurrentScope() !== undefined) {
-        onScopeDispose(unsubscribe);
-    }
-
-    return readonly(online);
+    return followFlag(monitor.online, handler => monitor.onChange(handler));
 }

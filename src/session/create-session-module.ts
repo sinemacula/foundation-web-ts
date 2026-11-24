@@ -6,6 +6,7 @@
  */
 
 import type { Pinia } from 'pinia';
+import { inject } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
 
 import { createBearerTokenInterceptor } from '@sinemacula/foundation/http/bearer-token-interceptor';
@@ -17,6 +18,7 @@ import type { PasswordCredentials, SessionApi, SessionDevice } from '@sinemacula
 import { SessionError } from '@sinemacula/foundation/session/session-error';
 import type { SessionLock } from '@sinemacula/foundation/session/session-lock';
 import type { RefreshOutcome } from '@sinemacula/foundation/session/session-outcomes';
+import { isRefreshCookieMissing } from '@sinemacula/foundation/session/session-outcomes';
 import type { SessionPersistence } from '@sinemacula/foundation/session/session-persistence';
 import type { SessionRoutes as BaseSessionRoutes } from '@sinemacula/foundation/session/session-routes';
 import type { SessionStorageKeys } from '@sinemacula/foundation/session/session-storage-keys';
@@ -25,11 +27,13 @@ import type { SessionUser } from '@sinemacula/foundation/session/session-user';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { api, logger, reporting } from '../app/services';
+import { COOKIE_SUPPORT } from '../composables/use-cookies-accepted';
 import type { ModuleDefinition, ModuleRegisterContext, ResolvedPlatform } from '../module/module';
 import { IndexedDbSessionRecordStore } from '../storage/indexed-db-session-record-store';
 import { StrictWebStorage } from '../storage/strict-web-storage';
 import { WebLocksSessionLock } from '../storage/web-locks-session-lock';
 import { announceWrites } from './announced-session-persistence';
+import { CookieRefusals } from './cookie-refusals';
 import { retireLegacySession } from './legacy-session-migration';
 import type { SessionContext } from './session-context';
 import { installSessionContext, sessionContext } from './session-context';
@@ -243,6 +247,7 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
     const storageKeys: SessionStorageKeys = { ...DEFAULT_SESSION_STORAGE_KEYS, ...options.storageKeys };
     const routes: SessionRoutes = { ...DEFAULT_ROUTES, ...options.routes };
     const reportHydration = createHydrationReporter();
+    const cookieRefusals = new CookieRefusals();
 
     let crossTabSync: CrossTabSync | null;
 
@@ -250,7 +255,7 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
         name: options.name ?? 'session',
         routes: [],
         register: context => {
-            crossTabSync = registerSession(context, options, storageKeys, routes, reportHydration);
+            crossTabSync = registerSession(context, options, storageKeys, routes, reportHydration, cookieRefusals);
         },
         stores: [
             pinia => {
@@ -259,8 +264,10 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
                 return useSessionStore(pinia);
             },
         ],
-        boot: context =>
-            bootSessionLifecycle(context, {
+        boot: context => {
+            cookieRefusals.attach(context.app.runWithContext(() => inject(COOKIE_SUPPORT, null)));
+
+            return bootSessionLifecycle(context, {
                 routes,
                 sessionKey: storageKeys.session,
                 crossTabSync,
@@ -270,7 +277,8 @@ export function createSessionModule(options: AnySessionModuleOptions = {}): Modu
                 identity: options.identity ?? {},
                 reportHydration,
                 random: Math.random,
-            }),
+            });
+        },
     };
 }
 
@@ -288,6 +296,7 @@ function registerSession(
     storageKeys: SessionStorageKeys,
     routes: SessionRoutes,
     reportHydration: HydrationReporter,
+    cookieRefusals: CookieRefusals,
 ): CrossTabSync | null {
     const { pinia, platform, storage } = context;
     const apiFactory = options.api ?? (http => createDefaultSessionApi<unknown>(http, { now: platform.clock }));
@@ -296,7 +305,7 @@ function registerSession(
 
     const session = resolveSessionStorage(platform, options, storageKeys.session);
     const ready = createReadiness(pinia, reportHydration, session.retired);
-    const coordinator = createRefreshAuthority(pinia, ready);
+    const coordinator = createRefreshAuthority(pinia, ready, platform.clock, cookieRefusals);
 
     let gateway: SessionApi<SessionUser, unknown> | null = null;
 
@@ -444,14 +453,22 @@ function createHydrationReporter(): HydrationReporter {
  * an empty store is never refreshed, and a failure is reported once however
  * many callers share it. A refresh whose session another one replaced by the
  * time it settles reports `superseded`, so its outcome never ends the renewal
- * of the session that replaced it.
+ * of the session that replaced it. A refresh refused for a missing cookie while
+ * its access token was live reports the cookie refused: the cookie outlives
+ * that token, so it was withheld or cleared, not expired.
  */
-function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): SessionRefreshCoordinator {
+function createRefreshAuthority(
+    pinia: Pinia,
+    ready: () => Promise<void>,
+    clock: () => number,
+    cookieRefusals: CookieRefusals,
+): SessionRefreshCoordinator {
     return new SessionRefreshCoordinator(async () => {
         await ready();
 
         const store = useSessionStore(pinia);
         const owner = store.sessionIdentity();
+        const live = isLive(store.expiresAtEpochMs, clock());
         const outcome = await store.refresh();
 
         if (outcome.kind === 'failed') {
@@ -460,8 +477,24 @@ function createRefreshAuthority(pinia: Pinia, ready: () => Promise<void>): Sessi
 
         const current = store.sessionIdentity();
 
-        return current !== null && current !== owner ? SUPERSEDED : outcome;
+        if (current !== null && current !== owner) {
+            return SUPERSEDED;
+        }
+
+        if (live && outcome.kind === 'rejected' && isRefreshCookieMissing(outcome.error)) {
+            cookieRefusals.report();
+        }
+
+        return outcome;
     });
+}
+
+/**
+ * Whether an access token with the given expiry is still live; an unknown
+ * expiry is not.
+ */
+function isLive(expiresAtEpochMs: number | null, now: number): boolean {
+    return expiresAtEpochMs !== null && now < expiresAtEpochMs;
 }
 
 /**

@@ -9,6 +9,9 @@
             "@sinemacula/foundation-web/app/create-foundation-web-app": ["./src/app/create-foundation-web-app.ts"],
             "@sinemacula/foundation-web/app/services": ["./src/app/services.ts"],
             "@sinemacula/foundation-web/composables/use-connectivity": ["./src/composables/use-connectivity.ts"],
+            "@sinemacula/foundation-web/composables/use-cookies-accepted": [
+                "./src/composables/use-cookies-accepted.ts"
+            ],
             "@sinemacula/foundation-web/composables/use-focus-trap": ["./src/composables/use-focus-trap.ts"],
             "@sinemacula/foundation-web/config/web-environment": ["./src/config/web-environment.ts"],
             "@sinemacula/foundation-web/i18n/application-i18n": ["./src/i18n/application-i18n.ts"],
