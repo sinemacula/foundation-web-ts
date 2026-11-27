@@ -12,6 +12,7 @@ import type { ModuleMessageSource } from '../module/module-registry';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type { LocaleSwitcherOptions } from './application-i18n';
 import { activateLocale, createApplicationI18n, createLocaleSwitcher } from './application-i18n';
+import { I18nError } from '@sinemacula/foundation/i18n/i18n-error';
 import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 
 describe('createApplicationI18n', () => {
@@ -1208,6 +1209,94 @@ describe('createLocaleSwitcher', () => {
             await Promise.resolve();
 
             expect(onFallbackError).toHaveBeenCalledOnce();
+        });
+
+        it('preloads a locale and its fallback without activating or persisting it', async () => {
+            const french = vi.fn(async () => ({ hi: 'Salut' }));
+            const english = vi.fn(async () => ({ hi: 'Hi' }));
+            const { i18n, storage, target, switcher } = buildSwitcher({ 'fr-FR': french, 'en-GB': english });
+
+            const prepared = switcher.preload('fr');
+
+            expect(prepared.locale).toBe('fr-FR');
+            expect(french).toHaveBeenCalledOnce();
+            expect(english).toHaveBeenCalledOnce();
+
+            await vi.waitFor(() => {
+                expect(i18n.global.getLocaleMessage('fr-FR')).toEqual({ hi: 'Salut' });
+            });
+
+            expect(switcher.current.value).toBe('en-GB');
+            expect(target.documentElement.getAttribute('lang')).toBeNull();
+
+            await prepared.activate();
+
+            expect(switcher.current.value).toBe('fr-FR');
+            expect(target.documentElement.getAttribute('lang')).toBe('fr-FR');
+            expect(storage.get('locale')).toBe('en-GB');
+        });
+
+        it('shares the first activation of a preloaded locale', async () => {
+            const { switcher } = buildSwitcher({ 'fr-FR': async () => ({ hi: 'Salut' }) });
+            const prepared = switcher.preload('fr-FR');
+
+            expect(prepared.activate()).toBe(prepared.activate());
+
+            await prepared.activate();
+        });
+
+        it('throws when preloading a locale that matches no enabled locale', () => {
+            const { switcher } = buildSwitcher({});
+
+            expect(() => switcher.preload('de-DE')).toThrow(I18nError);
+        });
+
+        it('holds a failed preload until it is activated', async () => {
+            const unhandled = vi.fn();
+
+            process.on('unhandledRejection', unhandled);
+
+            try {
+                const { switcher } = buildSwitcher({ 'fr-FR': () => Promise.reject(new Error('offline')) });
+                const prepared = switcher.preload('fr-FR');
+
+                await new Promise(resolve => setTimeout(resolve, 0));
+
+                expect(unhandled).not.toHaveBeenCalled();
+
+                await expect(prepared.activate()).rejects.toThrow('offline');
+                expect(switcher.current.value).toBe('en-GB');
+            } finally {
+                process.off('unhandledRejection', unhandled);
+            }
+        });
+
+        it('applies nothing for a preloaded locale a later switch supersedes', async () => {
+            const french = deferredLoader();
+            const { switcher } = buildSwitcher({ 'fr-FR': french.load, 'ar-SA': async () => ({ hi: 'مرحبا' }) });
+            const activation = switcher.preload('fr-FR').activate();
+
+            await switcher.switchTo('ar-SA');
+            french.resolve({ hi: 'Salut' });
+            await activation;
+
+            expect(switcher.current.value).toBe('ar-SA');
+        });
+
+        it('loads a fallback still loading from a preload only once', async () => {
+            const english = deferredLoader();
+            const englishLoad = vi.fn(english.load);
+            const { switcher } = buildSwitcher({
+                'fr-FR': async () => ({ hi: 'Salut' }),
+                'ar-SA': async () => ({ hi: 'مرحبا' }),
+                'en-GB': englishLoad,
+            });
+
+            await switcher.preload('fr-FR').activate();
+            await switcher.switchTo('ar-SA');
+            english.resolve({ hi: 'Hi' });
+
+            expect(englishLoad).toHaveBeenCalledOnce();
         });
 
         it('loads no fallback when no fallback locale is given', async () => {

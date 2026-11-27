@@ -26,10 +26,10 @@ import type {
     ResponseErrorHandler,
     TransportObserver,
 } from '@sinemacula/foundation/http/http-client';
-import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
+import type { ApplicationI18n, FallbackErrorHandler, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
 import type { Logger } from '@sinemacula/foundation/logging/logger';
 import type { LocaleMessages, ModuleDefinition, ResolvedPlatform, ScheduleTask } from '../module/module';
-import { scheduleOnTimers } from '../module/module';
+import { collectModuleRoutes, scheduleOnTimers } from '../module/module';
 import type { ModuleRegistry } from '../module/module-registry';
 import { bootModules, createModuleRegistry, registerModules } from '../module/module-registry';
 import { TeardownStack } from '../module/teardown-stack';
@@ -39,6 +39,7 @@ import type { RealtimeConnection } from '@sinemacula/foundation/realtime/realtim
 import type { ErrorReporter } from '@sinemacula/foundation/reporting/error-reporter';
 import { installGlobalErrorHandling } from '../reporting/install-global-error-handling';
 import { tabRecoveryStorage } from '../router/chunk-error-recovery';
+import { preloadInitialRoute } from '../router/initial-route-preload';
 import { BrowserStorage } from '../storage/browser-storage';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
@@ -52,8 +53,8 @@ import type { FoundationConfig } from '@sinemacula/foundation/app/foundation-con
 import { wireChunkRecovery } from './wire-chunk-recovery';
 import { wireColorScheme } from './wire-color-scheme';
 import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
-import type { WiredLocale } from './wire-locale';
-import { wireLocale } from './wire-locale';
+import type { LocaleWiringConfig, StartedLocale } from './wire-locale';
+import { assertSameLocales, startLocale } from './wire-locale';
 import { CONNECTIVITY_MONITOR } from '../composables/use-connectivity';
 import { COOKIE_SUPPORT } from '../composables/use-cookies-accepted';
 import type { ConnectivityWiring, UpdateMonitorWiring, WiredMonitors } from './wire-monitors';
@@ -84,10 +85,10 @@ const BOOT_PHASES = [
     'stores',
     'locale',
     'router',
+    'chunk-recovery',
     'error-handling',
     'realtime',
     'boot-modules',
-    'chunk-recovery',
     'monitors',
 ] as const;
 
@@ -193,6 +194,17 @@ export interface FoundationWebI18nOptions {
 
     /** Whether a non-default locale also loads the default locale's messages as its fallback. Default true. */
     readonly loadFallbackMessages?: boolean;
+
+    /** The locales, matching the defined config's; when given, the detected locale's messages load while the runtime document is fetched. */
+    readonly locales?: LocaleWiringConfig['locales'];
+}
+
+/**
+ * Routing options.
+ */
+export interface FoundationWebRouterOptions {
+    /** Start loading the first page's lazy route components while the boot runs. Default false. */
+    readonly preloadInitialRoute?: boolean;
 }
 
 /**
@@ -322,6 +334,9 @@ export interface FoundationWebAppOptions<T extends FoundationConfig> {
 
     /** Internationalisation options. */
     readonly i18n?: FoundationWebI18nOptions;
+
+    /** Routing options. */
+    readonly router?: FoundationWebRouterOptions;
 
     /** Colour-scheme options. */
     readonly colorScheme?: FoundationWebColorSchemeOptions;
@@ -488,6 +503,12 @@ interface AppFoundation<T extends FoundationConfig> {
 
     /** The installed HTTP client. */
     readonly http: HttpClient;
+
+    /** Starts the locale wiring for the defined locales, or hands back the one started at boot. */
+    readonly locale: (defined: LocaleWiringConfig['locales']) => StartedLocale;
+
+    /** The router history created at boot to preload the first page, or null. */
+    readonly history: RouterHistory | null;
 }
 
 /**
@@ -524,6 +545,9 @@ interface BootSinks {
 
     /** Receives each request attempt's transport outcome. */
     readonly onTransport: (reachable: boolean) => void;
+
+    /** Receives fallback locale load failures, held until a reporter is wired. */
+    readonly onFallbackError: FallbackErrorHandler;
 }
 
 /**
@@ -544,6 +568,7 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
     const teardowns = new TeardownStack();
 
     const colorSchemeErrors = new DeferredErrorSink('color-scheme');
+    const fallbackErrors = new DeferredErrorSink('i18n-fallback');
     const bootFailures = new BootFailureReporter(options.observability?.reference ?? createBootFailureReference);
     const transportHints = new LateHintSink();
 
@@ -554,8 +579,14 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
             runtimeUrl,
             {
                 onColorSchemeError: colorSchemeErrors.report,
-                onReporter: bootFailures.attach,
+                onReporter: reporter => {
+                    bootFailures.attach(reporter);
+                    fallbackErrors.attach(reporter);
+                },
                 onTransport: transportHints.hint,
+                onFallbackError: (error, locale) => {
+                    fallbackErrors.report(error, { locale });
+                },
             },
             teardowns,
         );
@@ -566,17 +597,9 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
 
         transportHints.attach(connectivity);
 
-        const moduleLayer = await bootModuleLayer(options, platform, foundation, teardowns);
+        const moduleLayer = await bootModuleLayer(foundation, teardowns);
         const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
-        const monitors = wireReleaseMonitors(
-            options,
-            platform,
-            runtimeUrl,
-            foundation,
-            integration,
-            connectivity,
-            teardowns,
-        );
+        const monitors = wireReleaseMonitors(options, platform, runtimeUrl, foundation, connectivity, teardowns);
 
         return assembleApp(foundation, moduleLayer, integration, monitors, teardowns);
     } catch (error) {
@@ -618,8 +641,8 @@ class DeferredErrorSink {
     /** The reporter context's source tag. */
     readonly #source: string;
 
-    /** The errors raised before a reporter was attached. */
-    readonly #pending: unknown[] = [];
+    /** The errors, with their context, raised before a reporter was attached. */
+    readonly #pending: [unknown, Readonly<Record<string, unknown>>][] = [];
 
     /** The attached reporter, or null until the boot wires one. */
     #reporter: ErrorReporter | null = null;
@@ -631,14 +654,14 @@ class DeferredErrorSink {
     /**
      * Forward an error to the reporter, or hold it until one is attached.
      */
-    readonly report = (error: unknown): void => {
+    readonly report = (error: unknown, context: Readonly<Record<string, unknown>> = {}): void => {
         if (this.#reporter === null) {
-            this.#pending.push(error);
+            this.#pending.push([error, context]);
 
             return;
         }
 
-        this.#reporter.captureError(error, { source: this.#source });
+        this.#reporter.captureError(error, { source: this.#source, ...context });
     };
 
     /**
@@ -648,9 +671,9 @@ class DeferredErrorSink {
     attach(reporter: ErrorReporter): void {
         this.#reporter = reporter;
 
-        for (const error of this.#pending.splice(0)) {
+        for (const [error, context] of this.#pending.splice(0)) {
             try {
-                this.report(error);
+                this.report(error, context);
             } catch {
                 // Reporting is best-effort; the boot carries on.
             }
@@ -690,6 +713,8 @@ async function bootFoundation<T extends FoundationConfig>(
         colorScheme.dispose();
     });
 
+    const locale = prepareLocale(options, registry.modules, storage, platform, sinks.onFallbackError);
+    const history = startInitialRoute(options, registry.modules, teardowns);
     const cookieSupport = provideCookieSupport(app, platform.targetWindow);
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
@@ -725,7 +750,19 @@ async function bootFoundation<T extends FoundationConfig>(
         { fetchFn: platform.fetchFn },
     );
 
-    return { ...core, storage, colorScheme, cookieSupport, registry, app, pinia, toastService, confirmService };
+    return {
+        ...core,
+        storage,
+        colorScheme,
+        cookieSupport,
+        registry,
+        app,
+        pinia,
+        toastService,
+        confirmService,
+        locale,
+        history,
+    };
 }
 
 /**
@@ -749,8 +786,6 @@ function withTransportHints<T extends FoundationConfig>(
  * Run the module phases: instantiate eager stores and wire i18n.
  */
 async function bootModuleLayer<T extends FoundationConfig>(
-    options: FoundationWebAppOptions<T>,
-    platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
     teardowns: TeardownStack,
 ): Promise<ModuleLayer> {
@@ -770,7 +805,7 @@ async function bootModuleLayer<T extends FoundationConfig>(
 
     recordPhase('locale');
 
-    const { i18n, switcher } = await resolveLocale(foundation, platform, options);
+    const { i18n, switcher } = await foundation.locale(foundation.settings.locales).wire();
 
     app.use(i18n);
 
@@ -794,6 +829,21 @@ async function wireAppIntegration<T extends FoundationConfig>(
     recordPhase('router');
 
     const router = resolveRouter(options, platform, foundation, i18n, teardowns);
+
+    recordPhase('chunk-recovery');
+
+    // Must precede app.use(router), which starts the first navigation.
+    const chunkRecoveryTeardown = resolveChunkRecovery(
+        router,
+        tabRecoveryStorage(platform.targetWindow),
+        observability.reporter,
+        platform.clock,
+        options.monitors?.chunkRecovery,
+    );
+
+    if (chunkRecoveryTeardown !== null) {
+        teardowns.push(chunkRecoveryTeardown);
+    }
 
     app.use(router);
 
@@ -864,33 +914,17 @@ function startConnectivity<T extends FoundationConfig>(
 }
 
 /**
- * Run the release phases: chunk-load recovery and the release monitors.
+ * Run the release monitors phase.
  */
 function wireReleaseMonitors<T extends FoundationConfig>(
     options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     runtimeUrl: string,
     foundation: AppFoundation<T>,
-    integration: AppIntegration,
     connectivity: WebConnectivityMonitor | null,
     teardowns: TeardownStack,
 ): WiredMonitors {
-    const { settings, observability, toastService } = foundation;
-    const { router } = integration;
-
-    recordPhase('chunk-recovery');
-
-    const chunkRecoveryTeardown = resolveChunkRecovery(
-        router,
-        tabRecoveryStorage(platform.targetWindow),
-        observability.reporter,
-        platform.clock,
-        options.monitors?.chunkRecovery,
-    );
-
-    if (chunkRecoveryTeardown !== null) {
-        teardowns.push(chunkRecoveryTeardown);
-    }
+    const { settings, toastService } = foundation;
 
     recordPhase('monitors');
 
@@ -1055,12 +1089,7 @@ function resolveRouter<T extends FoundationConfig>(
     i18n: ApplicationI18n,
     teardowns: TeardownStack,
 ): Router {
-    const history = options.platform?.history ?? createWebHistory();
-
-    teardowns.push(() => {
-        history.destroy();
-    });
-
+    const history = foundation.history ?? createRouterHistory(options, teardowns);
     const { router, titleSyncTeardown } = wireRouter({
         modules: foundation.registry.modules,
         i18n,
@@ -1113,34 +1142,88 @@ function resolveColorScheme<T extends FoundationConfig>(
 }
 
 /**
- * Wire internationalisation and install the locale switcher, reporting a
- * fallback locale whose messages fail to load.
+ * Build the locale starter. With static `i18n.locales`, the detected locale's
+ * messages start loading now and the starter checks the defined locales match;
+ * otherwise it starts the wiring for the defined locales when asked.
  */
-function resolveLocale<T extends FoundationConfig>(
-    foundation: AppFoundation<T>,
-    platform: ResolvedPlatform,
+function prepareLocale<T extends FoundationConfig>(
     options: FoundationWebAppOptions<T>,
-): Promise<WiredLocale> {
-    const { settings, registry, storage, observability } = foundation;
+    modules: readonly ModuleDefinition[],
+    storage: KeyValueStorage,
+    platform: ResolvedPlatform,
+    onFallbackError: FallbackErrorHandler,
+): (defined: LocaleWiringConfig['locales']) => StartedLocale {
     const i18n = options.i18n;
 
-    return wireLocale({
-        config: settings,
-        modules: registry.modules,
-        ...(i18n?.sharedLoaders === undefined ? {} : { sharedLoaders: i18n.sharedLoaders }),
-        ...(i18n?.formats === undefined ? {} : { formats: i18n.formats }),
-        ...(i18n?.localeStorageKey === undefined ? {} : { localeStorageKey: i18n.localeStorageKey }),
-        ...(i18n?.duplicateNamespaceStrategy === undefined
-            ? {}
-            : { duplicateNamespaceStrategy: i18n.duplicateNamespaceStrategy }),
-        ...(i18n?.loadFallbackMessages === undefined ? {} : { loadFallbackMessages: i18n.loadFallbackMessages }),
-        onFallbackError: (error, locale) => {
-            observability.reporter.captureError(error, { source: 'i18n-fallback', locale });
-        },
-        storage,
-        localeCandidates: options.platform?.localeCandidates ?? [...platform.targetWindow.navigator.languages],
-        targetDocument: platform.targetDocument,
+    /**
+     * Start the locale wiring for the given locales.
+     */
+    const start = (locales: LocaleWiringConfig['locales']): StartedLocale =>
+        startLocale({
+            config: { locales },
+            modules,
+            ...(i18n?.sharedLoaders === undefined ? {} : { sharedLoaders: i18n.sharedLoaders }),
+            ...(i18n?.formats === undefined ? {} : { formats: i18n.formats }),
+            ...(i18n?.localeStorageKey === undefined ? {} : { localeStorageKey: i18n.localeStorageKey }),
+            ...(i18n?.duplicateNamespaceStrategy === undefined
+                ? {}
+                : { duplicateNamespaceStrategy: i18n.duplicateNamespaceStrategy }),
+            ...(i18n?.loadFallbackMessages === undefined ? {} : { loadFallbackMessages: i18n.loadFallbackMessages }),
+            onFallbackError,
+            storage,
+            localeCandidates: options.platform?.localeCandidates ?? [...platform.targetWindow.navigator.languages],
+            targetDocument: platform.targetDocument,
+        });
+    const declared = i18n?.locales;
+
+    if (declared === undefined) {
+        return start;
+    }
+
+    const started = start(declared);
+
+    return defined => {
+        assertSameLocales(defined, declared);
+
+        return started;
+    };
+}
+
+/**
+ * Create the router history now and start loading the first page's lazy
+ * components when preloading is on; null otherwise, leaving the history to the
+ * router phase.
+ */
+function startInitialRoute<T extends FoundationConfig>(
+    options: FoundationWebAppOptions<T>,
+    modules: readonly ModuleDefinition[],
+    teardowns: TeardownStack,
+): RouterHistory | null {
+    if (options.router?.preloadInitialRoute !== true) {
+        return null;
+    }
+
+    const history = createRouterHistory(options, teardowns);
+
+    preloadInitialRoute(collectModuleRoutes(modules), history.location);
+
+    return history;
+}
+
+/**
+ * Create the router history, releasing it on teardown.
+ */
+function createRouterHistory<T extends FoundationConfig>(
+    options: FoundationWebAppOptions<T>,
+    teardowns: TeardownStack,
+): RouterHistory {
+    const history = options.platform?.history ?? createWebHistory();
+
+    teardowns.push(() => {
+        history.destroy();
     });
+
+    return history;
 }
 
 /**

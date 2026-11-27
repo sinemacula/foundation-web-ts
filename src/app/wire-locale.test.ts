@@ -11,7 +11,8 @@ import type { LocaleMessageLoader, ModuleDefinition } from '../module/module';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import { localeSwitcher, resetFoundationWebServices } from './services';
 import type { LocaleWiringConfig, WireLocaleOptions } from './wire-locale';
-import { wireLocale } from './wire-locale';
+import { I18nError } from '@sinemacula/foundation/i18n/i18n-error';
+import { assertSameLocales, startLocale, wireLocale } from './wire-locale';
 
 const config: LocaleWiringConfig = {
     locales: {
@@ -271,5 +272,76 @@ describe('wireLocale', () => {
         expect(i18n.global.locale.value).toBe('ar-SA');
         expect(targetDocument.documentElement.getAttribute('lang')).toBe('ar-SA');
         expect(targetDocument.documentElement.getAttribute('dir')).toBe('rtl');
+    });
+});
+
+describe('startLocale', () => {
+    afterEach(() => {
+        resetFoundationWebServices();
+    });
+
+    it('loads the detected locale without activating it or installing the switcher', async () => {
+        const loader = vi.fn(async (locale: string) => ({ greeting: `hello-${locale}` }));
+        const target = document.implementation.createHTMLDocument('t');
+
+        const started = startLocale(
+            baseOptions({
+                modules: [moduleWithLocales('dash', loader)],
+                localeCandidates: ['fr-FR'],
+                targetDocument: target,
+            }),
+        );
+
+        expect(loader.mock.calls).toEqual([['fr-FR'], ['en-US']]);
+        expect(target.documentElement.getAttribute('lang')).toBeNull();
+        expect(() => localeSwitcher()).toThrow();
+
+        const { i18n, switcher } = await started.wire();
+
+        expect(i18n.global.locale.value).toBe('fr-FR');
+        expect(localeSwitcher()).toBe(switcher);
+        expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('shares the first wiring', () => {
+        const started = startLocale(baseOptions());
+
+        expect(started.wire()).toBe(started.wire());
+    });
+});
+
+describe('assertSameLocales', () => {
+    const declared: LocaleWiringConfig['locales'] = {
+        default: 'en-US',
+        enabled: ['en-US', 'fr-FR'],
+        supported: { 'en-US': { direction: 'ltr' }, 'ar-SA': { direction: 'rtl' } },
+    };
+
+    it('accepts the same locales in any supported order, ignoring other metadata', () => {
+        expect(() => {
+            assertSameLocales(
+                {
+                    default: 'en-US',
+                    enabled: ['en-US', 'fr-FR'],
+                    supported: {
+                        'ar-SA': { direction: 'rtl', label: 'العربية' },
+                        'en-US': { direction: 'ltr', label: 'English' },
+                    } as LocaleWiringConfig['locales']['supported'],
+                },
+                declared,
+            );
+        }).not.toThrow();
+    });
+
+    it.each([
+        ['default', { ...declared, default: 'fr-FR' }],
+        ['enabled order', { ...declared, enabled: ['fr-FR', 'en-US'] }],
+        ['enabled list', { ...declared, enabled: ['en-US'] }],
+        ['direction', { ...declared, supported: { ...declared.supported, 'ar-SA': { direction: 'ltr' } } }],
+        ['supported list', { ...declared, supported: { 'en-US': { direction: 'ltr' } } }],
+    ] as const)('throws when the %s differs', (_, defined) => {
+        expect(() => {
+            assertSameLocales(defined as LocaleWiringConfig['locales'], declared);
+        }).toThrow(new I18nError('The defined config declares different locales from the i18n.locales boot option.'));
     });
 });

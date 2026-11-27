@@ -6,7 +6,8 @@
  */
 
 import type { ApplicationI18n, FallbackErrorHandler, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
-import { activateLocale, createApplicationI18n, createLocaleSwitcher } from '../i18n/application-i18n';
+import { createApplicationI18n, createLocaleSwitcher } from '../i18n/application-i18n';
+import { I18nError } from '@sinemacula/foundation/i18n/i18n-error';
 import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 import type { LocaleMessages, ModuleDefinition } from '../module/module';
 import { createModuleMessageSource } from '../module/module-registry';
@@ -88,14 +89,25 @@ export interface WiredLocale {
 }
 
 /**
- * Detect and activate the locale with the default as fallback, unless fallback
- * loading is off, then install a switcher sharing the same locale service and
- * message source.
- *
- * @throws Error when the collision strategy is 'error' and a module name equals
- * a shared top-level translation key
+ * The locale wiring, started: the detected locale's messages are loading, and
+ * nothing is active yet.
  */
-export async function wireLocale(options: WireLocaleOptions): Promise<WiredLocale> {
+export interface StartedLocale {
+    /**
+     * Activate the detected locale once its own messages load, then install the
+     * switcher; repeat calls share the first.
+     *
+     * @throws the error the detected locale's own messages failed to load with
+     */
+    wire(): Promise<WiredLocale>;
+}
+
+/**
+ * Detect the locale and start loading its messages, with the default as
+ * fallback unless fallback loading is off, through the switcher it will later
+ * install, so the switcher never loads them again.
+ */
+export function startLocale(options: WireLocaleOptions): StartedLocale {
     const locales = options.config.locales;
     const i18n = createApplicationI18n(locales.default, options.formats);
     const localeService = new LocaleService({
@@ -104,39 +116,68 @@ export async function wireLocale(options: WireLocaleOptions): Promise<WiredLocal
         storage: options.storage,
         ...(options.localeStorageKey === undefined ? {} : { storageKey: options.localeStorageKey }),
     });
-    const locale = localeService.detect(options.localeCandidates);
-    const messageSource = createModuleMessageSource(options.modules);
-    const onNamespaceCollision = options.duplicateNamespaceStrategy ?? 'error';
-    const fallback = {
-        ...(options.loadFallbackMessages === false ? {} : { fallbackLocale: locales.default }),
-        ...(options.onFallbackError === undefined ? {} : { onFallbackError: options.onFallbackError }),
-    };
-
-    await activateLocale({
-        i18n,
-        modules: options.modules,
-        ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
-        locale,
-        direction: locales.supported[locale]?.direction ?? 'ltr',
-        ...fallback,
-        messageSource,
-        onNamespaceCollision,
-        ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
-    });
-
     const switcher = createLocaleSwitcher({
         i18n,
         modules: options.modules,
         ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
         localeService,
         supported: locales.supported,
-        ...fallback,
-        messageSource,
-        onNamespaceCollision,
+        ...(options.loadFallbackMessages === false ? {} : { fallbackLocale: locales.default }),
+        messageSource: createModuleMessageSource(options.modules),
+        onNamespaceCollision: options.duplicateNamespaceStrategy ?? 'error',
+        ...(options.onFallbackError === undefined ? {} : { onFallbackError: options.onFallbackError }),
         ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
     });
+    const prepared = switcher.preload(localeService.detect(options.localeCandidates));
+    let wired: Promise<WiredLocale> | null = null;
 
-    installLocaleSwitcher(switcher);
+    return {
+        wire: () =>
+            (wired ??= prepared.activate().then(() => {
+                installLocaleSwitcher(switcher);
 
-    return { i18n, switcher };
+                return { i18n, switcher };
+            })),
+    };
+}
+
+/**
+ * Start the locale wiring and wire it straight away.
+ *
+ * @throws Error when the collision strategy is 'error' and a module name equals
+ * a shared top-level translation key
+ */
+export function wireLocale(options: WireLocaleOptions): Promise<WiredLocale> {
+    return startLocale(options).wire();
+}
+
+/**
+ * Check the defined configuration declares the locales the boot started with:
+ * the same default, enabled list in order, and supported locales and
+ * directions.
+ *
+ * @throws {@link I18nError} when they differ
+ */
+export function assertSameLocales(
+    defined: LocaleWiringConfig['locales'],
+    declared: LocaleWiringConfig['locales'],
+): void {
+    if (
+        defined.default !== declared.default ||
+        defined.enabled.join() !== declared.enabled.join() ||
+        supportedDirections(defined) !== supportedDirections(declared)
+    ) {
+        throw new I18nError('The defined config declares different locales from the i18n.locales boot option.');
+    }
+}
+
+/**
+ * The supported locales and their directions, in a comparable form.
+ */
+function supportedDirections(locales: LocaleWiringConfig['locales']): string {
+    return JSON.stringify(
+        Object.entries(locales.supported)
+            .map(([locale, { direction }]) => [locale, direction])
+            .sort(),
+    );
 }

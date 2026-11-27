@@ -169,47 +169,120 @@ export interface LocaleSwitcher {
 }
 
 /**
- * Build a runtime locale switcher that activates through the same path as
- * boot; locales already installed on the instance, and each locale it loads,
+ * Loads a locale's messages ahead of activating it.
+ */
+export interface LocalePreloader {
+    /**
+     * Match `locale` against the enabled locales and start loading its
+     * messages, and its fallback's, without activating it; a failed load is
+     * held until the preparation is activated.
+     *
+     * @throws {@link I18nError} when `locale` does not match any enabled locale
+     */
+    preload(locale: string): PreparedLocale;
+}
+
+/**
+ * A locale whose messages are loading, ready to activate.
+ */
+export interface PreparedLocale {
+    /** The matched enabled locale. */
+    readonly locale: string;
+
+    /**
+     * Activate the locale once its own messages load, without persisting it;
+     * applies nothing when a later switch or activation supersedes it. Repeat
+     * calls share the first.
+     *
+     * @throws the error its own messages failed to load with
+     */
+    activate(): Promise<void>;
+}
+
+/**
+ * Build a runtime locale switcher that can also preload a locale to activate
+ * later; locales already installed on the instance, and each locale it loads,
  * are not loaded again.
  */
-export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher {
+export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher & LocalePreloader {
     const current = computed(() => options.i18n.global.locale.value);
     const ensureInstalled = createOnceInstaller(options.i18n.global.availableLocales);
     const observeFallback = createFallbackObserver(options.onFallbackError);
-    let latestSwitch: object | null = null;
+    let latestActivation: object | null = null;
+
+    /**
+     * Start loading the matched locale's messages and its fallback's.
+     */
+    const load = (locale: string): Loading => {
+        const matched = options.localeService.match(locale);
+
+        if (matched === null) {
+            throw new I18nError(`Cannot switch to locale "${locale}": it is not an enabled locale.`);
+        }
+
+        const activation = switchActivation(options, matched);
+        const own = ensureInstalled(activation, matched);
+        const fallback = fallbackToLoad(activation);
+
+        if (fallback !== null) {
+            observeFallback(ensureInstalled(activation, fallback), fallback);
+        }
+
+        return { activation, own };
+    };
+
+    /**
+     * Apply the locale once its own messages load, unless a later activation
+     * started in the meantime.
+     */
+    const applyUnlessSuperseded = async ({ activation, own }: Loading): Promise<boolean> => {
+        const ticket = {};
+
+        latestActivation = ticket;
+
+        await own;
+
+        if (ticket !== latestActivation) {
+            return false;
+        }
+
+        applyLocale(activation);
+
+        return true;
+    };
 
     return {
         current,
         async switchTo(locale: string): Promise<void> {
-            const matched = options.localeService.match(locale);
+            const loading = load(locale);
 
-            if (matched === null) {
-                throw new I18nError(`Cannot switch to locale "${locale}": it is not an enabled locale.`);
+            if (await applyUnlessSuperseded(loading)) {
+                options.localeService.persist(loading.activation.locale);
             }
+        },
+        preload(locale: string): PreparedLocale {
+            const loading = load(locale);
+            let activated: Promise<void> | null = null;
 
-            const ticket = {};
+            loading.own.catch(() => undefined);
 
-            latestSwitch = ticket;
-
-            const activation = switchActivation(options, matched);
-            const own = ensureInstalled(activation, matched);
-            const fallback = fallbackToLoad(activation);
-
-            if (fallback !== null) {
-                observeFallback(ensureInstalled(activation, fallback), fallback);
-            }
-
-            await own;
-
-            if (ticket !== latestSwitch) {
-                return;
-            }
-
-            applyLocale(activation);
-            options.localeService.persist(matched);
+            return {
+                locale: loading.activation.locale,
+                activate: () => (activated ??= applyUnlessSuperseded(loading).then(() => undefined)),
+            };
         },
     };
+}
+
+/**
+ * A locale activation and its own messages' load.
+ */
+interface Loading {
+    /** The activation to apply once the load finishes. */
+    readonly activation: ActivateLocaleOptions;
+
+    /** The locale's own messages' load. */
+    readonly own: Promise<void>;
 }
 
 /**
