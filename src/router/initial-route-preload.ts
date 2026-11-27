@@ -10,12 +10,17 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 
 /**
  * Start loading the lazy components of the routes `location` matches, so the
- * first navigation finds them loaded. Redirects and guards are not followed: a
- * location that only redirects preloads nothing.
+ * first navigation finds them loaded, and return the matched records. Redirects
+ * and guards are not followed: a location that only redirects preloads nothing.
  */
-export function preloadInitialRoute(routes: readonly RouteRecordRaw[], location: string): void {
+export function preloadInitialRoute(
+    routes: readonly RouteRecordRaw[],
+    location: string,
+): readonly RouteRecordNormalized[] {
+    const matched = matchedRecords(routes, location);
+
     // The real navigation loads the same components and surfaces any failure.
-    for (const record of matchedRecords(routes, location)) {
+    for (const record of matched) {
         for (const component of Object.values(record.components ?? {})) {
             if (isLazyComponent(component)) {
                 try {
@@ -26,6 +31,8 @@ export function preloadInitialRoute(routes: readonly RouteRecordRaw[], location:
             }
         }
     }
+
+    return matched;
 }
 
 /**

@@ -9,6 +9,8 @@ import type { Router, RouterHistory } from 'vue-router';
 
 import type { ApplicationI18n } from '../i18n/application-i18n';
 import { installDocumentTitleSync } from '../i18n/document-title';
+import type { RouteMessages } from '../i18n/route-messages';
+import { ownedModuleRoutes } from '../i18n/route-messages';
 import type { ModuleDefinition } from '../module/module';
 import { collectModuleGuards, collectModuleRoutes } from '../module/module';
 import { createApplicationRouter } from '../router/router-factory';
@@ -31,6 +33,9 @@ export interface WireRouterOptions {
 
     /** The document whose title is synchronised. */
     readonly targetDocument?: Document;
+
+    /** Loads each navigation's module messages with its routes; module messages load with the locale when omitted. */
+    readonly routeMessages?: RouteMessages;
 }
 
 /**
@@ -50,9 +55,13 @@ export interface WiredRouter {
  */
 export function wireRouter(options: WireRouterOptions): WiredRouter {
     const router = createApplicationRouter({
-        routes: collectModuleRoutes(options.modules),
+        routes:
+            options.routeMessages === undefined
+                ? collectModuleRoutes(options.modules)
+                : ownedModuleRoutes(options.modules),
         ...(options.history === undefined ? {} : { history: options.history }),
         globalMiddleware: collectModuleGuards(options.modules),
+        ...(options.routeMessages === undefined ? {} : { onNavigationStart: options.routeMessages.start }),
     });
 
     const titleSyncTeardown = installDocumentTitleSync({

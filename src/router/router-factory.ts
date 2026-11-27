@@ -33,6 +33,9 @@ export interface RouterFactoryOptions {
 
     /** Middleware run on every navigation before matched-record meta middleware. */
     readonly globalMiddleware?: readonly RouteMiddleware[];
+
+    /** Called as each navigation starts, before any middleware, to start loading what its target needs. */
+    readonly onNavigationStart?: (to: RouteLocationNormalized) => void;
 }
 
 /**
@@ -52,6 +55,8 @@ export function createApplicationRouter(options: RouterFactoryOptions): Router {
     });
 
     router.beforeEach(async (to, from) => {
+        options.onNavigationStart?.(to);
+
         const result = await runMiddlewarePipeline([...globalMiddleware, ...collectRouteMiddleware(to)], { to, from });
 
         if (result.kind !== 'redirect') {

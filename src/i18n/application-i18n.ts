@@ -13,6 +13,8 @@ import { createI18n } from 'vue-i18n';
 import type { LocaleMessages, ModuleDefinition } from '../module/module';
 import { collectModuleMessages } from '../module/module';
 import type { ModuleMessageSource } from '../module/module-registry';
+import { MessageCatalogue } from './message-catalogue';
+import { ModuleInterest } from './module-interest';
 import { I18nError } from '@sinemacula/foundation/i18n/i18n-error';
 import type { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 
@@ -147,6 +149,9 @@ export interface LocaleSwitcherOptions {
 
     /** Told once per failed load of the fallback locale's messages. */
     readonly onFallbackError?: FallbackErrorHandler;
+
+    /** The modules whose messages load with every locale; others load through {@link ModuleMessageLoader.loadModules}. Defaults to every module. */
+    readonly initialModules?: readonly string[];
 }
 
 /**
@@ -177,9 +182,25 @@ export interface LocalePreloader {
      * messages, and its fallback's, without activating it; a failed load is
      * held until the preparation is activated.
      *
+     * @param prefetch - modules whose messages also start loading for the
+     * locale, without holding the activation back
      * @throws {@link I18nError} when `locale` does not match any enabled locale
      */
-    preload(locale: string): PreparedLocale;
+    preload(locale: string, prefetch?: readonly string[]): PreparedLocale;
+}
+
+/**
+ * Loads modules' messages on demand, such as with their routes.
+ */
+export interface ModuleMessageLoader {
+    /**
+     * Load the modules' messages for the active locale, and the fallback's
+     * alongside, then keep them loaded through every later switch. A switch
+     * meanwhile loads them for its locale too until the signal aborts.
+     *
+     * @throws the error a module's messages failed to load with
+     */
+    loadModules(modules: readonly string[], signal?: AbortSignal): Promise<void>;
 }
 
 /**
@@ -201,88 +222,200 @@ export interface PreparedLocale {
 
 /**
  * Build a runtime locale switcher that can also preload a locale to activate
- * later; locales already installed on the instance, and each locale it loads,
- * are not loaded again.
+ * later and load modules' messages on demand. Each locale's shared messages and
+ * each module's load once; locales already installed on the instance are not
+ * loaded again.
  */
-export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher & LocalePreloader {
-    const current = computed(() => options.i18n.global.locale.value);
-    const ensureInstalled = createOnceInstaller(options.i18n.global.availableLocales);
-    const observeFallback = createFallbackObserver(options.onFallbackError);
-    let latestActivation: object | null = null;
+export function createLocaleSwitcher(
+    options: LocaleSwitcherOptions,
+): LocaleSwitcher & LocalePreloader & ModuleMessageLoader {
+    return new CatalogueLocaleSwitcher(options);
+}
+
+/**
+ * A load that failed, holding its error.
+ */
+interface LoadFailure {
+    /** The error the load failed with. */
+    readonly error: unknown;
+}
+
+/**
+ * The locale switcher over a message catalogue, tracking which modules every
+ * locale needs.
+ */
+class CatalogueLocaleSwitcher implements LocaleSwitcher, LocalePreloader, ModuleMessageLoader {
+    /** The active locale. */
+    readonly current: ComputedRef<string>;
+
+    /** The switcher's configuration. */
+    readonly #options: LocaleSwitcherOptions;
+
+    /** Loads and installs each locale's message parts. */
+    readonly #catalogue: MessageCatalogue;
+
+    /** The modules every locale needs. */
+    readonly #interest: ModuleInterest;
+
+    /** Reports each failed fallback load once. */
+    readonly #observeFallback: (loading: Promise<void>, locale: string) => void;
+
+    /** The latest activation started; an earlier one applies nothing. */
+    #latestActivation: object | null = null;
+
+    constructor(options: LocaleSwitcherOptions) {
+        this.#options = options;
+        this.#catalogue = new MessageCatalogue(options);
+        this.#interest = new ModuleInterest(
+            options.initialModules ?? options.modules.map(definition => definition.name),
+        );
+        this.#observeFallback = createFallbackObserver(options.onFallbackError);
+        this.current = computed(() => options.i18n.global.locale.value);
+    }
 
     /**
-     * Start loading the matched locale's messages and its fallback's.
+     * {@inheritDoc LocaleSwitcher.switchTo}
      */
-    const load = (locale: string): Loading => {
-        const matched = options.localeService.match(locale);
+    readonly switchTo = async (locale: string): Promise<void> => {
+        const activation = this.#prepare(locale);
+
+        if (await this.#applyUnlessSuperseded(activation)) {
+            this.#options.localeService.persist(activation.locale);
+        }
+    };
+
+    /**
+     * {@inheritDoc LocalePreloader.preload}
+     */
+    readonly preload = (locale: string, prefetch: readonly string[] = []): PreparedLocale => {
+        const activation = this.#prepare(locale);
+        let failure: LoadFailure | null = null;
+        let activated: Promise<void> | null = null;
+
+        Promise.all(this.#load(activation.locale)).catch((error: unknown) => {
+            failure = { error };
+        });
+
+        for (const pending of this.#catalogue.load(activation.locale, prefetch)) {
+            pending.catch(() => undefined);
+        }
+
+        return {
+            locale: activation.locale,
+
+            /**
+             * Activate the locale, or reject with the load that already failed.
+             */
+            activate: () =>
+                (activated ??=
+                    failure === null
+                        ? this.#applyUnlessSuperseded(activation).then(() => undefined)
+                        : Promise.reject(failure.error)),
+        };
+    };
+
+    /**
+     * {@inheritDoc ModuleMessageLoader.loadModules}
+     */
+    readonly loadModules = async (modules: readonly string[], signal?: AbortSignal): Promise<void> => {
+        const release = this.#interest.request(modules);
+
+        signal?.addEventListener('abort', release);
+
+        try {
+            await this.#loadForActiveLocale(modules);
+
+            if (signal?.aborted !== true) {
+                this.#interest.keep(modules);
+            }
+        } finally {
+            signal?.removeEventListener('abort', release);
+            release();
+        }
+    };
+
+    /**
+     * Load the modules for the active locale, again for whichever locale a
+     * switch activates meanwhile.
+     */
+    async #loadForActiveLocale(modules: readonly string[]): Promise<void> {
+        const active = this.#options.i18n.global.locale;
+        let locale: string;
+
+        do {
+            locale = active.value;
+            this.#loadFallback(locale, modules);
+
+            await Promise.all(this.#catalogue.load(locale, modules));
+        } while (active.value !== locale);
+    }
+
+    /**
+     * The activation for the enabled locale `locale` matches.
+     *
+     * @throws {@link I18nError} when `locale` does not match any enabled locale
+     */
+    #prepare(locale: string): ActivateLocaleOptions {
+        const matched = this.#options.localeService.match(locale);
 
         if (matched === null) {
             throw new I18nError(`Cannot switch to locale "${locale}": it is not an enabled locale.`);
         }
 
-        const activation = switchActivation(options, matched);
-        const own = ensureInstalled(activation, matched);
-        const fallback = fallbackToLoad(activation);
-
-        if (fallback !== null) {
-            observeFallback(ensureInstalled(activation, fallback), fallback);
-        }
-
-        return { activation, own };
-    };
+        return switchActivation(this.#options, matched);
+    }
 
     /**
-     * Apply the locale once its own messages load, unless a later activation
-     * started in the meantime.
+     * Apply the locale once the messages it requires load, including those of
+     * modules required meanwhile, unless a later activation started first.
      */
-    const applyUnlessSuperseded = async ({ activation, own }: Loading): Promise<boolean> => {
+    async #applyUnlessSuperseded(activation: ActivateLocaleOptions): Promise<boolean> {
         const ticket = {};
 
-        latestActivation = ticket;
+        this.#latestActivation = ticket;
 
-        await own;
+        // Loading even a loaded locale retries a fallback that failed before.
+        for (const pending of this.#load(activation.locale)) {
+            pending.catch(() => undefined);
+        }
 
-        if (ticket !== latestActivation) {
+        while (!this.#catalogue.hasLoaded(activation.locale, this.#interest.required())) {
+            await Promise.race([Promise.all(this.#load(activation.locale)), this.#interest.released()]);
+        }
+
+        if (ticket !== this.#latestActivation) {
             return false;
         }
 
         applyLocale(activation);
 
         return true;
-    };
+    }
 
-    return {
-        current,
-        async switchTo(locale: string): Promise<void> {
-            const loading = load(locale);
+    /**
+     * Start loading the required messages for `locale` and its fallback.
+     */
+    #load(locale: string): Promise<void>[] {
+        const modules = this.#interest.required();
+        const loads = this.#catalogue.load(locale, modules);
 
-            if (await applyUnlessSuperseded(loading)) {
-                options.localeService.persist(loading.activation.locale);
+        this.#loadFallback(locale, modules);
+
+        return loads;
+    }
+
+    /**
+     * Start loading the modules' messages for the fallback of `locale`.
+     */
+    #loadFallback(locale: string, modules: readonly string[]): void {
+        const fallback = this.#options.fallbackLocale;
+
+        if (fallback !== undefined && fallback !== locale) {
+            for (const loading of this.#catalogue.load(fallback, modules)) {
+                this.#observeFallback(loading, fallback);
             }
-        },
-        preload(locale: string): PreparedLocale {
-            const loading = load(locale);
-            let activated: Promise<void> | null = null;
-
-            loading.own.catch(() => undefined);
-
-            return {
-                locale: loading.activation.locale,
-                activate: () => (activated ??= applyUnlessSuperseded(loading).then(() => undefined)),
-            };
-        },
-    };
-}
-
-/**
- * A locale activation and its own messages' load.
- */
-interface Loading {
-    /** The activation to apply once the load finishes. */
-    readonly activation: ActivateLocaleOptions;
-
-    /** The locale's own messages' load. */
-    readonly own: Promise<void>;
+        }
+    }
 }
 
 /**
@@ -316,37 +449,6 @@ function createFallbackObserver(
             observed.add(loading);
             reportFallbackFailure(loading, locale, onError);
         }
-    };
-}
-
-/**
- * Build an installer that loads each locale's messages once, sharing a load
- * already in flight and retrying one that failed.
- */
-function createOnceInstaller(
-    alreadyInstalled: readonly string[],
-): (activation: ActivateLocaleOptions, locale: string) => Promise<void> {
-    const installed = new Set<string>(alreadyInstalled);
-    const loading = new Map<string, Promise<void>>();
-
-    return (activation, locale) => {
-        if (installed.has(locale)) {
-            return Promise.resolve();
-        }
-
-        const pending =
-            loading.get(locale) ??
-            installLocaleMessages(activation, locale)
-                .then(() => {
-                    installed.add(locale);
-                })
-                .finally(() => {
-                    loading.delete(locale);
-                });
-
-        loading.set(locale, pending);
-
-        return pending;
     };
 }
 

@@ -73,16 +73,17 @@ An application is composed of feature modules. A module is a plain object satisf
 (`src/module/module.ts`); the application owns an explicit, ordered array of them and hands it to
 `createFoundationWebApp`. There is no filesystem discovery.
 
-| Field      | Semantics                                                                                  |
-|------------|--------------------------------------------------------------------------------------------|
-| `name`     | Required. Unique across the registry (duplicates throw); also the translation namespace    |
-| `routes`   | Required. Routes contributed to the application router, in registry order                  |
-| `locales`  | Optional loader resolving the module's translations for one locale, null when not provided |
-| `guards`   | Optional global middleware, run on every navigation before route-level `meta.middleware`   |
-| `stores`   | Optional store hooks instantiated eagerly at the stores phase, in registry order           |
-| `register` | Optional synchronous hook contributing HTTP machinery before the client is built           |
-| `boot`     | Optional post-router, pre-mount hook for runtime effects; may return a teardown            |
-| `fallback` | Optional marker: this module owns the application catch-all; the registry orders it last   |
+| Field           | Semantics                                                                                  |
+|-----------------|--------------------------------------------------------------------------------------------|
+| `name`          | Required. Unique across the registry (duplicates throw); also the translation namespace    |
+| `routes`        | Required. Routes contributed to the application router, in registry order                  |
+| `locales`       | Optional loader resolving the module's translations for one locale, null when not provided |
+| `eagerMessages` | Optional: when messages load with routes, load this module's with every locale anyway      |
+| `guards`        | Optional global middleware, run on every navigation before route-level `meta.middleware`   |
+| `stores`        | Optional store hooks instantiated eagerly at the stores phase, in registry order           |
+| `register`      | Optional synchronous hook contributing HTTP machinery before the client is built           |
+| `boot`          | Optional post-router, pre-mount hook for runtime effects; may return a teardown            |
+| `fallback`      | Optional marker: this module owns the application catch-all; the registry orders it last   |
 
 `locales` messages land under the `name` namespace (build a loader from an import map with `createLocaleLoader`).
 `guards` run in registry order, and instances may be created at module-definition time provided they defer all store
@@ -107,8 +108,8 @@ down the already-booted modules and rethrows), followed by each store's `$dispos
 application handle's `dispose()`.
 
 `collectModuleRoutes` and `collectModuleGuards` (`src/module/module.ts`) flatten a registry's contributions, and the
-locale wiring loads module messages in parallel, memoised per locale; the preset threads all of them, so applications
-rarely call them directly.
+locale wiring loads module messages in parallel, each module's once per locale; the preset threads all of them, so
+applications rarely call them directly.
 
 #### Splitting a module's translations
 
@@ -124,8 +125,8 @@ import list from './list';
 export default { list, detail };
 ```
 
-Compose statically. The kernel loads every module's messages for a locale in one pass when that locale loads, so
-there is no per-view deferral seam - splitting organises source, it does not lazy-load. Keep message keys camelCase as
+Compose statically. A module's messages load as one unit - with every locale by default, or with its routes under
+`i18n.moduleMessages: 'route'` - so splitting organises source, it does not lazy-load. Keep message keys camelCase as
 elsewhere. Never name a part `module.ts`, `routes.ts` or `route-names.ts`: the module-contract lint matches those
 basenames anywhere beneath `modules/<name>/` and would demand the module's canonical exports from your translation
 file. Reserve the directory's `index.ts` for the composition entry and give each message group its own descriptively
@@ -150,19 +151,19 @@ The application's configuration definition must structurally satisfy `Foundation
 Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an optional
 `pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
 
-| Group           | Configures                                                                                                      |
-|-----------------|-----------------------------------------------------------------------------------------------------------------|
-| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree                    |
-| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build                  |
-| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`, `loadFallbackMessages`, `locales` |
-| `router`        | `preloadInitialRoute` - load the first page's lazy components during the boot                                   |
-| `colorScheme`   | `defaultPreference` (default `system`), `storageKey` (default `theme`), `themeColors` for `theme-color`         |
-| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                                    |
-| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                      |
-| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                          |
-| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side                      |
-| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                      |
-| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates`      |
+| Group           | Configures                                                                                                                        |
+|-----------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree                                      |
+| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build                                    |
+| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`, `loadFallbackMessages`, `locales`, `moduleMessages` |
+| `router`        | `preloadInitialRoute` - load the first page's lazy components during the boot                                                     |
+| `colorScheme`   | `defaultPreference` (default `system`), `storageKey` (default `theme`), `themeColors` for `theme-color`                           |
+| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                                                      |
+| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                                        |
+| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                                            |
+| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side                                        |
+| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                                        |
+| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates`                        |
 
 Defaults and behaviours worth knowing:
 
@@ -188,6 +189,14 @@ Defaults and behaviours worth knowing:
   at the usual phase; a defined config whose `locales` differ in default, enabled order or supported directions fails
   the boot with an `I18nError` cause. Translation loaders then run before modules register and stores exist, so they
   must only import messages.
+- `i18n.moduleMessages: 'route'` loads a module's messages with its routes instead of with every locale. A navigation
+  starts loading the matched routes' modules' messages before middleware runs, alongside the route components, and
+  commits once both load; a module's messages failing to load fails the navigation with the original error. A switch
+  loads the new locale's messages for every module loaded so far, and for those a navigation in flight needs, then
+  activates them at once. The fallback module, modules without routes and modules marked `eagerMessages` load with
+  every locale, as do shared messages. Middleware, navigation guards, boot hooks and anything rendered outside a
+  module's routes cannot rely on its messages unless it is eager, and routes added at runtime load none. With
+  `router.preloadInitialRoute` the first page's modules' messages also start loading early.
 - `router.preloadInitialRoute` starts loading the lazy components of the routes the starting URL matches before the
   runtime document is fetched. Redirects and middleware are not followed, so a URL that only redirects preloads
   nothing.

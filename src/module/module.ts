@@ -167,6 +167,9 @@ export interface ModuleDefinition {
     /** Lazily-loaded translations, keyed under the module name. */
     readonly locales?: LocaleMessageLoader;
 
+    /** When messages load with routes, load this module's with every locale anyway, for a module that renders outside its routes. */
+    readonly eagerMessages?: boolean;
+
     /** Global middleware run on every navigation before route `meta.middleware`, in registry order; defer store and service access to `handle()`. */
     readonly guards?: readonly RouteMiddleware[];
 
