@@ -124,7 +124,7 @@ import list from './list';
 export default { list, detail };
 ```
 
-Compose statically. The kernel loads every module's messages for a locale in one pass when that locale activates, so
+Compose statically. The kernel loads every module's messages for a locale in one pass when that locale loads, so
 there is no per-view deferral seam - splitting organises source, it does not lazy-load. Keep message keys camelCase as
 elsewhere. Never name a part `module.ts`, `routes.ts` or `route-names.ts`: the module-contract lint matches those
 basenames anywhere beneath `modules/<name>/` and would demand the module's canonical exports from your translation
@@ -138,7 +138,7 @@ large.
 fetches the runtime environment document, freezes the configuration, installs every service singleton, runs the module
 lifecycle and wires the colour scheme, i18n, routing, observability, chunk recovery, realtime and the release monitors.
 The phase order is fixed, so the boot's ordering constraints are structural: notifications and observability before the
-HTTP client, storage before stores, stores before i18n and the router.
+HTTP client, storage before stores, stores before i18n and the router, chunk recovery before the first navigation.
 
 The application's configuration definition must structurally satisfy `FoundationConfig`
 (`@sinemacula/foundation/app/foundation-config`), the slice the preset reads: `api.baseUrl`/`api.timeout`,
@@ -150,18 +150,19 @@ The application's configuration definition must structurally satisfy `Foundation
 Top-level: `root` (the component mounted by `start()`), `modules` (the explicit ordered module list) and an optional
 `pinia` instance (injectable for tests; defaults to a fresh one). Everything else is grouped:
 
-| Group           | Configures                                                                                                 |
-|-----------------|------------------------------------------------------------------------------------------------------------|
-| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree               |
-| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build             |
-| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`, `loadFallbackMessages`       |
-| `colorScheme`   | `defaultPreference` (default `system`), `storageKey` (default `theme`), `themeColors` for `theme-color`    |
-| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                               |
-| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                 |
-| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                     |
-| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side                 |
-| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                 |
-| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates` |
+| Group           | Configures                                                                                                      |
+|-----------------|-----------------------------------------------------------------------------------------------------------------|
+| `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree                    |
+| `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build                  |
+| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`, `loadFallbackMessages`, `locales` |
+| `router`        | `preloadInitialRoute` - load the first page's lazy components during the boot                                   |
+| `colorScheme`   | `defaultPreference` (default `system`), `storageKey` (default `theme`), `themeColors` for `theme-color`         |
+| `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                                    |
+| `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                      |
+| `realtime`      | Opt-in connection factory; installed into the realtime holder, disconnected on dispose                          |
+| `notifications` | `toasts` / `confirm` service instances - state only, rendering hosts stay application-side                      |
+| `monitors`      | `updates`, `connectivity` and `chunkRecovery` - release monitoring and chunk-load recovery                      |
+| `platform`      | `fetchFn`, `storage`, `targetWindow`, `targetDocument`, `clock`, `schedule`, `history`, `localeCandidates`      |
 
 Defaults and behaviours worth knowing:
 
@@ -182,6 +183,14 @@ Defaults and behaviours worth knowing:
   fallback that fails never holds back the boot or a switch: it is captured with `source: 'i18n-fallback'` and retried
   on the next switch. `i18n.loadFallbackMessages: false` skips that load, for applications whose locales are all
   complete.
+- `i18n.locales` declares the locales statically (the same shape as `locales` in the config). The boot then detects the
+  locale and starts loading its messages before it fetches the runtime document, instead of after, and activates it
+  at the usual phase; a defined config whose `locales` differ in default, enabled order or supported directions fails
+  the boot with an `I18nError` cause. Translation loaders then run before modules register and stores exist, so they
+  must only import messages.
+- `router.preloadInitialRoute` starts loading the lazy components of the routes the starting URL matches before the
+  runtime document is fetched. Redirects and middleware are not followed, so a URL that only redirects preloads
+  nothing.
 - Without `observability` factories, the `local` environment gets console adapters and every other environment gets
   the null adapters; a factory receives the full frozen config so adapter selection is config-driven.
 - `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an
@@ -297,7 +306,7 @@ component renders. A handle starts once: a second `start()` rejects, and so does
 references to every installed service under `services`, and the started `monitors`, so tests never need ambient access.
 
 `dispose()` idempotently unmounts the root and tears down everything the boot installed, in reverse: the monitors,
-chunk recovery, module boot teardowns, realtime disconnect, the page-tracking, global-error-handling and title-sync
+module boot teardowns, realtime disconnect, the page-tracking, global-error-handling, chunk recovery and title-sync
 uninstalls, the router history, store disposals, pending toasts and finally the colour-scheme listener. Every step runs
 even when one throws, and `dispose()` then rethrows the failure. Service holders are left installed;
 `resetFoundationWebServices()` clears them between tests and before booting a replacement application.

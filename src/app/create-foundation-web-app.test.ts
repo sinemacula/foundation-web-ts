@@ -63,6 +63,7 @@ import {
     toasts,
 } from './services';
 import { FoundationBootError } from '@sinemacula/foundation/app/foundation-boot-error';
+import { I18nError } from '@sinemacula/foundation/i18n/i18n-error';
 import type { WireHttpClientTools } from '@sinemacula/foundation/app/wire-http-client';
 
 /**
@@ -135,10 +136,10 @@ const BOOT_PHASE_ORDER = [
     'stores',
     'locale',
     'router',
+    'chunk-recovery',
     'error-handling',
     'realtime',
     'boot-modules',
-    'chunk-recovery',
     'monitors',
 ] as const;
 
@@ -435,6 +436,41 @@ function deferred<T>(): Deferred<T> {
 
     return { promise, resolve };
 }
+
+/** A fetch spy whose runtime document response waits to be released. */
+interface GatedRuntimeFetch {
+    /** The fetch spy. */
+    readonly fetchFn: ReturnType<typeof makeFetch>;
+
+    /** Let the runtime document response through. */
+    readonly release: () => void;
+}
+
+/**
+ * Build a fetch spy whose runtime document response waits for the returned
+ * release callback.
+ */
+function gatedRuntimeFetch(status = 200): GatedRuntimeFetch {
+    const gate = deferred<undefined>();
+    const fetchFn = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async input => {
+        if (String(input).endsWith('env.json')) {
+            await gate.promise;
+
+            return jsonResponse({}, status);
+        }
+
+        return jsonResponse(null);
+    });
+
+    return { fetchFn, release: () => gate.resolve(undefined) };
+}
+
+/** The test configuration's locales, declared statically. */
+const STATIC_LOCALES = {
+    default: 'en-US',
+    enabled: ['en-US', 'fr-FR'],
+    supported: { 'en-US': { direction: 'ltr' }, 'fr-FR': { direction: 'ltr' } },
+} as const;
 
 /**
  * Boot the app with the default test options and any overrides.
@@ -1047,6 +1083,119 @@ describe('createFoundationWebApp', () => {
             app.dispose();
         });
 
+        it('loads the detected locale while the runtime document is fetched when the locales are static', async () => {
+            const { fetchFn, release } = gatedRuntimeFetch();
+            const seams = makeSeams(fetchFn);
+            const loader = vi.fn(async (locale: string) => ({ greeting: `hello-${locale}` }));
+
+            seams.storage.set('locale', 'fr-FR');
+
+            const booting = bootApp({
+                modules: [homeModule({ locales: loader })],
+                i18n: { locales: STATIC_LOCALES },
+                platform: seams,
+            });
+
+            await vi.waitFor(() => {
+                expect(fetchFn).toHaveBeenCalled();
+            });
+
+            expect(loader.mock.calls).toEqual([['fr-FR'], ['en-US']]);
+            expect(seams.targetDocument.documentElement.getAttribute('lang')).toBeNull();
+
+            release();
+
+            const app = await booting;
+
+            expect(app.i18n.global.locale.value).toBe('fr-FR');
+            expect(app.i18n.global.t('home.greeting')).toBe('hello-fr-FR');
+            expect(seams.targetDocument.documentElement.getAttribute('lang')).toBe('fr-FR');
+            expect(loader).toHaveBeenCalledTimes(2);
+
+            app.dispose();
+        });
+
+        it('waits for the defined config before loading messages when the locales are not static', async () => {
+            const { fetchFn, release } = gatedRuntimeFetch();
+            const loader = vi.fn(async () => ({ greeting: 'hello' }));
+            const booting = bootApp({ modules: [homeModule({ locales: loader })], platform: makeSeams(fetchFn) });
+
+            await vi.waitFor(() => {
+                expect(fetchFn).toHaveBeenCalled();
+            });
+
+            expect(loader).not.toHaveBeenCalled();
+
+            release();
+            (await booting).dispose();
+        });
+
+        it('fails the boot when the defined locales differ from the static locales', async () => {
+            const seams = makeSeams();
+            const error = await bootFailure(
+                bootApp({
+                    i18n: { locales: { ...STATIC_LOCALES, enabled: ['en-US'] } },
+                    platform: seams,
+                }),
+            );
+
+            expect(error.cause).toBeInstanceOf(I18nError);
+            expect(seams.targetDocument.documentElement.getAttribute('lang')).toBeNull();
+        });
+
+        it('reports a static locale fallback failure once the reporter is wired', async () => {
+            const reporter = new NullErrorReporter();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const failure = new Error('offline');
+            const seams = makeSeams();
+
+            seams.storage.set('locale', 'fr-FR');
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        locales: locale =>
+                            locale === 'en-US' ? Promise.reject(failure) : Promise.resolve({ greeting: 'bonjour' }),
+                    }),
+                ],
+                i18n: { locales: STATIC_LOCALES },
+                observability: { reporter: () => reporter },
+                platform: seams,
+            });
+
+            expect(captureSpy).toHaveBeenCalledWith(failure, { source: 'i18n-fallback', locale: 'en-US' });
+
+            app.dispose();
+        });
+
+        it('fails with the runtime document error when it fails before a static locale that failed to load', async () => {
+            const unhandled = vi.fn();
+            const { fetchFn, release } = gatedRuntimeFetch(500);
+
+            process.on('unhandledRejection', unhandled);
+
+            try {
+                const booting = bootFailure(
+                    bootApp({
+                        modules: [homeModule({ locales: () => Promise.reject(new Error('offline')) })],
+                        i18n: { locales: STATIC_LOCALES },
+                        platform: makeSeams(fetchFn),
+                    }),
+                );
+
+                await new Promise(resolve => setTimeout(resolve, 0));
+                release();
+
+                expect((await booting).cause).toBeInstanceOf(RuntimeEnvironmentError);
+
+                await new Promise(resolve => setTimeout(resolve, 0));
+
+                expect(unhandled).not.toHaveBeenCalled();
+            } finally {
+                process.off('unhandledRejection', unhandled);
+            }
+        });
+
         it('detects the locale from the window navigator languages when no candidates are supplied', async () => {
             const seams = makeSeams();
             const platform = {
@@ -1351,6 +1500,80 @@ describe('createFoundationWebApp', () => {
         });
     });
 
+    describe('initial route preload', () => {
+        /**
+         * Build a module whose second page loads through the given loader.
+         */
+        function pagesModule(loader: () => Promise<typeof EmptyComponent>): ModuleDefinition {
+            return homeModule({
+                routes: [
+                    { path: '/', name: 'home.index', component: EmptyComponent },
+                    { path: '/page', name: 'home.page', component: loader },
+                ],
+            });
+        }
+
+        it('loads the first page while the runtime document is fetched when preloading is on', async () => {
+            const { fetchFn, release } = gatedRuntimeFetch();
+            const seams = makeSeams(fetchFn);
+            const loader = vi.fn(async () => EmptyComponent);
+            const destroy = vi.spyOn(seams.history, 'destroy');
+
+            seams.history.replace('/page');
+
+            const booting = bootApp({
+                modules: [pagesModule(loader)],
+                router: { preloadInitialRoute: true },
+                platform: seams,
+            });
+
+            await vi.waitFor(() => {
+                expect(fetchFn).toHaveBeenCalled();
+            });
+
+            expect(loader).toHaveBeenCalled();
+
+            release();
+
+            const app = await booting;
+
+            app.dispose();
+
+            expect(destroy).toHaveBeenCalledOnce();
+        });
+
+        it('releases the history it created when the boot then fails', async () => {
+            const { fetchFn, release } = gatedRuntimeFetch(500);
+            const seams = makeSeams(fetchFn);
+            const destroy = vi.spyOn(seams.history, 'destroy');
+            const booting = bootFailure(bootApp({ router: { preloadInitialRoute: true }, platform: seams }));
+
+            release();
+            await booting;
+
+            expect(destroy).toHaveBeenCalledOnce();
+        });
+
+        it('leaves the first page to the router phase when preloading is off', async () => {
+            const { fetchFn, release } = gatedRuntimeFetch();
+            const seams = makeSeams(fetchFn);
+            const loader = vi.fn(async () => EmptyComponent);
+
+            seams.history.replace('/page');
+
+            const booting = bootApp({ modules: [pagesModule(loader)], platform: seams });
+
+            await vi.waitFor(() => {
+                expect(fetchFn).toHaveBeenCalled();
+            });
+
+            expect(loader).not.toHaveBeenCalled();
+
+            release();
+            (await booting).dispose();
+        });
+    });
+
     describe('chunk recovery', () => {
         /** Build a home module whose `/lazy` route fails to load its chunk. */
         function staleChunkModule(): ModuleDefinition {
@@ -1366,6 +1589,28 @@ describe('createFoundationWebApp', () => {
                 ],
             });
         }
+
+        it('recovers a chunk failure on the first navigation while modules still boot', async () => {
+            const reload = vi.fn();
+            const seams = makeSeams();
+
+            seams.history.replace('/lazy');
+
+            const app = await bootApp({
+                modules: [
+                    {
+                        ...staleChunkModule(),
+                        boot: () => new Promise<undefined>(resolve => setTimeout(resolve, 0)),
+                    },
+                ],
+                monitors: { chunkRecovery: { enabled: true, reload } },
+                platform: seams,
+            });
+
+            expect(reload).toHaveBeenCalledWith('/lazy');
+
+            app.dispose();
+        });
 
         it('recovers stale-deploy chunk failures through the injected reload and clock seams', async () => {
             const reload = vi.fn();
@@ -1640,12 +1885,12 @@ describe('createFoundationWebApp', () => {
                 'unmount',
                 'connectivity.stop',
                 'updates.stop',
-                'chunk-recovery',
                 'teardown:errors',
                 'teardown:alpha',
                 'realtime.disconnect',
                 'page-tracking',
                 'error-handling',
+                'chunk-recovery',
                 'title-sync',
                 'history.destroy',
                 'dispose:store-2',
