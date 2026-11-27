@@ -154,7 +154,7 @@ Top-level: `root` (the component mounted by `start()`), `modules` (the explicit 
 |-----------------|------------------------------------------------------------------------------------------------------------|
 | `config`        | `createEnvironment` + `define` + `runtimeUrl` - environment construction and the frozen tree               |
 | `http`          | `interceptors`, `onResponseError`, `unexpectedErrorToastKey`, `client` - the HTTP client build             |
-| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`                               |
+| `i18n`          | `sharedLoaders`, `formats`, `localeStorageKey`, `duplicateNamespaceStrategy`, `loadFallbackMessages`       |
 | `colorScheme`   | `defaultPreference` (default `system`), `storageKey` (default `theme`), `themeColors` for `theme-color`    |
 | `observability` | `reporter` / `analytics` / `logger` adapter factories over the frozen config                               |
 | `featureFlags`  | Provider factory; defaults to the static adapter over `featureFlags.flags`                                 |
@@ -178,6 +178,10 @@ Defaults and behaviours worth knowing:
   no translation keys. Module register-phase handlers always run after the resolved handler.
 - `i18n.localeStorageKey` defaults to `locale`; `duplicateNamespaceStrategy` defaults to `error` - a module name
   shadowing a shared top-level translation key throws at activation, and `module-wins` restores the shadowing merge.
+- A locale activates once its own messages load. The default locale's messages load alongside as its fallback, but a
+  fallback that fails never holds back the boot or a switch: it is captured with `source: 'i18n-fallback'` and retried
+  on the next switch. `i18n.loadFallbackMessages: false` skips that load, for applications whose locales are all
+  complete.
 - Without `observability` factories, the `local` environment gets console adapters and every other environment gets
   the null adapters; a factory receives the full frozen config so adapter selection is config-driven.
 - `monitors.updates` runs by default when `app.version` is not the `dev` sentinel, but only arms when `toastKey` (an

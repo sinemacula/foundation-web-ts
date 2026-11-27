@@ -151,6 +151,49 @@ describe('wireLocale', () => {
         expect(i18n.global.getLocaleMessage('en-US')).toEqual({ dash: { greeting: 'hello-en-US' } });
     });
 
+    it('loads only the active locale when fallback loading is off', async () => {
+        const loader = vi.fn(async (locale: string) => ({ greeting: `hello-${locale}` }));
+
+        await wireLocale(
+            baseOptions({
+                modules: [moduleWithLocales('dash', loader)],
+                localeCandidates: ['fr-FR'],
+                loadFallbackMessages: false,
+            }),
+        );
+
+        expect(loader.mock.calls).toEqual([['fr-FR']]);
+
+        await localeSwitcher().switchTo('en-US');
+        await localeSwitcher().switchTo('fr-FR');
+
+        expect(loader.mock.calls).toEqual([['fr-FR'], ['en-US']]);
+    });
+
+    it('activates when the default locale fails to load as the fallback, reporting it', async () => {
+        const failure = new Error('offline');
+        const onFallbackError = vi.fn();
+
+        const { i18n } = await wireLocale(
+            baseOptions({
+                modules: [
+                    moduleWithLocales('dash', locale =>
+                        locale === 'en-US' ? Promise.reject(failure) : Promise.resolve({ greeting: 'bonjour' }),
+                    ),
+                ],
+                localeCandidates: ['fr-FR'],
+                onFallbackError,
+            }),
+        );
+
+        await vi.waitFor(() => {
+            expect(onFallbackError).toHaveBeenCalledWith(failure, 'en-US');
+        });
+
+        expect(i18n.global.locale.value).toBe('fr-FR');
+        expect(i18n.global.t('dash.greeting')).toBe('bonjour');
+    });
+
     it('throws by default when a module name shadows a shared top-level key', async () => {
         await expect(
             wireLocale(

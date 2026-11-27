@@ -190,6 +190,9 @@ export interface FoundationWebI18nOptions {
 
     /** Behaviour when a module name shadows a shared top-level translation key. Default 'error' throws; 'module-wins' lets module messages shadow the key. */
     readonly duplicateNamespaceStrategy?: 'error' | 'module-wins';
+
+    /** Whether a non-default locale also loads the default locale's messages as its fallback. Default true. */
+    readonly loadFallbackMessages?: boolean;
 }
 
 /**
@@ -751,7 +754,7 @@ async function bootModuleLayer<T extends FoundationConfig>(
     foundation: AppFoundation<T>,
     teardowns: TeardownStack,
 ): Promise<ModuleLayer> {
-    const { settings, storage, registry, app, pinia } = foundation;
+    const { registry, app, pinia } = foundation;
 
     recordPhase('stores');
 
@@ -767,7 +770,7 @@ async function bootModuleLayer<T extends FoundationConfig>(
 
     recordPhase('locale');
 
-    const { i18n, switcher } = await resolveLocale(settings, registry.modules, storage, platform, options);
+    const { i18n, switcher } = await resolveLocale(foundation, platform, options);
 
     app.use(i18n);
 
@@ -1110,26 +1113,30 @@ function resolveColorScheme<T extends FoundationConfig>(
 }
 
 /**
- * Wire internationalisation and install the locale switcher.
+ * Wire internationalisation and install the locale switcher, reporting a
+ * fallback locale whose messages fail to load.
  */
 function resolveLocale<T extends FoundationConfig>(
-    settings: DeepReadonly<T>,
-    modules: readonly ModuleDefinition[],
-    storage: KeyValueStorage,
+    foundation: AppFoundation<T>,
     platform: ResolvedPlatform,
     options: FoundationWebAppOptions<T>,
 ): Promise<WiredLocale> {
+    const { settings, registry, storage, observability } = foundation;
     const i18n = options.i18n;
 
     return wireLocale({
         config: settings,
-        modules,
+        modules: registry.modules,
         ...(i18n?.sharedLoaders === undefined ? {} : { sharedLoaders: i18n.sharedLoaders }),
         ...(i18n?.formats === undefined ? {} : { formats: i18n.formats }),
         ...(i18n?.localeStorageKey === undefined ? {} : { localeStorageKey: i18n.localeStorageKey }),
         ...(i18n?.duplicateNamespaceStrategy === undefined
             ? {}
             : { duplicateNamespaceStrategy: i18n.duplicateNamespaceStrategy }),
+        ...(i18n?.loadFallbackMessages === undefined ? {} : { loadFallbackMessages: i18n.loadFallbackMessages }),
+        onFallbackError: (error, locale) => {
+            observability.reporter.captureError(error, { source: 'i18n-fallback', locale });
+        },
         storage,
         localeCandidates: options.platform?.localeCandidates ?? [...platform.targetWindow.navigator.languages],
         targetDocument: platform.targetDocument,
