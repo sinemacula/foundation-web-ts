@@ -14,27 +14,25 @@ export class ModuleInterest {
     /** The modules kept loaded through every switch. */
     readonly #kept: Set<string>;
 
-    /** The outstanding requests per module. */
-    readonly #requests = new Map<string, number>();
+    /** The outstanding requests, each with its modules. */
+    readonly #requests = new Set<readonly string[]>();
 
     /** Settles the next time a request is released. */
     #release: Promise<void>;
 
-    /**
-     * Settles {@link #release}.
-     */
-    #notify: () => void = () => undefined;
+    /** Settles {@link #release}. */
+    #notify: () => void;
 
     constructor(kept: readonly string[]) {
         this.#kept = new Set(kept);
-        this.#release = this.#nextRelease();
+        [this.#release, this.#notify] = nextRelease();
     }
 
     /**
      * The modules kept loaded and those still requested.
      */
     required(): string[] {
-        return [...new Set([...this.#kept, ...this.#requests.keys()])];
+        return [...new Set([...this.#kept, ...[...this.#requests].flat()])];
     }
 
     /**
@@ -51,31 +49,17 @@ export class ModuleInterest {
      * nothing.
      */
     request(modules: readonly string[]): () => void {
-        for (const name of modules) {
-            this.#requests.set(name, (this.#requests.get(name) ?? 0) + 1);
-        }
+        const request = [...modules];
 
-        let released = false;
+        this.#requests.add(request);
 
         return () => {
-            if (released) {
+            if (!this.#requests.delete(request)) {
                 return;
             }
 
-            released = true;
-
-            for (const name of modules) {
-                const remaining = (this.#requests.get(name) ?? 1) - 1;
-
-                if (remaining === 0) {
-                    this.#requests.delete(name);
-                } else {
-                    this.#requests.set(name, remaining);
-                }
-            }
-
             this.#notify();
-            this.#release = this.#nextRelease();
+            [this.#release, this.#notify] = nextRelease();
         };
     }
 
@@ -85,13 +69,16 @@ export class ModuleInterest {
     released(): Promise<void> {
         return this.#release;
     }
+}
 
-    /**
-     * A promise the next release settles.
-     */
-    #nextRelease(): Promise<void> {
-        return new Promise(resolve => {
-            this.#notify = resolve;
-        });
-    }
+/**
+ * A promise for the next release, and the callback that settles it.
+ */
+function nextRelease(): [Promise<void>, () => void] {
+    let notify!: () => void;
+    const release = new Promise<void>(resolve => {
+        notify = resolve;
+    });
+
+    return [release, notify];
 }

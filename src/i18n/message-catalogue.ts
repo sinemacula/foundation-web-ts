@@ -15,13 +15,11 @@ import type { ApplicationI18n } from './application-i18n';
 /** The shared messages' part. */
 const SHARED = Symbol('shared');
 
-/** Every module's messages at once, from a custom message source. */
-const ALL_MODULES = Symbol('all-modules');
-
 /**
- * One independently loaded slice of a locale's messages.
+ * One independently loaded slice of a locale's messages: the shared messages,
+ * one module's, or every module's at once from a custom message source.
  */
-type Part = string | typeof SHARED | typeof ALL_MODULES;
+type Part = string | typeof SHARED | ModuleMessageSource;
 
 /**
  * Where a catalogue loads its messages from and how it composes them.
@@ -96,7 +94,9 @@ export class MessageCatalogue {
      * The parts that make up the shared messages and the named modules'.
      */
     #parts(modules: readonly string[]): Part[] {
-        return this.#options.messageSource === undefined ? [SHARED, ...modules] : [SHARED, ALL_MODULES];
+        const source = this.#options.messageSource;
+
+        return source === undefined ? [SHARED, ...modules] : [SHARED, source];
     }
 
     /**
@@ -135,8 +135,8 @@ export class MessageCatalogue {
             return (await this.#options.sharedLoaders?.[locale]?.()) ?? {};
         }
 
-        if (part === ALL_MODULES) {
-            return (await this.#options.messageSource?.messages(locale)) ?? {};
+        if (typeof part === 'object') {
+            return part.messages(locale);
         }
 
         return (await this.#modules.get(part)?.locales?.(locale)) ?? null;
@@ -166,11 +166,13 @@ export class MessageCatalogue {
      */
     #compose(locale: string, parts: ReadonlyMap<Part, LocaleMessages | null>): LocaleMessages {
         const shared = parts.get(SHARED) ?? {};
-        const modules: LocaleMessages = { ...parts.get(ALL_MODULES) };
+        const modules: LocaleMessages = {};
 
         for (const [part, messages] of parts) {
             if (typeof part === 'string' && messages !== null) {
                 modules[part] = messages;
+            } else if (typeof part === 'object') {
+                Object.assign(modules, messages);
             }
         }
 

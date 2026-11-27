@@ -52,6 +52,7 @@ describe('ModuleInterest', () => {
         const next = vi.fn();
 
         void interest.released().then(next);
+        release();
         await Promise.resolve();
 
         expect(next).not.toHaveBeenCalled();
