@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ModuleDefinition } from '../module/module';
 import type { ModuleMessageSource } from '../module/module-registry';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
+import type { LocaleSwitcherOptions } from './application-i18n';
 import { activateLocale, createApplicationI18n, createLocaleSwitcher } from './application-i18n';
 import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 
@@ -473,29 +474,160 @@ describe('activateLocale', () => {
         ).rejects.toThrow('Module "common" collides with a shared top-level translation key for locale "en-GB".');
     });
 
-    it('throws for a fallback-locale collision after a clean active load', async () => {
+    it('reports a fallback-locale collision without failing the activation', async () => {
         const i18n = createApplicationI18n('en-GB');
+        const onFallbackError = vi.fn();
         const collidingModule: ModuleDefinition = {
             name: 'common',
             routes: [],
             locales: async () => ({ greeting: 'From module' }),
         };
 
-        await expect(
-            activateLocale({
+        await activateLocale({
+            i18n,
+            modules: [collidingModule],
+            sharedLoaders: {
+                'es-ES': async () => ({ welcome: 'Hola' }),
+                'en-GB': async () => ({ common: { greeting: 'From shared' } }),
+            },
+            locale: 'es-ES',
+            direction: 'ltr',
+            fallbackLocale: 'en-GB',
+            onNamespaceCollision: 'error',
+            onFallbackError,
+            targetDocument: document.implementation.createHTMLDocument('t'),
+        });
+
+        await vi.waitFor(() => {
+            expect(onFallbackError).toHaveBeenCalledOnce();
+        });
+
+        expect(i18n.global.locale.value).toBe('es-ES');
+        expect(onFallbackError).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: 'Module "common" collides with a shared top-level translation key for locale "en-GB".',
+            }),
+            'en-GB',
+        );
+    });
+
+    it('activates a locale whose fallback fails to load and reports the fallback', async () => {
+        const i18n = createApplicationI18n('en-GB');
+        const failure = new Error('offline');
+        const onFallbackError = vi.fn();
+        const target = document.implementation.createHTMLDocument('t');
+
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: { 'es-ES': async () => ({ welcome: 'Hola' }), 'en-GB': () => Promise.reject(failure) },
+            locale: 'es-ES',
+            direction: 'ltr',
+            fallbackLocale: 'en-GB',
+            onFallbackError,
+            targetDocument: target,
+        });
+
+        await vi.waitFor(() => {
+            expect(onFallbackError).toHaveBeenCalledWith(failure, 'en-GB');
+        });
+
+        expect(i18n.global.t('welcome')).toBe('Hola');
+        expect(target.documentElement.getAttribute('lang')).toBe('es-ES');
+    });
+
+    it('activates without waiting for a fallback that has not loaded', async () => {
+        const i18n = createApplicationI18n('en-GB');
+
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: {
+                'es-ES': async () => ({ welcome: 'Hola' }),
+                'en-GB': () => new Promise<Record<string, string>>(() => undefined),
+            },
+            locale: 'es-ES',
+            direction: 'ltr',
+            fallbackLocale: 'en-GB',
+            targetDocument: document.implementation.createHTMLDocument('t'),
+        });
+
+        expect(i18n.global.locale.value).toBe('es-ES');
+    });
+
+    it('contains a fallback handler that throws', async () => {
+        const i18n = createApplicationI18n('en-GB');
+        const unhandled = vi.fn();
+        const onFallbackError = vi.fn(() => {
+            throw new Error('reporter down');
+        });
+
+        process.on('unhandledRejection', unhandled);
+
+        try {
+            await activateLocale({
                 i18n,
-                modules: [collidingModule],
+                modules: [],
                 sharedLoaders: {
                     'es-ES': async () => ({ welcome: 'Hola' }),
-                    'en-GB': async () => ({ common: { greeting: 'From shared' } }),
+                    'en-GB': () => Promise.reject(new Error('offline')),
                 },
                 locale: 'es-ES',
                 direction: 'ltr',
                 fallbackLocale: 'en-GB',
-                onNamespaceCollision: 'error',
+                onFallbackError,
+                targetDocument: document.implementation.createHTMLDocument('t'),
+            });
+
+            await vi.waitFor(() => {
+                expect(onFallbackError).toHaveBeenCalledOnce();
+            });
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(unhandled).not.toHaveBeenCalled();
+        } finally {
+            process.off('unhandledRejection', unhandled);
+        }
+    });
+
+    it('activates when the fallback fails and no handler is given', async () => {
+        const i18n = createApplicationI18n('en-GB');
+
+        await activateLocale({
+            i18n,
+            modules: [],
+            sharedLoaders: {
+                'es-ES': async () => ({ welcome: 'Hola' }),
+                'en-GB': () => Promise.reject(new Error('offline')),
+            },
+            locale: 'es-ES',
+            direction: 'ltr',
+            fallbackLocale: 'en-GB',
+            targetDocument: document.implementation.createHTMLDocument('t'),
+        });
+
+        expect(i18n.global.locale.value).toBe('es-ES');
+    });
+
+    it('rejects when its own messages fail even though the fallback loads', async () => {
+        const i18n = createApplicationI18n('en-GB');
+
+        await expect(
+            activateLocale({
+                i18n,
+                modules: [],
+                sharedLoaders: {
+                    'es-ES': () => Promise.reject(new Error('offline')),
+                    'en-GB': async () => ({ welcome: 'Hello' }),
+                },
+                locale: 'es-ES',
+                direction: 'ltr',
+                fallbackLocale: 'en-GB',
                 targetDocument: document.implementation.createHTMLDocument('t'),
             }),
-        ).rejects.toThrow('Module "common" collides with a shared top-level translation key for locale "en-GB".');
+        ).rejects.toThrow('offline');
+
+        expect(i18n.global.locale.value).toBe('en-GB');
     });
 
     it('applies collision detection to message-source results', async () => {
@@ -772,7 +904,10 @@ describe('createLocaleSwitcher', () => {
         }
 
         /** Build a switcher over three enabled locales with `en-GB` stored. */
-        function buildSwitcher(sharedLoaders: Record<string, () => Promise<Record<string, string>>>) {
+        function buildSwitcher(
+            sharedLoaders: Record<string, () => Promise<Record<string, string>>>,
+            overrides: Partial<LocaleSwitcherOptions> = {},
+        ) {
             const i18n = createApplicationI18n('en-GB');
             const storage = new MemoryStorage();
             const target = document.implementation.createHTMLDocument('t');
@@ -795,6 +930,7 @@ describe('createLocaleSwitcher', () => {
                 },
                 fallbackLocale: 'en-GB',
                 targetDocument: target,
+                ...overrides,
             });
 
             return { i18n, storage, target, switcher };
@@ -989,6 +1125,109 @@ describe('createLocaleSwitcher', () => {
             void switcher.switchTo('fr-FR');
 
             expect(started).toStrictEqual(['fr-FR', 'en-GB']);
+        });
+
+        it('switches to a locale whose fallback fails, reporting the fallback', async () => {
+            const failure = new Error('offline');
+            const onFallbackError = vi.fn();
+            const { storage, switcher } = buildSwitcher(
+                { 'fr-FR': async () => ({ hi: 'Salut' }), 'en-GB': () => Promise.reject(failure) },
+                { onFallbackError },
+            );
+
+            await switcher.switchTo('fr-FR');
+
+            await vi.waitFor(() => {
+                expect(onFallbackError).toHaveBeenCalledWith(failure, 'en-GB');
+            });
+
+            expect(switcher.current.value).toBe('fr-FR');
+            expect(storage.get('locale')).toBe('fr-FR');
+        });
+
+        it('switches without waiting for a fallback that has not loaded', async () => {
+            const { switcher } = buildSwitcher({
+                'fr-FR': async () => ({ hi: 'Salut' }),
+                'en-GB': () => new Promise<Record<string, string>>(() => undefined),
+            });
+
+            await switcher.switchTo('fr-FR');
+
+            expect(switcher.current.value).toBe('fr-FR');
+        });
+
+        it('retries a failed fallback on the next switch', async () => {
+            let attempts = 0;
+            const onFallbackError = vi.fn();
+            const { i18n, switcher } = buildSwitcher(
+                {
+                    'fr-FR': async () => ({ hi: 'Salut' }),
+                    'ar-SA': async () => ({ hi: 'مرحبا' }),
+                    'en-GB': () => {
+                        attempts += 1;
+
+                        return attempts === 1 ? Promise.reject(new Error('offline')) : Promise.resolve({ hi: 'Hi' });
+                    },
+                },
+                { onFallbackError },
+            );
+
+            await switcher.switchTo('fr-FR');
+            await vi.waitFor(() => {
+                expect(onFallbackError).toHaveBeenCalledOnce();
+            });
+            await switcher.switchTo('ar-SA');
+
+            await vi.waitFor(() => {
+                expect(i18n.global.getLocaleMessage('en-GB')).toEqual({ hi: 'Hi' });
+            });
+
+            expect(attempts).toBe(2);
+            expect(onFallbackError).toHaveBeenCalledOnce();
+        });
+
+        it('reports a fallback load shared by concurrent switches once', async () => {
+            const english = deferredLoader();
+            const onFallbackError = vi.fn();
+            const { switcher } = buildSwitcher(
+                {
+                    'fr-FR': async () => ({ hi: 'Salut' }),
+                    'ar-SA': async () => ({ hi: 'مرحبا' }),
+                    'en-GB': english.load,
+                },
+                { onFallbackError },
+            );
+
+            await Promise.all([switcher.switchTo('fr-FR'), switcher.switchTo('ar-SA')]);
+
+            english.reject(new Error('offline'));
+
+            await vi.waitFor(() => {
+                expect(onFallbackError).toHaveBeenCalledOnce();
+            });
+            await Promise.resolve();
+
+            expect(onFallbackError).toHaveBeenCalledOnce();
+        });
+
+        it('loads no fallback when no fallback locale is given', async () => {
+            const english = vi.fn(async () => ({ hi: 'Hi' }));
+            const switcher = createLocaleSwitcher({
+                i18n: createApplicationI18n('en-GB'),
+                modules: [],
+                sharedLoaders: { 'fr-FR': async () => ({ hi: 'Salut' }), 'en-GB': english },
+                localeService: new LocaleService({
+                    defaultLocale: 'en-GB',
+                    enabledLocales: ['en-GB', 'fr-FR'],
+                    storage: new MemoryStorage(),
+                }),
+                supported: { 'en-GB': { direction: 'ltr' }, 'fr-FR': { direction: 'ltr' } },
+                targetDocument: document.implementation.createHTMLDocument('t'),
+            });
+
+            await switcher.switchTo('fr-FR');
+
+            expect(english).not.toHaveBeenCalled();
         });
     });
 });

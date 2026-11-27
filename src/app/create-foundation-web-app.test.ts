@@ -1002,6 +1002,51 @@ describe('createFoundationWebApp', () => {
             app.dispose();
         });
 
+        it('boots in a locale whose fallback fails to load and reports the fallback', async () => {
+            const reporter = new NullErrorReporter();
+            const captureSpy = vi.spyOn(reporter, 'captureError');
+            const failure = new Error('offline');
+            const seams = makeSeams();
+
+            seams.storage.set('locale', 'fr-FR');
+
+            const app = await bootApp({
+                modules: [
+                    homeModule({
+                        locales: locale =>
+                            locale === 'en-US' ? Promise.reject(failure) : Promise.resolve({ greeting: 'bonjour' }),
+                    }),
+                ],
+                observability: { reporter: () => reporter },
+                platform: seams,
+            });
+
+            await vi.waitFor(() => {
+                expect(captureSpy).toHaveBeenCalledWith(failure, { source: 'i18n-fallback', locale: 'en-US' });
+            });
+
+            expect(app.i18n.global.t('home.greeting')).toBe('bonjour');
+
+            app.dispose();
+        });
+
+        it('loads no fallback messages when fallback loading is off', async () => {
+            const seams = makeSeams();
+            const loader = vi.fn(async (locale: string) => ({ greeting: `hello-${locale}` }));
+
+            seams.storage.set('locale', 'fr-FR');
+
+            const app = await bootApp({
+                modules: [homeModule({ locales: loader })],
+                i18n: { loadFallbackMessages: false },
+                platform: seams,
+            });
+
+            expect(loader.mock.calls).toEqual([['fr-FR']]);
+
+            app.dispose();
+        });
+
         it('detects the locale from the window navigator languages when no candidates are supplied', async () => {
             const seams = makeSeams();
             const platform = {

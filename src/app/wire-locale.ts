@@ -5,7 +5,7 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { ApplicationI18n, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
+import type { ApplicationI18n, FallbackErrorHandler, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
 import { activateLocale, createApplicationI18n, createLocaleSwitcher } from '../i18n/application-i18n';
 import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 import type { LocaleMessages, ModuleDefinition } from '../module/module';
@@ -60,6 +60,12 @@ export interface WireLocaleOptions {
     /** Behaviour when a module name shadows a shared top-level translation key. Default 'error' throws; 'module-wins' lets module messages shadow the key. */
     readonly duplicateNamespaceStrategy?: 'error' | 'module-wins';
 
+    /** Whether a non-default locale also loads the default locale's messages as its fallback. Default true. */
+    readonly loadFallbackMessages?: boolean;
+
+    /** Told when the default locale's messages fail to load as a fallback. */
+    readonly onFallbackError?: FallbackErrorHandler;
+
     /** The storage the locale preference is read from and persisted to. */
     readonly storage: KeyValueStorage;
 
@@ -82,8 +88,9 @@ export interface WiredLocale {
 }
 
 /**
- * Detect and activate the locale with the default as fallback, then install a
- * switcher sharing the same locale service and message source.
+ * Detect and activate the locale with the default as fallback, unless fallback
+ * loading is off, then install a switcher sharing the same locale service and
+ * message source.
  *
  * @throws Error when the collision strategy is 'error' and a module name equals
  * a shared top-level translation key
@@ -100,6 +107,10 @@ export async function wireLocale(options: WireLocaleOptions): Promise<WiredLocal
     const locale = localeService.detect(options.localeCandidates);
     const messageSource = createModuleMessageSource(options.modules);
     const onNamespaceCollision = options.duplicateNamespaceStrategy ?? 'error';
+    const fallback = {
+        ...(options.loadFallbackMessages === false ? {} : { fallbackLocale: locales.default }),
+        ...(options.onFallbackError === undefined ? {} : { onFallbackError: options.onFallbackError }),
+    };
 
     await activateLocale({
         i18n,
@@ -107,7 +118,7 @@ export async function wireLocale(options: WireLocaleOptions): Promise<WiredLocal
         ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
         locale,
         direction: locales.supported[locale]?.direction ?? 'ltr',
-        fallbackLocale: locales.default,
+        ...fallback,
         messageSource,
         onNamespaceCollision,
         ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
@@ -119,7 +130,7 @@ export async function wireLocale(options: WireLocaleOptions): Promise<WiredLocal
         ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
         localeService,
         supported: locales.supported,
-        fallbackLocale: locales.default,
+        ...fallback,
         messageSource,
         onNamespaceCollision,
         ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),

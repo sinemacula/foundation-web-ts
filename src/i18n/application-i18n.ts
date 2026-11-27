@@ -70,6 +70,9 @@ export interface ActivateLocaleOptions {
     /** A fallback locale whose messages are also loaded when it differs. */
     readonly fallbackLocale?: string;
 
+    /** Told when the fallback locale's messages fail to load; without it the failure is dropped. */
+    readonly onFallbackError?: FallbackErrorHandler;
+
     /** The document whose `lang`/`dir` attributes are set. Defaults to the global document. */
     readonly targetDocument?: Document;
 
@@ -81,12 +84,24 @@ export interface ActivateLocaleOptions {
 }
 
 /**
- * Install the messages for `locale`, and for `fallbackLocale` when it differs,
- * loading both concurrently, then activate `locale` and set the document
- * `lang`/`dir`.
+ * Told when a fallback locale's messages fail to load.
+ */
+export type FallbackErrorHandler = (error: unknown, locale: string) => void;
+
+/**
+ * Install the messages for `locale` and activate it, setting the document
+ * `lang`/`dir`. The fallback locale's messages, when it differs, load alongside
+ * but never hold back or fail the activation.
  */
 export async function activateLocale(options: ActivateLocaleOptions): Promise<void> {
-    await Promise.all(localesToLoad(options).map(locale => installLocaleMessages(options, locale)));
+    const own = installLocaleMessages(options, options.locale);
+    const fallback = fallbackToLoad(options);
+
+    if (fallback !== null) {
+        reportFallbackFailure(installLocaleMessages(options, fallback), fallback, options.onFallbackError);
+    }
+
+    await own;
 
     applyLocale(options);
 }
@@ -118,8 +133,8 @@ export interface LocaleSwitcherOptions {
         >
     >;
 
-    /** The fallback locale whose messages are also loaded. */
-    readonly fallbackLocale: string;
+    /** The fallback locale whose messages are also loaded; none are when omitted. */
+    readonly fallbackLocale?: string;
 
     /** The document whose `lang`/`dir` attributes are set. Defaults to the global document. */
     readonly targetDocument?: Document;
@@ -129,6 +144,9 @@ export interface LocaleSwitcherOptions {
 
     /** Forwarded to {@link activateLocale} on every switch. */
     readonly onNamespaceCollision?: 'module-wins' | 'error';
+
+    /** Told once per failed load of the fallback locale's messages. */
+    readonly onFallbackError?: FallbackErrorHandler;
 }
 
 /**
@@ -142,7 +160,8 @@ export interface LocaleSwitcher {
      * Match `locale` against the enabled locales, load its messages, then
      * activate and persist it; a call superseded by a later one before its
      * messages load applies and persists nothing, and still rejects if its own
-     * load fails.
+     * load fails. The fallback's messages load alongside without holding the
+     * switch back.
      *
      * @throws {@link I18nError} when `locale` does not match any enabled locale
      */
@@ -157,6 +176,7 @@ export interface LocaleSwitcher {
 export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwitcher {
     const current = computed(() => options.i18n.global.locale.value);
     const ensureInstalled = createOnceInstaller(options.i18n.global.availableLocales);
+    const observeFallback = createFallbackObserver(options.onFallbackError);
     let latestSwitch: object | null = null;
 
     return {
@@ -172,21 +192,15 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
 
             latestSwitch = ticket;
 
-            const activation: ActivateLocaleOptions = {
-                i18n: options.i18n,
-                modules: options.modules,
-                ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
-                locale: matched,
-                direction: options.supported[matched]?.direction ?? 'ltr',
-                fallbackLocale: options.fallbackLocale,
-                ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
-                ...(options.messageSource === undefined ? {} : { messageSource: options.messageSource }),
-                ...(options.onNamespaceCollision === undefined
-                    ? {}
-                    : { onNamespaceCollision: options.onNamespaceCollision }),
-            };
+            const activation = switchActivation(options, matched);
+            const own = ensureInstalled(activation, matched);
+            const fallback = fallbackToLoad(activation);
 
-            await Promise.all(localesToLoad(activation).map(target => ensureInstalled(activation, target)));
+            if (fallback !== null) {
+                observeFallback(ensureInstalled(activation, fallback), fallback);
+            }
+
+            await own;
 
             if (ticket !== latestSwitch) {
                 return;
@@ -195,6 +209,40 @@ export function createLocaleSwitcher(options: LocaleSwitcherOptions): LocaleSwit
             applyLocale(activation);
             options.localeService.persist(matched);
         },
+    };
+}
+
+/**
+ * The activation a switch to the matched locale runs.
+ */
+function switchActivation(options: LocaleSwitcherOptions, matched: string): ActivateLocaleOptions {
+    return {
+        i18n: options.i18n,
+        modules: options.modules,
+        ...(options.sharedLoaders === undefined ? {} : { sharedLoaders: options.sharedLoaders }),
+        locale: matched,
+        direction: options.supported[matched]?.direction ?? 'ltr',
+        ...(options.fallbackLocale === undefined ? {} : { fallbackLocale: options.fallbackLocale }),
+        ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
+        ...(options.messageSource === undefined ? {} : { messageSource: options.messageSource }),
+        ...(options.onNamespaceCollision === undefined ? {} : { onNamespaceCollision: options.onNamespaceCollision }),
+    };
+}
+
+/**
+ * Build an observer that reports each fallback load's failure once, however
+ * many switches share the load.
+ */
+function createFallbackObserver(
+    onError: FallbackErrorHandler | undefined,
+): (loading: Promise<void>, locale: string) => void {
+    const observed = new WeakSet<Promise<void>>();
+
+    return (loading, locale) => {
+        if (!observed.has(loading)) {
+            observed.add(loading);
+            reportFallbackFailure(loading, locale, onError);
+        }
     };
 }
 
@@ -230,12 +278,31 @@ function createOnceInstaller(
 }
 
 /**
- * The locale to activate, plus the fallback locale when it differs.
+ * The fallback locale whose messages load alongside, or null when there is none
+ * or it is the locale being activated.
  */
-function localesToLoad(options: ActivateLocaleOptions): string[] {
+function fallbackToLoad(options: ActivateLocaleOptions): string | null {
     const fallback = options.fallbackLocale;
 
-    return fallback === undefined || fallback === options.locale ? [options.locale] : [options.locale, fallback];
+    return fallback === undefined || fallback === options.locale ? null : fallback;
+}
+
+/**
+ * Hand a fallback load's failure to the handler, so it never rejects
+ * unobserved, even when the handler throws.
+ */
+function reportFallbackFailure(
+    loading: Promise<void>,
+    locale: string,
+    onError: FallbackErrorHandler | undefined,
+): void {
+    loading.catch((error: unknown) => {
+        try {
+            onError?.(error, locale);
+        } catch {
+            // Reporting is best-effort; the activation already went ahead.
+        }
+    });
 }
 
 /**
