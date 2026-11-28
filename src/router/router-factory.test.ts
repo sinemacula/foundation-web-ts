@@ -46,6 +46,32 @@ describe('resolveScrollPosition', () => {
 });
 
 describe('createApplicationRouter', () => {
+    it('tells the start of each navigation before any middleware runs', async () => {
+        const order: string[] = [];
+        const middleware: RouteMiddleware = {
+            handle: () => {
+                order.push('middleware');
+
+                return next();
+            },
+        };
+        const router = createApplicationRouter({
+            routes: [
+                { path: '/', component: defineComponent({ render: () => null }) },
+                { path: '/a', component: defineComponent({ render: () => null }) },
+            ],
+            history: createMemoryHistory(),
+            globalMiddleware: [middleware],
+            onNavigationStart: to => {
+                order.push(`start:${to.path}`);
+            },
+        });
+
+        await router.push('/a');
+
+        expect(order).toEqual(['start:/a', 'middleware']);
+    });
+
     it('uses the provided history instead of web history', () => {
         const history = createMemoryHistory();
 

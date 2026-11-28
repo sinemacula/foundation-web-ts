@@ -5,12 +5,17 @@
  * @copyright   2026 Sine Macula Limited
  */
 
-import type { ApplicationI18n, FallbackErrorHandler, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
+import type {
+    ApplicationI18n,
+    FallbackErrorHandler,
+    LocaleFormats,
+    LocaleSwitcher,
+    ModuleMessageLoader,
+} from '../i18n/application-i18n';
 import { createApplicationI18n, createLocaleSwitcher } from '../i18n/application-i18n';
 import { I18nError } from '@sinemacula/foundation/i18n/i18n-error';
 import { LocaleService } from '@sinemacula/foundation/i18n/locale-service';
 import type { LocaleMessages, ModuleDefinition } from '../module/module';
-import { createModuleMessageSource } from '../module/module-registry';
 import type { KeyValueStorage } from '@sinemacula/foundation/storage/key-value-storage';
 import { installLocaleSwitcher } from './services';
 
@@ -64,6 +69,12 @@ export interface WireLocaleOptions {
     /** Whether a non-default locale also loads the default locale's messages as its fallback. Default true. */
     readonly loadFallbackMessages?: boolean;
 
+    /** The modules whose messages load with every locale; others load on demand. Defaults to every module. */
+    readonly initialModules?: readonly string[];
+
+    /** Modules whose messages also start loading for the detected locale, without holding its activation. */
+    readonly prefetchModules?: readonly string[];
+
     /** Told when the default locale's messages fail to load as a fallback. */
     readonly onFallbackError?: FallbackErrorHandler;
 
@@ -84,8 +95,8 @@ export interface WiredLocale {
     /** The wired i18n instance. */
     readonly i18n: ApplicationI18n;
 
-    /** The installed runtime locale switcher. */
-    readonly switcher: LocaleSwitcher;
+    /** The installed runtime locale switcher, which also loads modules' messages on demand. */
+    readonly switcher: LocaleSwitcher & ModuleMessageLoader;
 }
 
 /**
@@ -123,12 +134,12 @@ export function startLocale(options: WireLocaleOptions): StartedLocale {
         localeService,
         supported: locales.supported,
         ...(options.loadFallbackMessages === false ? {} : { fallbackLocale: locales.default }),
-        messageSource: createModuleMessageSource(options.modules),
         onNamespaceCollision: options.duplicateNamespaceStrategy ?? 'error',
         ...(options.onFallbackError === undefined ? {} : { onFallbackError: options.onFallbackError }),
+        ...(options.initialModules === undefined ? {} : { initialModules: options.initialModules }),
         ...(options.targetDocument === undefined ? {} : { targetDocument: options.targetDocument }),
     });
-    const prepared = switcher.preload(localeService.detect(options.localeCandidates));
+    const prepared = switcher.preload(localeService.detect(options.localeCandidates), options.prefetchModules);
     let wired: Promise<WiredLocale> | null = null;
 
     return {

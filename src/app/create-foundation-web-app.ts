@@ -26,7 +26,14 @@ import type {
     ResponseErrorHandler,
     TransportObserver,
 } from '@sinemacula/foundation/http/http-client';
-import type { ApplicationI18n, FallbackErrorHandler, LocaleFormats, LocaleSwitcher } from '../i18n/application-i18n';
+import type {
+    ApplicationI18n,
+    FallbackErrorHandler,
+    LocaleFormats,
+    LocaleSwitcher,
+    ModuleMessageLoader,
+} from '../i18n/application-i18n';
+import { RouteMessages, ownedModuleRoutes, routeOwners } from '../i18n/route-messages';
 import type { Logger } from '@sinemacula/foundation/logging/logger';
 import type { LocaleMessages, ModuleDefinition, ResolvedPlatform, ScheduleTask } from '../module/module';
 import { collectModuleRoutes, scheduleOnTimers } from '../module/module';
@@ -197,6 +204,9 @@ export interface FoundationWebI18nOptions {
 
     /** The locales, matching the defined config's; when given, the detected locale's messages load while the runtime document is fetched. */
     readonly locales?: LocaleWiringConfig['locales'];
+
+    /** When modules' messages load: 'boot' (default) with every locale, or 'route' with each module's routes. */
+    readonly moduleMessages?: 'boot' | 'route';
 }
 
 /**
@@ -518,8 +528,11 @@ interface ModuleLayer {
     /** The wired i18n instance. */
     readonly i18n: ApplicationI18n;
 
-    /** The installed runtime locale switcher. */
-    readonly switcher: LocaleSwitcher;
+    /** The installed runtime locale switcher, which also loads modules' messages on demand. */
+    readonly switcher: LocaleSwitcher & ModuleMessageLoader;
+
+    /** Loads module messages with their routes, or null when they load with every locale. */
+    readonly routeMessages: RouteMessages | null;
 }
 
 /**
@@ -597,7 +610,7 @@ export async function createFoundationWebApp<T extends FoundationConfig>(
 
         transportHints.attach(connectivity);
 
-        const moduleLayer = await bootModuleLayer(foundation, teardowns);
+        const moduleLayer = await bootModuleLayer(options, foundation, teardowns);
         const integration = await wireAppIntegration(options, platform, foundation, moduleLayer, teardowns);
         const monitors = wireReleaseMonitors(options, platform, runtimeUrl, foundation, connectivity, teardowns);
 
@@ -713,8 +726,15 @@ async function bootFoundation<T extends FoundationConfig>(
         colorScheme.dispose();
     });
 
-    const locale = prepareLocale(options, registry.modules, storage, platform, sinks.onFallbackError);
-    const history = startInitialRoute(options, registry.modules, teardowns);
+    const initialRoute = startInitialRoute(options, registry.modules, teardowns);
+    const locale = prepareLocale(
+        options,
+        registry.modules,
+        storage,
+        platform,
+        sinks.onFallbackError,
+        initialRoute?.owners ?? [],
+    );
     const cookieSupport = provideCookieSupport(app, platform.targetWindow);
     const toastService = options.notifications?.toasts ?? new ToastService();
     const confirmService = options.notifications?.confirm ?? new ConfirmService();
@@ -761,7 +781,7 @@ async function bootFoundation<T extends FoundationConfig>(
         toastService,
         confirmService,
         locale,
-        history,
+        history: initialRoute?.history ?? null,
     };
 }
 
@@ -786,6 +806,7 @@ function withTransportHints<T extends FoundationConfig>(
  * Run the module phases: instantiate eager stores and wire i18n.
  */
 async function bootModuleLayer<T extends FoundationConfig>(
+    options: FoundationWebAppOptions<T>,
     foundation: AppFoundation<T>,
     teardowns: TeardownStack,
 ): Promise<ModuleLayer> {
@@ -809,7 +830,11 @@ async function bootModuleLayer<T extends FoundationConfig>(
 
     app.use(i18n);
 
-    return { i18n, switcher };
+    return {
+        i18n,
+        switcher,
+        routeMessages: options.i18n?.moduleMessages === 'route' ? new RouteMessages(switcher) : null,
+    };
 }
 
 /**
@@ -828,7 +853,7 @@ async function wireAppIntegration<T extends FoundationConfig>(
 
     recordPhase('router');
 
-    const router = resolveRouter(options, platform, foundation, i18n, teardowns);
+    const router = resolveRouter(options, platform, foundation, moduleLayer, teardowns);
 
     recordPhase('chunk-recovery');
 
@@ -1086,9 +1111,10 @@ function resolveRouter<T extends FoundationConfig>(
     options: FoundationWebAppOptions<T>,
     platform: ResolvedPlatform,
     foundation: AppFoundation<T>,
-    i18n: ApplicationI18n,
+    moduleLayer: ModuleLayer,
     teardowns: TeardownStack,
 ): Router {
+    const { i18n, routeMessages } = moduleLayer;
     const history = foundation.history ?? createRouterHistory(options, teardowns);
     const { router, titleSyncTeardown } = wireRouter({
         modules: foundation.registry.modules,
@@ -1096,9 +1122,14 @@ function resolveRouter<T extends FoundationConfig>(
         appName: foundation.settings.app.name,
         history,
         targetDocument: platform.targetDocument,
+        ...(routeMessages === null ? {} : { routeMessages }),
     });
 
     teardowns.push(titleSyncTeardown);
+
+    if (routeMessages !== null) {
+        teardowns.push(routeMessages.install(router));
+    }
 
     // A navigation still awaiting a guard must not land once the app is gone.
     teardowns.push(() => {
@@ -1152,8 +1183,10 @@ function prepareLocale<T extends FoundationConfig>(
     storage: KeyValueStorage,
     platform: ResolvedPlatform,
     onFallbackError: FallbackErrorHandler,
+    prefetchModules: readonly string[],
 ): (defined: LocaleWiringConfig['locales']) => StartedLocale {
     const i18n = options.i18n;
+    const routeScoped = i18n?.moduleMessages === 'route';
 
     /**
      * Start the locale wiring for the given locales.
@@ -1170,6 +1203,7 @@ function prepareLocale<T extends FoundationConfig>(
                 : { duplicateNamespaceStrategy: i18n.duplicateNamespaceStrategy }),
             ...(i18n?.loadFallbackMessages === undefined ? {} : { loadFallbackMessages: i18n.loadFallbackMessages }),
             onFallbackError,
+            ...(routeScoped ? { initialModules: eagerMessageModules(modules), prefetchModules } : {}),
             storage,
             localeCandidates: options.platform?.localeCandidates ?? [...platform.targetWindow.navigator.languages],
             targetDocument: platform.targetDocument,
@@ -1190,6 +1224,30 @@ function prepareLocale<T extends FoundationConfig>(
 }
 
 /**
+ * The modules whose messages load with every locale when messages load with
+ * routes: the fallback module, modules without routes and those marked eager.
+ */
+function eagerMessageModules(modules: readonly ModuleDefinition[]): string[] {
+    return modules
+        .filter(
+            definition =>
+                definition.fallback === true || definition.routes.length === 0 || definition.eagerMessages === true,
+        )
+        .map(definition => definition.name);
+}
+
+/**
+ * The router history created at boot and the modules owning the first page.
+ */
+interface InitialRoute {
+    /** The router history the first navigation reads. */
+    readonly history: RouterHistory;
+
+    /** The modules owning the routes the first page matches, when messages load with routes. */
+    readonly owners: readonly string[];
+}
+
+/**
  * Create the router history now and start loading the first page's lazy
  * components when preloading is on; null otherwise, leaving the history to the
  * router phase.
@@ -1198,16 +1256,15 @@ function startInitialRoute<T extends FoundationConfig>(
     options: FoundationWebAppOptions<T>,
     modules: readonly ModuleDefinition[],
     teardowns: TeardownStack,
-): RouterHistory | null {
+): InitialRoute | null {
     if (options.router?.preloadInitialRoute !== true) {
         return null;
     }
 
     const history = createRouterHistory(options, teardowns);
+    const routes = options.i18n?.moduleMessages === 'route' ? ownedModuleRoutes(modules) : collectModuleRoutes(modules);
 
-    preloadInitialRoute(collectModuleRoutes(modules), history.location);
-
-    return history;
+    return { history, owners: routeOwners(preloadInitialRoute(routes, history.location)) };
 }
 
 /**

@@ -17,20 +17,13 @@ import { createApplicationI18n } from '../i18n/application-i18n';
 import { createApplicationRouter } from '../router/router-factory';
 import { MemoryStorage } from '@sinemacula/foundation/storage/memory-storage';
 import type {
-    LocaleMessages,
     ModuleBootContext,
     ModuleDefinition,
     ModuleHttpRegistrar,
     ModuleRegisterContext,
     ResolvedPlatform,
 } from './module';
-import {
-    ModuleRegistryError,
-    bootModules,
-    createModuleMessageSource,
-    createModuleRegistry,
-    registerModules,
-} from './module-registry';
+import { ModuleRegistryError, bootModules, createModuleRegistry, registerModules } from './module-registry';
 import { TeardownStack } from './teardown-stack';
 
 const EmptyComponent = defineComponent({ render: () => null });
@@ -641,124 +634,5 @@ describe('bootModules', () => {
         teardowns.dispose();
 
         expect(order).toStrictEqual(['beta', 'alpha']);
-    });
-});
-
-describe('createModuleMessageSource', () => {
-    it('resolves an empty record when no modules are given', async () => {
-        const source = createModuleMessageSource([]);
-
-        expect(await source.messages('en-GB')).toStrictEqual({});
-    });
-
-    it('namespaces loaded messages under module names in registry order', async () => {
-        const modules: ModuleDefinition[] = [
-            { name: 'alpha', routes: [], locales: async () => ({ hello: 'world' }) },
-            { name: 'beta', routes: [], locales: async () => ({ bye: 'now' }) },
-        ];
-
-        const result = await createModuleMessageSource(modules).messages('en-GB');
-
-        expect(result).toStrictEqual({ alpha: { hello: 'world' }, beta: { bye: 'now' } });
-        expect(Object.keys(result)).toStrictEqual(['alpha', 'beta']);
-    });
-
-    it('skips modules without a loader and modules whose loader returns null', async () => {
-        const modules: ModuleDefinition[] = [
-            { name: 'alpha', routes: [], locales: async () => ({ key: 'value' }) },
-            { name: 'beta', routes: [], locales: async () => null },
-            { name: 'gamma', routes: [] },
-        ];
-
-        const result = await createModuleMessageSource(modules).messages('en-GB');
-
-        expect(result).toStrictEqual({ alpha: { key: 'value' } });
-    });
-
-    it('passes the requested locale to every loader', async () => {
-        const loader = vi.fn(async () => ({ key: 'value' }));
-        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
-
-        await source.messages('fr-FR');
-
-        expect(loader).toHaveBeenCalledOnce();
-        expect(loader).toHaveBeenCalledWith('fr-FR');
-    });
-
-    it('starts every loader before any has resolved', async () => {
-        const { promise, resolve } = deferred<LocaleMessages | null>();
-        const loaderA = vi.fn(() => promise);
-        const loaderB = vi.fn(async () => ({ b: 'two' }));
-
-        const source = createModuleMessageSource([
-            { name: 'alpha', routes: [], locales: loaderA },
-            { name: 'beta', routes: [], locales: loaderB },
-        ]);
-
-        const pending = source.messages('en-GB');
-
-        expect(loaderA).toHaveBeenCalledOnce();
-        expect(loaderB).toHaveBeenCalledOnce();
-
-        resolve({ a: 'one' });
-
-        expect(await pending).toStrictEqual({ alpha: { a: 'one' }, beta: { b: 'two' } });
-    });
-
-    it('memoises per locale, sharing one load across repeat calls', async () => {
-        const loader = vi.fn(async () => ({ key: 'value' }));
-        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
-
-        const first = source.messages('en-GB');
-        const second = source.messages('en-GB');
-
-        expect(second).toBe(first);
-        expect(await first).toStrictEqual({ alpha: { key: 'value' } });
-
-        await source.messages('en-GB');
-
-        expect(loader).toHaveBeenCalledOnce();
-    });
-
-    it('loads each locale independently, once per locale', async () => {
-        const loader = vi.fn(async (locale: string) => ({ locale }));
-        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
-
-        expect(await source.messages('en-GB')).toStrictEqual({ alpha: { locale: 'en-GB' } });
-        expect(await source.messages('fr-FR')).toStrictEqual({ alpha: { locale: 'fr-FR' } });
-        expect(await source.messages('fr-FR')).toStrictEqual({ alpha: { locale: 'fr-FR' } });
-
-        expect(loader).toHaveBeenCalledTimes(2);
-        expect(loader).toHaveBeenNthCalledWith(1, 'en-GB');
-        expect(loader).toHaveBeenNthCalledWith(2, 'fr-FR');
-    });
-
-    it('retries a locale whose load rejected', async () => {
-        const failure = new Error('chunk failed');
-        const loader = vi
-            .fn<(locale: string) => Promise<LocaleMessages | null>>()
-            .mockRejectedValueOnce(failure)
-            .mockResolvedValue({ key: 'value' });
-        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
-
-        await expect(source.messages('en-GB')).rejects.toBe(failure);
-        expect(await source.messages('en-GB')).toStrictEqual({ alpha: { key: 'value' } });
-        expect(await source.messages('en-GB')).toStrictEqual({ alpha: { key: 'value' } });
-        expect(loader).toHaveBeenCalledTimes(2);
-    });
-
-    it('shares a pending load that later rejects with every caller that joined it', async () => {
-        const { promise, reject } = deferred<LocaleMessages | null>();
-        const loader = vi.fn(() => promise);
-        const source = createModuleMessageSource([{ name: 'alpha', routes: [], locales: loader }]);
-
-        const first = source.messages('en-GB');
-        const second = source.messages('en-GB');
-
-        reject(new Error('offline'));
-
-        await expect(first).rejects.toThrow('offline');
-        expect(second).toBe(first);
-        expect(loader).toHaveBeenCalledOnce();
     });
 });

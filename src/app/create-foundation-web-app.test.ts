@@ -1500,6 +1500,117 @@ describe('createFoundationWebApp', () => {
         });
     });
 
+    describe('module messages loaded with routes', () => {
+        /**
+         * Build the modules for a route-scoped boot, each loader recording its
+         * locales.
+         */
+        function routedModules() {
+            const loaders = {
+                home: vi.fn(async (locale: string) => ({ title: `home-${locale}` })),
+                users: vi.fn(async (locale: string) => ({ title: `users-${locale}` })),
+                shell: vi.fn(async (locale: string) => ({ title: `shell-${locale}` })),
+                badge: vi.fn(async (locale: string) => ({ title: `badge-${locale}` })),
+                errors: vi.fn(async (locale: string) => ({ title: `errors-${locale}` })),
+            };
+            const modules: ModuleDefinition[] = [
+                homeModule({ locales: loaders.home }),
+                { name: 'users', routes: [{ path: '/users', component: EmptyComponent }], locales: loaders.users },
+                { name: 'shell', routes: [], locales: loaders.shell },
+                {
+                    name: 'badge',
+                    routes: [{ path: '/badge', component: EmptyComponent }],
+                    locales: loaders.badge,
+                    eagerMessages: true,
+                },
+                {
+                    name: 'errors',
+                    fallback: true,
+                    routes: [{ path: '/:pathMatch(.*)*', component: EmptyComponent }],
+                    locales: loaders.errors,
+                },
+            ];
+
+            return { loaders, modules };
+        }
+
+        it('loads the eager modules at boot and each other module with its first navigation', async () => {
+            const { loaders, modules } = routedModules();
+            const app = await bootApp({ modules, i18n: { moduleMessages: 'route' } });
+
+            expect(loaders.shell).toHaveBeenCalledWith('en-US');
+            expect(loaders.badge).toHaveBeenCalledWith('en-US');
+            expect(loaders.errors).toHaveBeenCalledWith('en-US');
+            expect(loaders.users).not.toHaveBeenCalled();
+
+            await app.router.push('/users');
+
+            expect(loaders.users.mock.calls).toEqual([['en-US']]);
+            expect(app.i18n.global.t('users.title')).toBe('users-en-US');
+
+            await app.router.push('/');
+            await app.router.push('/users');
+
+            expect(loaders.users).toHaveBeenCalledOnce();
+
+            app.dispose();
+        });
+
+        it('loads every module loaded so far for the locale a switch activates', async () => {
+            const { loaders, modules } = routedModules();
+            const app = await bootApp({ modules, i18n: { moduleMessages: 'route' } });
+
+            await app.router.push('/users');
+            await app.services.localeSwitcher.switchTo('fr-FR');
+
+            expect(loaders.users).toHaveBeenCalledWith('fr-FR');
+            expect(app.i18n.global.t('users.title')).toBe('users-fr-FR');
+
+            app.dispose();
+        });
+
+        it('loads every module at boot when messages load with the locale', async () => {
+            const { loaders, modules } = routedModules();
+            const app = await bootApp({ modules });
+
+            expect(loaders.users).toHaveBeenCalledWith('en-US');
+
+            app.dispose();
+        });
+
+        it('prefetches the first page’s module messages while the runtime document is fetched', async () => {
+            const { fetchFn, release } = gatedRuntimeFetch();
+            const seams = makeSeams(fetchFn);
+            const { loaders, modules } = routedModules();
+
+            seams.history.replace('/users');
+
+            const booting = bootApp({
+                modules,
+                i18n: { moduleMessages: 'route', locales: STATIC_LOCALES },
+                router: { preloadInitialRoute: true },
+                platform: seams,
+            });
+
+            await vi.waitFor(() => {
+                expect(fetchFn).toHaveBeenCalled();
+            });
+
+            expect(loaders.users).toHaveBeenCalledWith('en-US');
+
+            release();
+
+            const app = await booting;
+
+            await app.router.isReady();
+
+            expect(loaders.users).toHaveBeenCalledOnce();
+            expect(app.i18n.global.t('users.title')).toBe('users-en-US');
+
+            app.dispose();
+        });
+    });
+
     describe('initial route preload', () => {
         /**
          * Build a module whose second page loads through the given loader.

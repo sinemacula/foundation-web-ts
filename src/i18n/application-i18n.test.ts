@@ -1187,6 +1187,28 @@ describe('createLocaleSwitcher', () => {
             expect(onFallbackError).toHaveBeenCalledOnce();
         });
 
+        it('retries a failed fallback when switching to a locale already loaded', async () => {
+            let attempts = 0;
+            const { i18n, switcher } = buildSwitcher({
+                'fr-FR': async () => ({ hi: 'Salut' }),
+                'en-GB': () => {
+                    attempts += 1;
+
+                    return attempts === 1 ? Promise.reject(new Error('offline')) : Promise.resolve({ hi: 'Hi' });
+                },
+            });
+
+            await switcher.switchTo('fr-FR');
+            await new Promise(resolve => setTimeout(resolve, 0));
+            await switcher.switchTo('fr-FR');
+
+            await vi.waitFor(() => {
+                expect(i18n.global.getLocaleMessage('en-GB')).toEqual({ hi: 'Hi' });
+            });
+
+            expect(attempts).toBe(2);
+        });
+
         it('reports a fallback load shared by concurrent switches once', async () => {
             const english = deferredLoader();
             const onFallbackError = vi.fn();
@@ -1271,6 +1293,25 @@ describe('createLocaleSwitcher', () => {
             }
         });
 
+        it('rejects the activation of a preload whose load already failed, without retrying', async () => {
+            const failure = new Error('offline');
+            let attempts = 0;
+            const { switcher } = buildSwitcher({
+                'fr-FR': () => {
+                    attempts += 1;
+
+                    return attempts === 1 ? Promise.reject(failure) : Promise.resolve({ hi: 'Salut' });
+                },
+            });
+            const prepared = switcher.preload('fr-FR');
+
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            await expect(prepared.activate()).rejects.toBe(failure);
+            expect(attempts).toBe(1);
+            expect(switcher.current.value).toBe('en-GB');
+        });
+
         it('applies nothing for a preloaded locale a later switch supersedes', async () => {
             const french = deferredLoader();
             const { switcher } = buildSwitcher({ 'fr-FR': french.load, 'ar-SA': async () => ({ hi: 'مرحبا' }) });
@@ -1299,6 +1340,19 @@ describe('createLocaleSwitcher', () => {
             expect(englishLoad).toHaveBeenCalledOnce();
         });
 
+        it('does not report the default locale failing to load as a fallback failure', async () => {
+            const onFallbackError = vi.fn();
+            const { switcher } = buildSwitcher(
+                { 'en-GB': () => Promise.reject(new Error('offline')) },
+                { onFallbackError },
+            );
+
+            await expect(switcher.switchTo('en-GB')).rejects.toThrow('offline');
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(onFallbackError).not.toHaveBeenCalled();
+        });
+
         it('loads no fallback when no fallback locale is given', async () => {
             const english = vi.fn(async () => ({ hi: 'Hi' }));
             const switcher = createLocaleSwitcher({
@@ -1318,5 +1372,270 @@ describe('createLocaleSwitcher', () => {
 
             expect(english).not.toHaveBeenCalled();
         });
+    });
+});
+
+describe('createLocaleSwitcher with modules loaded on demand', () => {
+    /** A loader whose loads the test settles on demand, per locale. */
+    interface ControlledLoader {
+        /** The module loader. */
+        readonly load: (locale: string) => Promise<Record<string, string>>;
+
+        /** The locales requested so far, in order. */
+        readonly requested: string[];
+
+        /**
+         * Resolve the pending load for `locale`.
+         */
+        resolve(locale: string): void;
+
+        /**
+         * Reject the pending load for `locale`.
+         */
+        reject(locale: string, error: Error): void;
+    }
+
+    /** The callbacks settling one pending load. */
+    interface PendingLoad {
+        /** Fulfil the load with messages. */
+        readonly resolve: (value: Record<string, string>) => void;
+
+        /** Reject the load. */
+        readonly reject: (error: Error) => void;
+    }
+
+    /** Build a module loader whose loads the test settles. */
+    function controlledLoader(): ControlledLoader {
+        const pending = new Map<string, PendingLoad>();
+        const requested: string[] = [];
+
+        return {
+            requested,
+            load: locale => {
+                requested.push(locale);
+
+                return new Promise((resolve, reject) => {
+                    pending.set(locale, { resolve, reject });
+                });
+            },
+            resolve: locale => pending.get(locale)?.resolve({ title: `users-${locale}` }),
+            reject: (locale, error) => pending.get(locale)?.reject(error),
+        };
+    }
+
+    /** Build a switcher over three locales whose `users` module loads on demand. */
+    function build(users: (locale: string) => Promise<Record<string, string> | null>) {
+        const i18n = createApplicationI18n('en-GB');
+        const shell = vi.fn(async (locale: string) => ({ title: `shell-${locale}` }));
+        const switcher = createLocaleSwitcher({
+            i18n,
+            modules: [
+                { name: 'shell', routes: [], locales: shell },
+                { name: 'users', routes: [], locales: users },
+            ],
+            localeService: new LocaleService({
+                defaultLocale: 'en-GB',
+                enabledLocales: ['en-GB', 'fr-FR', 'ar-SA'],
+                storage: new MemoryStorage(),
+            }),
+            supported: { 'en-GB': { direction: 'ltr' }, 'fr-FR': { direction: 'ltr' }, 'ar-SA': { direction: 'rtl' } },
+            fallbackLocale: 'en-GB',
+            initialModules: ['shell'],
+            targetDocument: document.implementation.createHTMLDocument('t'),
+        });
+
+        return { i18n, shell, switcher };
+    }
+
+    /** The `users` title installed for `locale`, if any. */
+    function usersTitle(i18n: ReturnType<typeof createApplicationI18n>, locale: string): unknown {
+        return (i18n.global.getLocaleMessage(locale) as Record<string, Record<string, string> | undefined>)['users']?.[
+            'title'
+        ];
+    }
+
+    it('switches with the initial modules only', async () => {
+        const users = vi.fn(async () => ({ title: 'Users' }));
+        const { i18n, shell, switcher } = build(users);
+
+        await switcher.switchTo('fr-FR');
+
+        expect(shell.mock.calls).toEqual([['fr-FR'], ['en-GB']]);
+        expect(users).not.toHaveBeenCalled();
+        expect(i18n.global.t('shell.title')).toBe('shell-fr-FR');
+    });
+
+    it('loads a module for the active locale and its fallback, then keeps it through switches', async () => {
+        const users = vi.fn(async (locale: string) => ({ title: `users-${locale}` }));
+        const { i18n, switcher } = build(users);
+
+        await switcher.switchTo('fr-FR');
+        await switcher.loadModules(['users']);
+
+        expect(usersTitle(i18n, 'fr-FR')).toBe('users-fr-FR');
+
+        await vi.waitFor(() => {
+            expect(usersTitle(i18n, 'en-GB')).toBe('users-en-GB');
+        });
+
+        await switcher.switchTo('ar-SA');
+
+        expect(usersTitle(i18n, 'ar-SA')).toBe('users-ar-SA');
+    });
+
+    it('holds a switch until a module requested meanwhile loads for the new locale', async () => {
+        const users = controlledLoader();
+        const { i18n, switcher } = build(users.load);
+        const navigation = switcher.loadModules(['users']);
+        const switching = switcher.switchTo('fr-FR');
+
+        await vi.waitFor(() => {
+            expect(users.requested).toContain('fr-FR');
+        });
+
+        users.resolve('en-GB');
+        await navigation;
+
+        expect(switcher.current.value).toBe('en-GB');
+
+        users.resolve('fr-FR');
+        await switching;
+
+        expect(switcher.current.value).toBe('fr-FR');
+        expect(usersTitle(i18n, 'fr-FR')).toBe('users-fr-FR');
+    });
+
+    it('loads a module again for a locale that a switch activated while it loaded', async () => {
+        const users = controlledLoader();
+        const { i18n, switcher } = build(users.load);
+        const navigation = switcher.loadModules(['users']);
+        const switching = switcher.switchTo('fr-FR');
+
+        await vi.waitFor(() => {
+            expect(users.requested).toContain('fr-FR');
+        });
+
+        users.resolve('fr-FR');
+        await switching;
+        users.resolve('en-GB');
+        await navigation;
+
+        expect(users.requested).toEqual(['en-GB', 'fr-FR']);
+        expect(usersTitle(i18n, 'fr-FR')).toBe('users-fr-FR');
+    });
+
+    it('loads a module again for a locale set directly while it loaded', async () => {
+        const users = controlledLoader();
+        const { i18n, switcher } = build(users.load);
+        const navigation = switcher.loadModules(['users']);
+
+        i18n.global.locale.value = 'fr-FR';
+        users.resolve('en-GB');
+
+        await vi.waitFor(() => {
+            expect(users.requested).toEqual(['en-GB', 'fr-FR']);
+        });
+
+        users.resolve('fr-FR');
+        await navigation;
+
+        expect(usersTitle(i18n, 'fr-FR')).toBe('users-fr-FR');
+    });
+
+    it('stops holding a switch for a request whose signal aborts', async () => {
+        const users = controlledLoader();
+        const { switcher } = build(users.load);
+        const interest = new AbortController();
+        const navigation = switcher.loadModules(['users'], interest.signal);
+
+        navigation.catch(() => undefined);
+
+        const switching = switcher.switchTo('fr-FR');
+
+        await vi.waitFor(() => {
+            expect(users.requested).toContain('fr-FR');
+        });
+
+        interest.abort();
+        await switching;
+
+        expect(switcher.current.value).toBe('fr-FR');
+    });
+
+    it('does not keep a module whose request aborted', async () => {
+        const users = vi.fn(async (locale: string) => ({ title: `users-${locale}` }));
+        const { switcher } = build(users);
+        const interest = new AbortController();
+        const navigation = switcher.loadModules(['users'], interest.signal);
+
+        interest.abort();
+        await navigation;
+        await switcher.switchTo('fr-FR');
+
+        expect(users.mock.calls).toEqual([['en-GB']]);
+    });
+
+    it('rejects with the error a module failed to load with, and keeps nothing', async () => {
+        const failure = new Error('Failed to fetch dynamically imported module: /assets/users.js');
+        const users = vi.fn((locale: string) =>
+            locale === 'en-GB' ? Promise.reject(failure) : Promise.resolve({ title: locale }),
+        );
+        const { switcher } = build(users);
+
+        await expect(switcher.loadModules(['users'])).rejects.toBe(failure);
+        await switcher.switchTo('fr-FR');
+
+        expect(users.mock.calls).toEqual([['en-GB']]);
+    });
+
+    it('reports a module that fails to load for the fallback without failing the load', async () => {
+        const failure = new Error('offline');
+        const onFallbackError = vi.fn();
+        const i18n = createApplicationI18n('en-GB');
+        const switcher = createLocaleSwitcher({
+            i18n,
+            modules: [
+                {
+                    name: 'users',
+                    routes: [],
+                    locales: locale =>
+                        locale === 'en-GB' ? Promise.reject(failure) : Promise.resolve({ title: 'Utilisateurs' }),
+                },
+            ],
+            localeService: new LocaleService({
+                defaultLocale: 'en-GB',
+                enabledLocales: ['en-GB', 'fr-FR'],
+                storage: new MemoryStorage(),
+            }),
+            supported: { 'en-GB': { direction: 'ltr' }, 'fr-FR': { direction: 'ltr' } },
+            fallbackLocale: 'en-GB',
+            initialModules: [],
+            onFallbackError,
+            targetDocument: document.implementation.createHTMLDocument('t'),
+        });
+
+        await switcher.switchTo('fr-FR');
+        await switcher.loadModules(['users']);
+
+        await vi.waitFor(() => {
+            expect(onFallbackError).toHaveBeenCalledWith(failure, 'en-GB');
+        });
+
+        expect(i18n.global.t('users.title')).toBe('Utilisateurs');
+    });
+
+    it('prefetches modules with a preload without holding its activation', async () => {
+        const users = controlledLoader();
+        const { switcher } = build(users.load);
+        const prepared = switcher.preload('fr-FR', ['users']);
+
+        expect(users.requested).toEqual(['fr-FR']);
+
+        await prepared.activate();
+
+        expect(switcher.current.value).toBe('fr-FR');
+
+        users.reject('fr-FR', new Error('offline'));
+        await new Promise(resolve => setTimeout(resolve, 0));
     });
 });

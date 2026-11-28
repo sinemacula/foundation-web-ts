@@ -238,64 +238,8 @@ export interface ModuleMessageSource {
 }
 
 /**
- * Build a {@link ModuleMessageSource} that runs module loaders in parallel, at
- * most once per locale, with the same results as `collectModuleMessages`; a
- * rejected load is forgotten so the next request retries it.
- */
-export function createModuleMessageSource(modules: readonly ModuleDefinition[]): ModuleMessageSource {
-    const cache = new Map<string, Promise<Record<string, LocaleMessages>>>();
-
-    return {
-        messages: locale => {
-            const cached = cache.get(locale);
-
-            if (cached !== undefined) {
-                return cached;
-            }
-
-            const loading = loadModuleMessages(modules, locale);
-
-            cache.set(locale, loading);
-
-            loading.catch(() => {
-                cache.delete(locale);
-            });
-
-            return loading;
-        },
-    };
-}
-
-/**
  * Determine whether a register hook handed back a promise-like value.
  */
 function isThenable(value: unknown): value is PromiseLike<unknown> {
     return typeof (value as Partial<PromiseLike<unknown>> | null | undefined)?.then === 'function';
-}
-
-/**
- * Load every module's translations for one locale in parallel, keyed by module
- * name.
- */
-async function loadModuleMessages(
-    modules: readonly ModuleDefinition[],
-    locale: string,
-): Promise<Record<string, LocaleMessages>> {
-    const loaded = await Promise.all(
-        modules.map(async definition => {
-            const result = definition.locales === undefined ? null : await definition.locales(locale);
-
-            return [definition.name, result] as const;
-        }),
-    );
-
-    const messages: Record<string, LocaleMessages> = {};
-
-    for (const [name, result] of loaded) {
-        if (result !== null) {
-            messages[name] = result;
-        }
-    }
-
-    return messages;
 }
