@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.4.0...v0.5.0) (2026-11-28)
+
+
+### Features
+
+* **i18n:** activate a locale whose fallback fails to load ([#167](https://github.com/sinemacula/foundation-web-ts/issues/167)) ([1097b66](https://github.com/sinemacula/foundation-web-ts/commit/1097b662d80318ccb39ca998910293a4a4a1a65d))
+* **i18n:** load a module's messages with its routes ([#170](https://github.com/sinemacula/foundation-web-ts/issues/170)) ([3a6de3e](https://github.com/sinemacula/foundation-web-ts/commit/3a6de3e2d409ede7d69f2ce9d24fe6810cb95098))
+* **i18n:** load the active locale's messages while the runtime document is fetched ([#169](https://github.com/sinemacula/foundation-web-ts/issues/169)) ([a286131](https://github.com/sinemacula/foundation-web-ts/commit/a286131a1d78d0bf42de63027099b8eaef93632a))
+
 ## [0.4.0](https://github.com/sinemacula/foundation-web-ts/compare/v0.3.0...v0.4.0) (2026-11-24)
 
 
